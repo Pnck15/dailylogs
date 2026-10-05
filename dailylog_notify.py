@@ -1,6 +1,6 @@
 import sys
 from PySide6.QtCore import QSettings, QTimer
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor
 from PySide6.QtWidgets import (
     QApplication,QCheckBox,QDialog,QFormLayout,QHBoxLayout,QLabel,QLineEdit,
     QListWidget,QMenu,QMessageBox,QPushButton,QSystemTrayIcon,QVBoxLayout,QWidget
@@ -8,6 +8,11 @@ from PySide6.QtWidgets import (
 from notify_channels import NotificationChannels
 from notify_history import NotificationHistory
 from notify_monitor import NotifyMonitorEngine
+
+def make_tray_icon():
+    pixmap=QPixmap(64,64); pixmap.fill(QColor("#2563EB"))
+    painter=QPainter(pixmap); painter.setPen(QColor("white")); font=painter.font(); font.setBold(True); font.setPointSize(28); painter.setFont(font); painter.drawText(pixmap.rect(), 0x84, "D"); painter.end()
+    return QIcon(pixmap)
 
 APP_VERSION="1.0.0"; ORG="MiniDailyLog"; APP="DailyLogNotify"
 
@@ -65,7 +70,7 @@ class NotifyApp(QWidget):
         monitor_btn.clicked.connect(self.open_monitors); connections.clicked.connect(self.open_connections); history.clicked.connect(self.open_history)
         self.engine=NotifyMonitorEngine(self.settings,self); self.engine.event.connect(self.notify)
         self.engine.summary_changed.connect(self.update_summary); self.engine.status_changed.connect(self.status.setText); self.engine.start()
-        self.tray=QSystemTrayIcon(self); self.tray.setToolTip("DailyLog Notify"); menu=QMenu()
+        self.tray=QSystemTrayIcon(self); self.tray.setIcon(make_tray_icon()); self.tray.setToolTip("DailyLog Notify"); menu=QMenu()
         show=QAction("Open DailyLog Notify",self); monitors=QAction("Monitor Connections",self); conn=QAction("Notification Connections",self); hist=QAction("Notification History",self); quit_a=QAction("Exit",self)
         for a in (show,monitors,conn,hist): menu.addAction(a)
         menu.addSeparator(); menu.addAction(quit_a); self.tray.setContextMenu(menu)
