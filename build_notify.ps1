@@ -8,9 +8,11 @@ if (-not (Test-Path ".venv\Scripts\python.exe")) {
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m pip install pyinstaller
 .\.venv\Scripts\python.exe -m PyInstaller --clean --noconfirm DailyLogNotify.spec
+.\.venv\Scripts\python.exe -m PyInstaller --clean --noconfirm updater.spec
 
 New-Item -ItemType Directory -Force -Path "release" | Out-Null
 Copy-Item "dist\DailyLogNotify.exe" "release\DailyLogNotify.exe" -Force
+Copy-Item "dist\DailyLogUpdater.exe" "release\DailyLogUpdater.exe" -Force
 
 Write-Host ""
 Write-Host "DailyLogNotify build complete:"
