@@ -1,0 +1,32 @@
+﻿# Secrets
+.env
+*.env
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# PyInstaller output
+build/
+dist/
+release/
+
+# Generated release files
+version.json
+*.old.exe
+
+# IDE / OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs / temporary
+*.log
+*.tmp
+
+# Local archives / backups
+*.zip
+*.rar
