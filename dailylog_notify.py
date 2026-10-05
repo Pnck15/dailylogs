@@ -70,7 +70,7 @@ class NotifyApp(QWidget):
         for a in (show,monitors,conn,hist): menu.addAction(a)
         menu.addSeparator(); menu.addAction(quit_a); self.tray.setContextMenu(menu)
         show.triggered.connect(self.showNormal); monitors.triggered.connect(self.open_monitors); conn.triggered.connect(self.open_connections); hist.triggered.connect(self.open_history); quit_a.triggered.connect(QApplication.quit)
-        self.tray.show(); self.enable_startup(); QTimer.singleShot(500,self.hide)
+        self.tray.show(); self.enable_startup()
     def enable_startup(self):
         if not getattr(sys,"frozen",False): return
         run=QSettings(r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run",QSettings.Format.NativeFormat); run.setValue("DailyLogNotify",f'"{sys.executable}" --startup')
