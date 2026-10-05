@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 from notify_channels import NotificationChannels
 from notify_history import NotificationHistory
 from notify_monitor import NotifyMonitorEngine
+from update_checker import UpdateChecker
 
 def make_tray_icon():
     pixmap=QPixmap(64,64); pixmap.fill(QColor("#2563EB"))
@@ -15,6 +16,7 @@ def make_tray_icon():
     return QIcon(pixmap)
 
 APP_VERSION="1.0.0"; ORG="MiniDailyLog"; APP="DailyLogNotify"
+NOTIFY_MANIFEST_URL="https://github.com/Pnck15/dailylogs/releases/latest/download/notify-version.json"
 
 class ConnectionsDialog(QDialog):
     def __init__(self,channels,parent=None):
@@ -75,7 +77,22 @@ class NotifyApp(QWidget):
         for a in (show,monitors,conn,hist): menu.addAction(a)
         menu.addSeparator(); menu.addAction(quit_a); self.tray.setContextMenu(menu)
         show.triggered.connect(self.showNormal); monitors.triggered.connect(self.open_monitors); conn.triggered.connect(self.open_connections); hist.triggered.connect(self.open_history); quit_a.triggered.connect(QApplication.quit)
-        self.tray.show(); self.enable_startup()
+        self.tray.show(); self.enable_startup(); QTimer.singleShot(2500,self.check_for_updates)
+    def check_for_updates(self):
+        import os, subprocess, requests
+        try:
+            data=requests.get(NOTIFY_MANIFEST_URL,timeout=(5,15),headers={"Cache-Control":"no-cache","User-Agent":"DailyLogNotify-Updater"}).json()
+            latest=str(data.get("version","")).strip()
+            if not latest or UpdateChecker._version_tuple(latest)<=UpdateChecker._version_tuple(APP_VERSION): return
+            url=str(data.get("download_url","")).strip(); sha=str(data.get("sha256","")).strip()
+            answer=QMessageBox.question(self,"DailyLog Notify Update",f"มีเวอร์ชันใหม่ {latest}\nเวอร์ชันปัจจุบัน {APP_VERSION}\n\nอัปเดตตอนนี้หรือไม่?")
+            if answer!=QMessageBox.StandardButton.Yes or not getattr(sys,"frozen",False): return
+            updater=os.path.join(os.path.dirname(sys.executable),"DailyLogUpdater.exe")
+            if not os.path.isfile(updater): QMessageBox.warning(self,"Update","ไม่พบ DailyLogUpdater.exe"); return
+            subprocess.Popen([updater,str(os.getpid()),sys.executable,url,sha]); QApplication.quit()
+        except Exception as e:
+            print("[Notify Update]",e)
+
     def enable_startup(self):
         if not getattr(sys,"frozen",False): return
         run=QSettings(r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run",QSettings.Format.NativeFormat); run.setValue("DailyLogNotify",f'"{sys.executable}" --startup')
