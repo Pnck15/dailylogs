@@ -78,7 +78,7 @@ class SaleAPIMonitor:
     * Sale Delivery: {rows:[{row, model, vin, customer, sale, pay_day, delivery_date}]}
     * Structured GAS: {changes:[{type,sheet,row,customer,model,changes,today_fields,row_data}]}
     """
-    def __init__(self, url, timeout=20):
+    def __init__(self, url, timeout=150):
         self.url = (url or "").strip()
         self.timeout = timeout
         self.last_changes = []
@@ -106,7 +106,7 @@ class SaleAPIMonitor:
                 raw = response.read().decode("utf-8-sig", errors="replace")
                 status = getattr(response, "status", 200)
         except Exception as exc:
-            raise RuntimeError(f"เรียก Apps Script ไม่สำเร็จ: {exc}") from exc
+            raise RuntimeError(f"เรียก Apps Script ไม่สำเร็จ/หมดเวลารอ: {exc}") from exc
         if status < 200 or status >= 300:
             raise RuntimeError(f"Apps Script ตอบกลับ HTTP {status}")
         try:
