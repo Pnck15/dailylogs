@@ -16,7 +16,7 @@ def make_tray_icon():
     return QIcon(pixmap)
 
 APP_VERSION="1.0.0"; ORG="MiniDailyLog"; APP="DailyLogNotify"
-NOTIFY_MANIFEST_URL="https://github.com/Pnck15/dailylogs/releases/latest/download/notify-version.json"
+NOTIFY_RELEASES_API="https://api.github.com/repos/Pnck15/dailylogs/releases?per_page=20"
 
 class ConnectionsDialog(QDialog):
     def __init__(self,channels,parent=None):
@@ -81,10 +81,29 @@ class NotifyApp(QWidget):
     def check_for_updates(self):
         import os, subprocess, requests
         try:
-            data=requests.get(NOTIFY_MANIFEST_URL,timeout=(5,15),headers={"Cache-Control":"no-cache","User-Agent":"DailyLogNotify-Updater"}).json()
+            headers={"Accept":"application/vnd.github+json","User-Agent":"DailyLogNotify-Updater","Cache-Control":"no-cache"}
+            response=requests.get(NOTIFY_RELEASES_API,timeout=(5,10),headers=headers)
+            response.raise_for_status()
+            releases=response.json()
+            if not isinstance(releases,list): return
+
+            release=next((r for r in releases if isinstance(r,dict) and str(r.get("tag_name","")).startswith("notify-v") and not r.get("draft")),None)
+            if not release: return
+
+            asset=next((a for a in release.get("assets",[]) if isinstance(a,dict) and a.get("name")=="notify-version.json"),None)
+            if not asset: return
+
+            manifest_url=str(asset.get("browser_download_url","")).strip()
+            if not manifest_url: return
+            manifest_response=requests.get(manifest_url,timeout=(5,10),headers={"User-Agent":"DailyLogNotify-Updater","Cache-Control":"no-cache"})
+            manifest_response.raise_for_status()
+            data=manifest_response.json()
+
             latest=str(data.get("version","")).strip()
             if not latest or UpdateChecker._version_tuple(latest)<=UpdateChecker._version_tuple(APP_VERSION): return
             url=str(data.get("download_url","")).strip(); sha=str(data.get("sha256","")).strip()
+            if not url: return
+
             answer=QMessageBox.question(self,"DailyLog Notify Update",f"มีเวอร์ชันใหม่ {latest}\nเวอร์ชันปัจจุบัน {APP_VERSION}\n\nอัปเดตตอนนี้หรือไม่?")
             if answer!=QMessageBox.StandardButton.Yes or not getattr(sys,"frozen",False): return
             updater=os.path.join(os.path.dirname(sys.executable),"DailyLogUpdater.exe")
