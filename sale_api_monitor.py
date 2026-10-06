@@ -76,7 +76,7 @@ class SaleAPIMonitor:
     """Supports two GAS response types:
 
     * Sale Delivery: {rows:[{row, model, vin, customer, sale, pay_day, delivery_date}]}
-    * SA change monitor: {changes:[{sheet,row,column,...}]}
+    * Structured GAS: {changes:[{type,sheet,row,customer,model,changes,today_fields,row_data}]}
     """
     def __init__(self, url, timeout=20):
         self.url = (url or "").strip()
@@ -166,7 +166,19 @@ class SaleAPIMonitor:
         if not isinstance(changes, list):
             raise RuntimeError("ฟิลด์ changes ต้องเป็นรายการ (array)")
         self.last_changes = changes
-        self.latest_rows = []
+        structured_rows = []
+        for event in changes:
+            if not isinstance(event, dict) or event.get("type") != "delivery_today":
+                continue
+            today_fields = event.get("today_fields") if isinstance(event.get("today_fields"), list) else []
+            structured_rows.append({
+                "row": event.get("row", ""),
+                "model": event.get("model", ""),
+                "customer": event.get("customer", ""),
+                "delivery_date": next((x.get("value", "") for x in today_fields if isinstance(x, dict)), ""),
+                "_structured_event": event,
+            })
+        self.latest_rows = structured_rows
         return {
             "count": payload.get("count", len(changes)),
             "changes": changes,
