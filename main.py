@@ -397,6 +397,26 @@ class DailyLog(QWidget):
             self.title
         )
 
+        # Compact monitor status buttons.
+        # Click still opens the Admin GAS configuration dialog.
+        for button in (
+            self.sale_alert_button,
+            self.sale_alert_button_srinakarin,
+            self.sa_notify_button,
+            self.main_noti_button,
+        ):
+            button.setFixedHeight(24)
+
+        self.sale_alert_button.setFixedWidth(72)
+        self.sale_alert_button_srinakarin.setFixedWidth(82)
+        self.sa_notify_button.setFixedWidth(62)
+        self.main_noti_button.setFixedWidth(78)
+
+        header.addWidget(self.sale_alert_button)
+        header.addWidget(self.sale_alert_button_srinakarin)
+        header.addWidget(self.sa_notify_button)
+        header.addWidget(self.main_noti_button)
+
         header.addStretch()
 
         header.addWidget(
@@ -3952,28 +3972,37 @@ class DailyLog(QWidget):
         branch,
     ):
 
-        button = self._sale_button(
-            branch
+        button = self._sale_button(branch)
+
+        labels = {
+            "Sathorn": "Sathorn",
+            "Srinakarin": "Srinakarin",
+            "SA": "SA",
+            "MainNoti": "MainNoti",
+        }
+
+        label = labels.get(
+            branch,
+            self._sale_title(branch),
         )
 
-        if self.sale_enabled.get(
-            branch,
-            False,
-        ):
-
-            button.setText(
-                (
-                    f"🟢 "
-                    f"{self._sale_title(branch)}"
-                    ": ON"
-                )
-            )
-
+        if self._sale_busy.get(branch, False):
+            dot = "🟡"
+            tip = "กำลังเชื่อมต่อ / กำลังตรวจสอบ"
+        elif self.sale_enabled.get(branch, False):
+            dot = "🟢"
+            tip = "ทำงานปกติ"
+        elif self.sale_api_urls.get(branch, "").strip():
+            dot = "🔴"
+            tip = "เชื่อมต่อไม่สำเร็จ / ไม่ทำงาน"
         else:
+            dot = "⚪"
+            tip = "ยังไม่ได้ตั้งค่า GAS URL"
 
-            button.setText(
-                self._sale_title(branch)
-            )
+        button.setText(f"{dot} {label}")
+        button.setToolTip(
+            f"{self._sale_title(branch)}: {tip}"
+        )
 
     # =========================================
     # Start Saved Monitors
