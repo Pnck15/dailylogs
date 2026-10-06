@@ -78,7 +78,7 @@ class SaleAPIMonitor:
     * Sale Delivery: {rows:[{row, model, vin, customer, sale, pay_day, delivery_date}]}
     * Structured GAS: {changes:[{type,sheet,row,customer,model,changes,today_fields,row_data}]}
     """
-    def __init__(self, url, timeout=150):
+    def __init__(self, url, timeout=300):
         self.url = (url or "").strip()
         self.timeout = timeout
         self.last_changes = []
