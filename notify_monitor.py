@@ -55,41 +55,27 @@ class NotifyMonitorEngine(QObject):
             if isinstance(d,dict) and d.get(k) not in (None,""): return d.get(k)
         return ""
 
-    def _group_change_events(self,events):
-        groups={}
-        for i,e in enumerate(events):
-            if not isinstance(e,dict):
-                groups[("raw",i)]={"events":[e],"rowdata":{},"sheet":""}; continue
-            row=self._pick(e,"row","rowNumber","row_number","r")
-            sheet=self._pick(e,"sheet","sheetName","sheet_name","tab")
-            key=(str(sheet),str(row) if row not in (None,"") else f"event-{i}")
-            g=groups.setdefault(key,{"events":[],"rowdata":{},"sheet":sheet})
-            g["events"].append(e)
-            for source_key in ("rowData","row_data","data","values","record"):
-                if isinstance(e.get(source_key),dict): g["rowdata"].update(e[source_key])
-            g["rowdata"].update({k:v for k,v in e.items() if k in ("customer","customerName","客户的姓名","model","carModel","车型","E","H")})
-        return groups
-
-    def _change_message(self,g):
-        rd=g["rowdata"]
-        customer=self._pick(rd,"customer","customerName","客户的姓名","E")
-        model=self._pick(rd,"model","carModel","车型","H")
+    def _event_message(self,e):
         parts=[]
+        customer=self._pick(e,"customer","customerName","客户的姓名")
+        model=self._pick(e,"model","carModel","车型")
         if customer: parts.append(f"Customer: {customer}")
         if model: parts.append(f"Model: {model}")
-        seen=set()
-        for e in g["events"]:
-            if not isinstance(e,dict):
-                parts.append(str(e)); continue
-            nested=e.get("changes")
-            items=nested if isinstance(nested,list) else [e]
-            for x in items:
-                if not isinstance(x,dict): continue
-                name=self._pick(x,"header","field","columnName","name") or "ข้อมูล"
-                before=self._pick(x,"oldValue","old_value","before","old")
-                after=self._pick(x,"newValue","new_value","after","new","value")
-                line=f"{name}: {before or '-'} → {after or '-'}"
-                if line not in seen: seen.add(line); parts.append(line)
+        today_fields=e.get("today_fields") if isinstance(e.get("today_fields"),list) else []
+        for item in today_fields:
+            if isinstance(item,dict) and item.get("value") not in (None,""):
+                parts.append(f"{item.get('header') or 'วันที่'}: {item.get('value')}")
+        changes=e.get("changes") if isinstance(e.get("changes"),list) else []
+        for x in changes:
+            if not isinstance(x,dict): continue
+            name=self._pick(x,"header","field","columnName","name") or "ข้อมูล"
+            kind=str(x.get("type") or "").lower()
+            old=self._pick(x,"oldValue","old_value","before","old")
+            new=self._pick(x,"newValue","new_value","after","new","value")
+            if kind=="deleted": line=f"{name}: ลบข้อมูล (เดิม: {old or '-'})"
+            elif kind=="created": line=f"{name}: {new or '-'}"
+            else: line=f"{name}: {old or '-'} → {new or '-'}"
+            parts.append(line)
         return "\n".join(parts) or "พบการเปลี่ยนแปลงข้อมูล"
 
     def _events(self,branch,result):
@@ -100,19 +86,21 @@ class NotifyMonitorEngine(QObject):
             for label,key in (("Model","model"),("VIN","vin"),("Customer","customer"),("Sale","sale"),("Pay Day","pay_day"),("Delivery Date","delivery_date")):
                 if old.get(key,"")!=new.get(key,""): lines.append(f"{label}: {old.get(key,'-')} → {new.get(key,'-')}")
             if lines: self.event.emit(branch,f"{title} - มีการแก้ไขข้อมูล","\n".join(lines))
-        for row in result.get("deleted",[]): self.event.emit(branch,f"{title} - รายการถูกลบ",f"Row: {row}")
-
-        for g in self._group_change_events(result.get("changes",[])).values():
-            self.event.emit(branch,f"{title} - มีการเปลี่ยนแปลงข้อมูล",self._change_message(g))
-
-        monitor=self.monitors.get(branch)
-        if monitor:
-            today=date.today().isoformat()
-            for row,v in monitor.get_due_today():
-                key=f"due_seen/{today}/{branch}/{row}/{v.get('delivery_date','')}"
-                if not self.settings.value(key,False,type=bool):
-                    self.settings.setValue(key,True); self.settings.sync()
-                    self.event.emit(branch,f"{title} - ถึงกำหนดวันนี้",self._row(v))
+        today=date.today().isoformat()
+        for i,e in enumerate(result.get("changes",[])):
+            if not isinstance(e,dict):
+                self.event.emit(branch,f"{title} - มีการเปลี่ยนแปลงข้อมูล",str(e)); continue
+            event_type=str(e.get("type") or "row_change")
+            if event_type in ("delivery_today","today_appointment"):
+                sheet=str(e.get("sheet") or ""); row=str(e.get("row") or i)
+                sig="|".join(str(x.get("header",""))+":"+str(x.get("value","")) for x in e.get("today_fields",[]) if isinstance(x,dict))
+                key=f"today_seen/{today}/{branch}/{sheet}/{row}/{sig}"
+                if self.settings.value(key,False,type=bool): continue
+                self.settings.setValue(key,True); self.settings.sync()
+                event_title=f"{title} - "+("ส่งรถวันนี้" if event_type=="delivery_today" else "นัดหมายวันนี้")
+            else:
+                event_title=f"{title} - มีการเปลี่ยนแปลงข้อมูล"
+            self.event.emit(branch,event_title,self._event_message(e))
 
     def _emit_summary(self):
         counts={"Sathorn":0,"Srinakarin":0}
