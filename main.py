@@ -112,6 +112,7 @@ class DailyLog(QWidget):
 
         # Admin-only notification integrations (GAS / LINE)
         self.notification_channels = NotificationChannels()
+        self.line_status = "idle"
 
         # =========================================
         # Settings
@@ -301,6 +302,11 @@ class DailyLog(QWidget):
             lambda: self.configure_sale_branch("MainNoti")
         )
 
+        self.line_status_button = QPushButton("⚪ LINE")
+        self.line_status_button.clicked.connect(
+            self.configure_line_notifications
+        )
+
         # =========================================
         # Sale Deli Sathorn Button
         # =========================================
@@ -404,6 +410,7 @@ class DailyLog(QWidget):
             self.sale_alert_button_srinakarin,
             self.sa_notify_button,
             self.main_noti_button,
+            self.line_status_button,
         ):
             button.setFixedHeight(24)
 
@@ -411,11 +418,13 @@ class DailyLog(QWidget):
         self.sale_alert_button_srinakarin.setFixedWidth(82)
         self.sa_notify_button.setFixedWidth(62)
         self.main_noti_button.setFixedWidth(78)
+        self.line_status_button.setFixedWidth(66)
 
         header.addWidget(self.sale_alert_button)
         header.addWidget(self.sale_alert_button_srinakarin)
         header.addWidget(self.sa_notify_button)
         header.addWidget(self.main_noti_button)
+        header.addWidget(self.line_status_button)
 
         header.addStretch()
 
@@ -479,6 +488,7 @@ class DailyLog(QWidget):
         # =========================================
 
         self.start_saved_sale_monitors()
+        self.update_line_button()
 
         self.restore_saved_background()
 
@@ -1544,6 +1554,31 @@ class DailyLog(QWidget):
             )
         )
 
+    def update_line_button(self):
+
+        enabled = self.notification_channels.line_enabled()
+        token = self.notification_channels.line_token()
+        target = self.notification_channels.line_target()
+
+        if self.line_status == "busy":
+            dot = "🟡"
+            tip = "กำลังตรวจสอบ LINE"
+        elif self.line_status == "error":
+            dot = "🔴"
+            tip = "LINE เชื่อมต่อหรือส่งข้อความไม่สำเร็จ"
+        elif enabled and token and target:
+            dot = "🟢"
+            tip = "LINE พร้อมทำงาน"
+        elif enabled:
+            dot = "🔴"
+            tip = "เปิด LINE แล้ว แต่ Token หรือ Target ID ไม่ครบ"
+        else:
+            dot = "⚪"
+            tip = "LINE ยังไม่ได้เปิดใช้งาน"
+
+        self.line_status_button.setText(f"{dot} LINE")
+        self.line_status_button.setToolTip(tip)
+
     def configure_line_notifications(self):
 
         dialog = QDialog(self)
@@ -1598,6 +1633,8 @@ class DailyLog(QWidget):
                 token.text(),
                 target.text(),
             )
+            self.line_status = "idle"
+            self.update_line_button()
             QMessageBox.information(
                 dialog,
                 "LINE",
@@ -1610,9 +1647,14 @@ class DailyLog(QWidget):
                 token.text(),
                 target.text(),
             )
+            self.line_status = "busy"
+            self.update_line_button()
+            QApplication.processEvents()
             ok, message = self.notification_channels.send_line(
                 "DailyLog: LINE test message"
             )
+            self.line_status = "idle" if ok else "error"
+            self.update_line_button()
             if ok:
                 QMessageBox.information(
                     dialog,
@@ -3766,9 +3808,11 @@ class DailyLog(QWidget):
             )
 
             if self.notification_channels.line_enabled():
-                self.notification_channels.send_line(
+                ok, _line_message = self.notification_channels.send_line(
                     f"{title}\n{message}"
                 )
+                self.line_status = "idle" if ok else "error"
+                self.update_line_button()
 
     def show_sale_toast(
         self,
