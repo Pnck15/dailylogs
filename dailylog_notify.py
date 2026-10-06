@@ -5,7 +5,6 @@ from PySide6.QtWidgets import (
     QApplication,QCheckBox,QDialog,QFormLayout,QHBoxLayout,QLabel,QLineEdit,
     QListWidget,QMenu,QMessageBox,QPushButton,QSystemTrayIcon,QVBoxLayout,QWidget
 )
-from notify_channels import NotificationChannels
 from notify_history import NotificationHistory
 from notify_monitor import NotifyMonitorEngine
 from update_checker import UpdateChecker
@@ -64,19 +63,19 @@ class HistoryDialog(QDialog):
 
 class NotifyApp(QWidget):
     def __init__(self):
-        super().__init__(); self.settings=QSettings(ORG,APP); self.channels=NotificationChannels(); self.history=NotificationHistory()
+        super().__init__(); self.settings=QSettings(ORG,APP); self.history=NotificationHistory()
         self.setWindowTitle("DailyLog Notify"); self.setFixedSize(420,190)
         l=QVBoxLayout(self); self.status=QLabel("DailyLog Notify กำลังทำงาน"); self.summary=QLabel("ส่งรถวันนี้: กำลังตรวจสอบ...")
-        monitor_btn=QPushButton("Monitor Connections"); connections=QPushButton("Notification Connections"); history=QPushButton("Notification History")
-        l.addWidget(self.status); l.addWidget(self.summary); l.addWidget(monitor_btn); l.addWidget(connections); l.addWidget(history)
-        monitor_btn.clicked.connect(self.open_monitors); connections.clicked.connect(self.open_connections); history.clicked.connect(self.open_history)
+        history=QPushButton("Notification History")
+        l.addWidget(self.status); l.addWidget(self.summary); l.addWidget(history)
+        history.clicked.connect(self.open_history)
         self.engine=NotifyMonitorEngine(self.settings,self); self.engine.event.connect(self.notify)
         self.engine.summary_changed.connect(self.update_summary); self.engine.status_changed.connect(self.status.setText); self.engine.start()
         self.tray=QSystemTrayIcon(self); self.tray.setIcon(make_tray_icon()); self.tray.setToolTip("DailyLog Notify"); menu=QMenu()
-        show=QAction("Open DailyLog Notify",self); monitors=QAction("Monitor Connections",self); conn=QAction("Notification Connections",self); hist=QAction("Notification History",self); quit_a=QAction("Exit",self)
-        for a in (show,monitors,conn,hist): menu.addAction(a)
+        show=QAction("Open DailyLog Notify",self); hist=QAction("Notification History",self); quit_a=QAction("Exit",self)
+        for a in (show,hist): menu.addAction(a)
         menu.addSeparator(); menu.addAction(quit_a); self.tray.setContextMenu(menu)
-        show.triggered.connect(self.showNormal); monitors.triggered.connect(self.open_monitors); conn.triggered.connect(self.open_connections); hist.triggered.connect(self.open_history); quit_a.triggered.connect(QApplication.quit)
+        show.triggered.connect(self.showNormal); hist.triggered.connect(self.open_history); quit_a.triggered.connect(QApplication.quit)
         self.tray.show(); self.enable_startup(); QTimer.singleShot(2500,self.check_for_updates)
     def check_for_updates(self):
         import os, subprocess, requests
@@ -115,13 +114,10 @@ class NotifyApp(QWidget):
     def enable_startup(self):
         if not getattr(sys,"frozen",False): return
         run=QSettings(r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run",QSettings.Format.NativeFormat); run.setValue("DailyLogNotify",f'"{sys.executable}" --startup')
-    def open_monitors(self): MonitorSettingsDialog(self.settings,self.engine.start,self).exec()
-    def open_connections(self): ConnectionsDialog(self.channels,self).exec()
     def open_history(self): HistoryDialog(self.history,self).exec()
     def update_summary(self,sathorn,srinakarin,total): self.summary.setText(f"🚗 ส่งรถวันนี้ {total} คัน   |   Sathorn {sathorn}   Srinakarin {srinakarin}")
     def notify(self,source,title,message):
         self.history.add(source,title,message); self.tray.showMessage(title,message,QSystemTrayIcon.MessageIcon.Information,10000)
-        if self.channels.line_enabled(): self.channels.send_line(f"{title}\n{message}")
     def closeEvent(self,event): event.ignore(); self.hide()
 
 if __name__=="__main__":
