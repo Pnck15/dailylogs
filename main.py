@@ -44,6 +44,7 @@ from cloud_worker import CloudService
 from workers import run_async
 from sale_api_monitor import SaleAPIMonitor
 from update_checker import UpdateChecker
+from notify_channels import NotificationChannels
 
 
 APP_ORGANIZATION = "MiniDailyLog"
@@ -108,6 +109,9 @@ class DailyLog(QWidget):
         self.sale_notifications = []
 
         self.sale_due_notified = set()
+
+        # Admin-only notification integrations (GAS / LINE)
+        self.notification_channels = NotificationChannels()
 
         # =========================================
         # Settings
@@ -391,22 +395,6 @@ class DailyLog(QWidget):
 
         header.addWidget(
             self.title
-        )
-
-        header.addWidget(
-            self.main_noti_button
-        )
-
-        header.addWidget(
-            self.sale_alert_button
-        )
-
-        header.addWidget(
-            self.sale_alert_button_srinakarin
-        )
-
-        header.addWidget(
-            self.sa_notify_button
         )
 
         header.addStretch()
@@ -1475,6 +1463,33 @@ class DailyLog(QWidget):
 
         menu.addSeparator()
 
+        notify_menu = menu.addMenu(
+            "🔔 Notification System Settings"
+        )
+
+        for branch, label in (
+            ("Sathorn", "Sale Deli Sathorn GAS"),
+            ("Srinakarin", "Sale Deli Srinakarin GAS"),
+            ("SA", "SA Notify GAS"),
+            ("MainNoti", "MainNoti GAS"),
+        ):
+            action = notify_menu.addAction(label)
+            action.triggered.connect(
+                lambda checked=False, b=branch:
+                self.configure_sale_branch(b)
+            )
+
+        notify_menu.addSeparator()
+
+        line_action = notify_menu.addAction(
+            "LINE Messaging API"
+        )
+        line_action.triggered.connect(
+            self.configure_line_notifications
+        )
+
+        menu.addSeparator()
+
         update_action = menu.addAction(
             "🔄 Check for Program Update"
         )
@@ -1508,6 +1523,93 @@ class DailyLog(QWidget):
                 self.menu_button.rect().bottomLeft()
             )
         )
+
+    def configure_line_notifications(self):
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("LINE Messaging API")
+        dialog.resize(520, 250)
+
+        layout = QVBoxLayout(dialog)
+
+        enabled = QCheckBox(
+            "เปิดส่ง Notification ไป LINE"
+        )
+        enabled.setChecked(
+            self.notification_channels.line_enabled()
+        )
+
+        token = QLineEdit(
+            self.notification_channels.line_token()
+        )
+        token.setEchoMode(
+            QLineEdit.EchoMode.Password
+        )
+        token.setPlaceholderText(
+            "Channel access token"
+        )
+
+        target = QLineEdit(
+            self.notification_channels.line_target()
+        )
+        target.setPlaceholderText(
+            "User ID / Group ID"
+        )
+
+        layout.addWidget(enabled)
+        layout.addWidget(QLabel("Channel access token"))
+        layout.addWidget(token)
+        layout.addWidget(QLabel("User / Group ID"))
+        layout.addWidget(target)
+
+        buttons = QHBoxLayout()
+        test_button = QPushButton("Test LINE")
+        save_button = QPushButton("Save")
+        close_button = QPushButton("Close")
+        buttons.addWidget(test_button)
+        buttons.addStretch()
+        buttons.addWidget(save_button)
+        buttons.addWidget(close_button)
+        layout.addLayout(buttons)
+
+        def save():
+            self.notification_channels.save_line(
+                enabled.isChecked(),
+                token.text(),
+                target.text(),
+            )
+            QMessageBox.information(
+                dialog,
+                "LINE",
+                "บันทึกการตั้งค่าแล้ว",
+            )
+
+        def test():
+            self.notification_channels.save_line(
+                enabled.isChecked(),
+                token.text(),
+                target.text(),
+            )
+            ok, message = self.notification_channels.send_line(
+                "DailyLog: LINE test message"
+            )
+            if ok:
+                QMessageBox.information(
+                    dialog,
+                    "LINE",
+                    message,
+                )
+            else:
+                QMessageBox.warning(
+                    dialog,
+                    "LINE",
+                    message,
+                )
+
+        save_button.clicked.connect(save)
+        test_button.clicked.connect(test)
+        close_button.clicked.connect(dialog.close)
+        dialog.exec()
 
     def change_program_color(self):
 
@@ -3642,6 +3744,11 @@ class DailyLog(QWidget):
                 message,
                 notification_type,
             )
+
+            if self.notification_channels.line_enabled():
+                self.notification_channels.send_line(
+                    f"{title}\n{message}"
+                )
 
     def show_sale_toast(
         self,
