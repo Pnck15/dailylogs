@@ -3814,6 +3814,19 @@ class DailyLog(QWidget):
                 notification_type,
             )
 
+            if hasattr(self, "cloud"):
+                try:
+                    source = str(title or "").split(" - ", 1)[0].strip()
+                    self.cloud.call(
+                        "publish_notification_event",
+                        source,
+                        title,
+                        message,
+                        notification_type,
+                    )
+                except Exception as error:
+                    print("[Central Notify Publish]", error)
+
             if self.notification_channels.line_enabled():
                 ok, _line_message = self.notification_channels.send_line(
                     f"{title}\n{message}"
