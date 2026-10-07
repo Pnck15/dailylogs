@@ -203,6 +203,7 @@ class SaleAPIMonitor:
                 "changed": changed,
                 "deleted": deleted,
                 "success": payload.get("success", True),
+                "structured": False,
             }
 
         changes = payload.get("changes", [])
@@ -231,6 +232,7 @@ class SaleAPIMonitor:
             "changed": [],
             "deleted": [],
             "success": payload.get("success", True),
+            "structured": True,
         }
 
     def get_due_today(self, today=None):
