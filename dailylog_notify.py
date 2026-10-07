@@ -1,126 +1,710 @@
+import os
+import subprocess
 import sys
+
+import requests
 from PySide6.QtCore import QSettings, QTimer
-from PySide6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QApplication,QCheckBox,QDialog,QFormLayout,QHBoxLayout,QLabel,QLineEdit,
-    QListWidget,QMenu,QMessageBox,QPushButton,QSystemTrayIcon,QVBoxLayout,QWidget
+    QApplication,
+    QCheckBox,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QSystemTrayIcon,
+    QVBoxLayout,
+    QWidget,
 )
+
 from notify_history import NotificationHistory
-from notify_monitor import NotifyMonitorEngine
+from notify_receiver import CentralNotifyReceiver
 from update_checker import UpdateChecker
 
+
+APP_VERSION = "1.1.0"
+ORG = "MiniDailyLog"
+APP = "DailyLogNotify"
+
+NOTIFY_RELEASES_API = (
+    "https://api.github.com/repos/Pnck15/dailylogs/releases?per_page=20"
+)
+
+
 def make_tray_icon():
-    pixmap=QPixmap(64,64); pixmap.fill(QColor("#2563EB"))
-    painter=QPainter(pixmap); painter.setPen(QColor("white")); font=painter.font(); font.setBold(True); font.setPointSize(28); painter.setFont(font); painter.drawText(pixmap.rect(), 0x84, "D"); painter.end()
+    pixmap = QPixmap(64, 64)
+    pixmap.fill(QColor("#2563EB"))
+
+    painter = QPainter(pixmap)
+    painter.setPen(QColor("white"))
+
+    font = painter.font()
+    font.setBold(True)
+    font.setPointSize(28)
+    painter.setFont(font)
+
+    painter.drawText(
+        pixmap.rect(),
+        0x84,
+        "D",
+    )
+    painter.end()
+
     return QIcon(pixmap)
 
-APP_VERSION="1.0.0"; ORG="MiniDailyLog"; APP="DailyLogNotify"
-NOTIFY_RELEASES_API="https://api.github.com/repos/Pnck15/dailylogs/releases?per_page=20"
-
-class ConnectionsDialog(QDialog):
-    def __init__(self,channels,parent=None):
-        super().__init__(parent); self.channels=channels; self.setWindowTitle("Notification Connections"); self.setMinimumWidth(460)
-        l=QVBoxLayout(self); l.addWidget(QLabel("LINE Messaging API")); f=QFormLayout()
-        self.enabled=QCheckBox("เปิดส่งแจ้งเตือนไป LINE"); self.enabled.setChecked(channels.line_enabled())
-        self.token=QLineEdit(channels.line_token()); self.token.setEchoMode(QLineEdit.EchoMode.Password)
-        self.target=QLineEdit(channels.line_target())
-        f.addRow("",self.enabled); f.addRow("Channel access token",self.token); f.addRow("User / Group ID",self.target); l.addLayout(f)
-        b=QHBoxLayout(); test=QPushButton("Test LINE"); save=QPushButton("Save"); close=QPushButton("Close")
-        b.addWidget(test); b.addStretch(); b.addWidget(save); b.addWidget(close); l.addLayout(b)
-        save.clicked.connect(self.save); close.clicked.connect(self.close); test.clicked.connect(self.test_line)
-    def save(self):
-        self.channels.save_line(self.enabled.isChecked(),self.token.text(),self.target.text()); QMessageBox.information(self,"Connections","บันทึกการตั้งค่าแล้ว")
-    def test_line(self):
-        self.channels.save_line(self.enabled.isChecked(),self.token.text(),self.target.text())
-        ok,msg=self.channels.send_line("DailyLog Notify: LINE test message")
-        (QMessageBox.information if ok else QMessageBox.warning)(self,"LINE",msg)
-
-class MonitorSettingsDialog(QDialog):
-    def __init__(self,settings,reload_callback,parent=None):
-        super().__init__(parent); self.settings=settings; self.reload_callback=reload_callback
-        self.setWindowTitle("Monitor Connections"); self.resize(620,300); l=QVBoxLayout(self)
-        l.addWidget(QLabel("Google Apps Script Web App URLs — ตรวจทุก 5 นาที"))
-        f=QFormLayout(); self.inputs={}
-        for branch,key in (("Sale Deli Sathorn","sathorn_url"),("Sale Deli Srinakarin","srinakarin_url"),("SA Notify","sa_url"),("MainNoti","main_noti_url")):
-            e=QLineEdit(str(settings.value(key,"") or "")); e.setPlaceholderText("https://script.google.com/macros/s/.../exec")
-            self.inputs[key]=e; f.addRow(branch,e)
-        l.addLayout(f); b=QHBoxLayout(); save=QPushButton("Save & Start"); close=QPushButton("Close")
-        b.addStretch(); b.addWidget(save); b.addWidget(close); l.addLayout(b)
-        save.clicked.connect(self.save); close.clicked.connect(self.close)
-    def save(self):
-        for key,e in self.inputs.items():
-            value=e.text().strip()
-            if value and "script.google.com" not in value:
-                QMessageBox.warning(self,"URL","กรุณาใช้ Apps Script Web App URL"); return
-            self.settings.setValue(key,value)
-        self.settings.sync(); self.reload_callback(); QMessageBox.information(self,"Monitor","บันทึกแล้ว และเริ่มตรวจสอบ Monitor")
 
 class HistoryDialog(QDialog):
-    def __init__(self,history,parent=None):
-        super().__init__(parent); self.setWindowTitle("Notification History"); self.resize(620,420)
-        l=QVBoxLayout(self); self.list=QListWidget(); l.addWidget(self.list)
-        for dt,source,title,message in history.recent(): self.list.addItem(f"{dt} | {source or '-'} | {title}\n{message}")
+    def __init__(self, history, parent=None):
+        super().__init__(parent)
+
+        self.history = history
+
+        self.setWindowTitle(
+            "DailyLog Notification History"
+        )
+        self.resize(620, 420)
+
+        layout = QVBoxLayout(self)
+
+        self.list_widget = QListWidget()
+        layout.addWidget(self.list_widget)
+
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.close)
+        layout.addWidget(close_button)
+
+        self.reload()
+
+    def reload(self):
+        self.list_widget.clear()
+
+        for item in self.history.recent(200):
+            created_at = item.get("created_at", "")
+            source = item.get("source", "")
+            title = item.get("title", "")
+            message = item.get("message", "")
+
+            self.list_widget.addItem(
+                f"{created_at}  [{source}]\n"
+                f"{title}\n"
+                f"{message}"
+            )
+
+
+class LoginDialog(QDialog):
+    def __init__(self, receiver, settings, parent=None):
+        super().__init__(parent)
+
+        self.receiver = receiver
+        self.settings = settings
+
+        self.setWindowTitle(
+            "DailyLog Notify Login"
+        )
+        self.resize(380, 250)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+
+        info = QLabel(
+            "Login ด้วยบัญชี DailyLog ของเครื่องผู้รับ\n"
+            "ครั้งแรกเพียงครั้งเดียว จากนั้นโปรแกรมจะ Start with Windows เอง"
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        self.error_label = QLabel("")
+        self.error_label.setWordWrap(True)
+        self.error_label.setStyleSheet(
+            "color: #DC2626;"
+        )
+        layout.addWidget(self.error_label)
+
+        layout.addWidget(
+            QLabel("Email")
+        )
+
+        self.email = QLineEdit(
+            str(
+                settings.value(
+                    "central/email",
+                    "",
+                )
+                or ""
+            )
+        )
+        self.email.setPlaceholderText(
+            "employee@email.com"
+        )
+        layout.addWidget(self.email)
+
+        layout.addWidget(
+            QLabel("Password")
+        )
+
+        self.password = QLineEdit()
+        self.password.setEchoMode(
+            QLineEdit.EchoMode.Password
+        )
+        self.password.setPlaceholderText(
+            "Password"
+        )
+        layout.addWidget(self.password)
+
+        self.remember = QCheckBox(
+            "จำบัญชีนี้เพื่อรับแจ้งเตือนอัตโนมัติเมื่อเปิด Windows"
+        )
+        self.remember.setChecked(True)
+        layout.addWidget(self.remember)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+
+        cancel = QPushButton("Cancel")
+        self.login_button = QPushButton("Login")
+
+        buttons.addWidget(cancel)
+        buttons.addWidget(self.login_button)
+        layout.addLayout(buttons)
+
+        cancel.clicked.connect(self.reject)
+        self.login_button.clicked.connect(
+            self.do_login
+        )
+        self.password.returnPressed.connect(
+            self.do_login
+        )
+
+        self.receiver.login_success.connect(
+            self._login_success
+        )
+        self.receiver.login_failed.connect(
+            self._login_failed
+        )
+
+    def do_login(self):
+        email = self.email.text().strip()
+        password = self.password.text()
+
+        if not email or not password:
+            self.error_label.setText(
+                "กรุณากรอก Email และ Password"
+            )
+            return
+
+        self.error_label.setText(
+            "กำลัง Login..."
+        )
+        self.login_button.setEnabled(False)
+
+        self.receiver.login(
+            email,
+            password,
+            remember=self.remember.isChecked(),
+        )
+
+    def _login_success(self, _email):
+        if self.isVisible():
+            self.accept()
+
+    def _login_failed(self, message):
+        if not self.isVisible():
+            return
+
+        self.login_button.setEnabled(True)
+        self.error_label.setText(
+            f"Login ไม่สำเร็จ: {message}"
+        )
+
+    def done(self, result):
+        try:
+            self.receiver.login_success.disconnect(
+                self._login_success
+            )
+        except Exception:
+            pass
+
+        try:
+            self.receiver.login_failed.disconnect(
+                self._login_failed
+            )
+        except Exception:
+            pass
+
+        super().done(result)
+
 
 class NotifyApp(QWidget):
     def __init__(self):
-        super().__init__(); self.settings=QSettings(ORG,APP); self.history=NotificationHistory()
-        self.setWindowTitle("DailyLog Notify"); self.setFixedSize(420,190)
-        l=QVBoxLayout(self); self.status=QLabel("DailyLog Notify กำลังทำงาน"); self.summary=QLabel("ส่งรถวันนี้: กำลังตรวจสอบ...")
-        history=QPushButton("Notification History")
-        l.addWidget(self.status); l.addWidget(self.summary); l.addWidget(history)
-        history.clicked.connect(self.open_history)
-        self.engine=NotifyMonitorEngine(self.settings,self); self.engine.event.connect(self.notify)
-        self.engine.summary_changed.connect(self.update_summary); self.engine.status_changed.connect(self.status.setText); self.engine.start()
-        self.tray=QSystemTrayIcon(self); self.tray.setIcon(make_tray_icon()); self.tray.setToolTip("DailyLog Notify"); menu=QMenu()
-        show=QAction("Open DailyLog Notify",self); hist=QAction("Notification History",self); quit_a=QAction("Exit",self)
-        for a in (show,hist): menu.addAction(a)
-        menu.addSeparator(); menu.addAction(quit_a); self.tray.setContextMenu(menu)
-        show.triggered.connect(self.showNormal); hist.triggered.connect(self.open_history); quit_a.triggered.connect(QApplication.quit)
-        self.tray.show(); self.enable_startup(); QTimer.singleShot(2500,self.check_for_updates)
-    def check_for_updates(self):
-        import os, subprocess, requests
+        super().__init__()
+
+        self.settings = QSettings(
+            ORG,
+            APP,
+        )
+        self.history = NotificationHistory()
+        self.receiver = None
+
+        self.setWindowTitle(
+            "DailyLog Notify"
+        )
+        self.setFixedSize(
+            430,
+            200,
+        )
+
+        layout = QVBoxLayout(self)
+
+        self.status = QLabel(
+            "กำลังเริ่ม DailyLog Notify..."
+        )
+        self.status.setWordWrap(True)
+
+        self.info = QLabel(
+            "รับ Notification จาก DailyLog Central\n"
+            "ไม่ต้องตั้งค่า GAS หรือ LINE ในเครื่องนี้"
+        )
+        self.info.setWordWrap(True)
+
+        buttons = QHBoxLayout()
+
+        history_button = QPushButton(
+            "Notification History"
+        )
+        login_button = QPushButton(
+            "Login / Change account"
+        )
+
+        buttons.addWidget(
+            history_button
+        )
+        buttons.addWidget(
+            login_button
+        )
+
+        layout.addWidget(
+            self.status
+        )
+        layout.addWidget(
+            self.info
+        )
+        layout.addLayout(
+            buttons
+        )
+
+        self.startup_label = QLabel(
+            "✅ Start with Windows"
+        )
+        layout.addWidget(
+            self.startup_label
+        )
+
+        history_button.clicked.connect(
+            self.open_history
+        )
+        login_button.clicked.connect(
+            self.open_login
+        )
+
+        # -----------------------------------------
+        # Tray
+        # -----------------------------------------
+
+        self.tray = QSystemTrayIcon(
+            self
+        )
+        self.tray.setIcon(
+            make_tray_icon()
+        )
+        self.tray.setToolTip(
+            "DailyLog Notify"
+        )
+
+        tray_menu = QMenu()
+
+        show_action = QAction(
+            "Open DailyLog Notify",
+            self,
+        )
+        history_action = QAction(
+            "Notification History",
+            self,
+        )
+        login_action = QAction(
+            "Login / Change account",
+            self,
+        )
+        exit_action = QAction(
+            "Exit",
+            self,
+        )
+
+        tray_menu.addAction(
+            show_action
+        )
+        tray_menu.addAction(
+            history_action
+        )
+        tray_menu.addAction(
+            login_action
+        )
+        tray_menu.addSeparator()
+        tray_menu.addAction(
+            exit_action
+        )
+
+        self.tray.setContextMenu(
+            tray_menu
+        )
+
+        show_action.triggered.connect(
+            self.showNormal
+        )
+        history_action.triggered.connect(
+            self.open_history
+        )
+        login_action.triggered.connect(
+            self.open_login
+        )
+        exit_action.triggered.connect(
+            QApplication.quit
+        )
+
+        self.tray.show()
+
+        # -----------------------------------------
+        # Start with Windows
+        # -----------------------------------------
+
+        self.enable_startup()
+
+        # -----------------------------------------
+        # Central receiver
+        # -----------------------------------------
+
         try:
-            headers={"Accept":"application/vnd.github+json","User-Agent":"DailyLogNotify-Updater","Cache-Control":"no-cache"}
-            response=requests.get(NOTIFY_RELEASES_API,timeout=(5,10),headers=headers)
-            response.raise_for_status()
-            releases=response.json()
-            if not isinstance(releases,list): return
+            self.receiver = CentralNotifyReceiver(
+                self.settings,
+                self,
+            )
 
-            release=next((r for r in releases if isinstance(r,dict) and str(r.get("tag_name","")).startswith("notify-v") and not r.get("draft")),None)
-            if not release: return
+            self.receiver.event.connect(
+                self.notify
+            )
+            self.receiver.status_changed.connect(
+                self.status.setText
+            )
+            self.receiver.login_failed.connect(
+                self._background_login_failed
+            )
 
-            asset=next((a for a in release.get("assets",[]) if isinstance(a,dict) and a.get("name")=="notify-version.json"),None)
-            if not asset: return
+            if self.receiver.has_saved_credentials():
+                self.receiver.login_saved()
+            else:
+                self.status.setText(
+                    "⚪ Central Notification: ต้อง Login ครั้งแรก"
+                )
 
-            manifest_url=str(asset.get("browser_download_url","")).strip()
-            if not manifest_url: return
-            manifest_response=requests.get(manifest_url,timeout=(5,10),headers={"User-Agent":"DailyLogNotify-Updater","Cache-Control":"no-cache"})
-            manifest_response.raise_for_status()
-            data=manifest_response.json()
+                QTimer.singleShot(
+                    300,
+                    self._show_login_if_needed,
+                )
 
-            latest=str(data.get("version","")).strip()
-            if not latest or UpdateChecker._version_tuple(latest)<=UpdateChecker._version_tuple(APP_VERSION): return
-            url=str(data.get("download_url","")).strip(); sha=str(data.get("sha256","")).strip()
-            if not url: return
+        except Exception as error:
+            self.status.setText(
+                f"🔴 Central Notification: {error}"
+            )
+            login_button.setEnabled(False)
+            login_action.setEnabled(False)
 
-            answer=QMessageBox.question(self,"DailyLog Notify Update",f"มีเวอร์ชันใหม่ {latest}\nเวอร์ชันปัจจุบัน {APP_VERSION}\n\nอัปเดตตอนนี้หรือไม่?")
-            if answer!=QMessageBox.StandardButton.Yes or not getattr(sys,"frozen",False): return
-            updater=os.path.join(os.path.dirname(sys.executable),"DailyLogUpdater.exe")
-            if not os.path.isfile(updater): QMessageBox.warning(self,"Update","ไม่พบ DailyLogUpdater.exe"); return
-            subprocess.Popen([updater,str(os.getpid()),sys.executable,url,sha]); QApplication.quit()
-        except Exception as e:
-            print("[Notify Update]",e)
+        # -----------------------------------------
+        # Auto update
+        # -----------------------------------------
+
+        QTimer.singleShot(
+            2500,
+            self.check_for_updates,
+        )
+
+    def _show_login_if_needed(self):
+        if (
+            self.receiver is not None
+            and not self.receiver.has_saved_credentials()
+        ):
+            self.showNormal()
+            self.open_login()
+
+    def _background_login_failed(self, message):
+        # Startup can fail because a password changed or membership was removed.
+        # Show the window so the user is not left with a silent tray process.
+        if "--startup" in sys.argv:
+            self.showNormal()
+
+        self.status.setToolTip(
+            str(message)
+        )
+
+    def open_login(self):
+        if self.receiver is None:
+            QMessageBox.warning(
+                self,
+                "DailyLog Notify",
+                "Central Notification ยังไม่พร้อมใช้งาน",
+            )
+            return
+
+        LoginDialog(
+            self.receiver,
+            self.settings,
+            self,
+        ).exec()
+
+    def open_history(self):
+        HistoryDialog(
+            self.history,
+            self,
+        ).exec()
+
+    def notify(
+        self,
+        source,
+        title,
+        message,
+    ):
+        self.history.add(
+            source,
+            title,
+            message,
+        )
+
+        self.tray.showMessage(
+            title,
+            message,
+            QSystemTrayIcon.MessageIcon.Information,
+            10000,
+        )
 
     def enable_startup(self):
-        if not getattr(sys,"frozen",False): return
-        run=QSettings(r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run",QSettings.Format.NativeFormat); run.setValue("DailyLogNotify",f'"{sys.executable}" --startup')
-    def open_history(self): HistoryDialog(self.history,self).exec()
-    def update_summary(self,sathorn,srinakarin,total): self.summary.setText(f"🚗 ส่งรถวันนี้ {total} คัน   |   Sathorn {sathorn}   Srinakarin {srinakarin}")
-    def notify(self,source,title,message):
-        self.history.add(source,title,message); self.tray.showMessage(title,message,QSystemTrayIcon.MessageIcon.Information,10000)
-    def closeEvent(self,event): event.ignore(); self.hide()
+        if not getattr(
+            sys,
+            "frozen",
+            False,
+        ):
+            self.startup_label.setText(
+                "Start with Windows: ใช้งานเมื่อ Build เป็น .exe"
+            )
+            return
 
-if __name__=="__main__":
-    app=QApplication(sys.argv); app.setQuitOnLastWindowClosed(False); w=NotifyApp()
-    if "--startup" not in sys.argv: w.show()
-    sys.exit(app.exec())
+        run = QSettings(
+            (
+                r"HKEY_CURRENT_USER\Software\Microsoft\Windows"
+                r"\CurrentVersion\Run"
+            ),
+            QSettings.Format.NativeFormat,
+        )
+
+        run.setValue(
+            "DailyLogNotify",
+            f'"{sys.executable}" --startup',
+        )
+        run.sync()
+
+        self.startup_label.setText(
+            "✅ Start with Windows"
+        )
+
+    def check_for_updates(self):
+        try:
+            headers = {
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "DailyLogNotify-Updater",
+                "Cache-Control": "no-cache",
+            }
+
+            response = requests.get(
+                NOTIFY_RELEASES_API,
+                timeout=(5, 10),
+                headers=headers,
+            )
+            response.raise_for_status()
+
+            releases = response.json()
+
+            if not isinstance(
+                releases,
+                list,
+            ):
+                return
+
+            release = next(
+                (
+                    item
+                    for item in releases
+                    if isinstance(item, dict)
+                    and str(
+                        item.get("tag_name", "")
+                    ).startswith("notify-v")
+                    and not item.get("draft")
+                ),
+                None,
+            )
+
+            if not release:
+                return
+
+            asset = next(
+                (
+                    item
+                    for item in release.get(
+                        "assets",
+                        [],
+                    )
+                    if isinstance(item, dict)
+                    and item.get("name")
+                    == "notify-version.json"
+                ),
+                None,
+            )
+
+            if not asset:
+                return
+
+            manifest_url = str(
+                asset.get(
+                    "browser_download_url",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            if not manifest_url:
+                return
+
+            manifest_response = requests.get(
+                manifest_url,
+                timeout=(5, 10),
+                headers={
+                    "User-Agent": "DailyLogNotify-Updater",
+                    "Cache-Control": "no-cache",
+                },
+            )
+            manifest_response.raise_for_status()
+
+            data = manifest_response.json()
+
+            latest = str(
+                data.get("version", "")
+                or ""
+            ).strip()
+
+            if (
+                not latest
+                or UpdateChecker._version_tuple(
+                    latest
+                )
+                <= UpdateChecker._version_tuple(
+                    APP_VERSION
+                )
+            ):
+                return
+
+            url = str(
+                data.get(
+                    "download_url",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            sha = str(
+                data.get(
+                    "sha256",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            if not url:
+                return
+
+            answer = QMessageBox.question(
+                self,
+                "DailyLog Notify Update",
+                (
+                    f"มีเวอร์ชันใหม่ {latest}\n"
+                    f"เวอร์ชันปัจจุบัน {APP_VERSION}\n\n"
+                    "อัปเดตตอนนี้หรือไม่?"
+                ),
+            )
+
+            if (
+                answer
+                != QMessageBox.StandardButton.Yes
+                or not getattr(
+                    sys,
+                    "frozen",
+                    False,
+                )
+            ):
+                return
+
+            updater = os.path.join(
+                os.path.dirname(
+                    sys.executable
+                ),
+                "DailyLogUpdater.exe",
+            )
+
+            if not os.path.isfile(
+                updater
+            ):
+                QMessageBox.warning(
+                    self,
+                    "Update",
+                    "ไม่พบ DailyLogUpdater.exe",
+                )
+                return
+
+            subprocess.Popen(
+                [
+                    updater,
+                    str(os.getpid()),
+                    sys.executable,
+                    url,
+                    sha,
+                ]
+            )
+
+            QApplication.quit()
+
+        except Exception as error:
+            print(
+                "[Notify Update]",
+                error,
+            )
+
+    def closeEvent(self, event):
+        event.ignore()
+        self.hide()
+
+
+if __name__ == "__main__":
+    app = QApplication(
+        sys.argv
+    )
+    app.setQuitOnLastWindowClosed(
+        False
+    )
+
+    window = NotifyApp()
+
+    if "--startup" not in sys.argv:
+        window.show()
+
+    sys.exit(
+        app.exec()
+    )
