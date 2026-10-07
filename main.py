@@ -2,7 +2,7 @@ import sys
 import os
 import shutil
 import json
-from datetime import datetime
+from datetime import datetime, date
 
 from PySide6.QtCore import (
     QTimer,
@@ -4910,6 +4910,62 @@ class DailyLog(QWidget):
                 or "row_change"
             ).strip()
 
+            nested_changes = (
+                event.get("changes")
+                if isinstance(
+                    event.get("changes"),
+                    list,
+                )
+                else []
+            )
+
+            # Pure today reminders repeat from GAS every poll.
+            # Persistently suppress only those reminders; a real edit in
+            # the same row is still allowed through.
+            if (
+                event_type in (
+                    "delivery_today",
+                    "today_appointment",
+                )
+                and not nested_changes
+            ):
+                today_fields_for_key = (
+                    event.get("today_fields")
+                    if isinstance(
+                        event.get("today_fields"),
+                        list,
+                    )
+                    else []
+                )
+                signature = "|".join(
+                    (
+                        f"{item.get('header', '')}:"
+                        f"{item.get('value', '')}"
+                    )
+                    for item in today_fields_for_key
+                    if isinstance(item, dict)
+                )
+                due_key = (
+                    "structured_due/"
+                    f"{date.today().isoformat()}/"
+                    f"{branch}/"
+                    f"{event.get('sheet', '')}/"
+                    f"{event.get('row', '')}/"
+                    f"{signature}"
+                )
+                if self.settings.value(
+                    due_key,
+                    False,
+                    type=bool,
+                ):
+                    continue
+
+                self.settings.setValue(
+                    due_key,
+                    True,
+                )
+                self.settings.sync()
+
             customer = str(
                 event.get("customer")
                 or ""
@@ -4982,14 +5038,7 @@ class DailyLog(QWidget):
                     )
 
             # สิ่งที่เปลี่ยนทั้งหมดใน Row เดียวกัน
-            nested = (
-                event.get("changes")
-                if isinstance(
-                    event.get("changes"),
-                    list,
-                )
-                else []
-            )
+            nested = nested_changes
 
             for item in nested:
 
