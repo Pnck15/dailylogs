@@ -106,6 +106,13 @@ class DailyLog(QWidget):
             "MainNoti": False,
         }
 
+        self.sale_errors = {
+            "Sathorn": False,
+            "Srinakarin": False,
+            "SA": False,
+            "MainNoti": False,
+        }
+
         self.sale_notifications = []
 
         self.sale_due_notified = set()
@@ -4033,6 +4040,9 @@ class DailyLog(QWidget):
         if self._sale_busy.get(branch, False):
             dot = "🟡"
             tip = "กำลังเชื่อมต่อ / กำลังตรวจสอบ"
+        elif self.sale_errors.get(branch, False):
+            dot = "🔴"
+            tip = "เชื่อมต่อไม่สำเร็จ / รอรอบตรวจถัดไป"
         elif self.sale_enabled.get(branch, False):
             dot = "🟢"
             tip = "ทำงานปกติ"
@@ -4100,6 +4110,8 @@ class DailyLog(QWidget):
             return
 
         self._sale_busy[branch] = True
+        self.sale_errors[branch] = False
+        self.update_sale_button(branch)
 
         monitor = self.sale_monitors.get(
             branch
@@ -4117,6 +4129,7 @@ class DailyLog(QWidget):
         def finished(result):
 
             self._sale_busy[branch] = False
+            self.sale_errors[branch] = False
 
             self.sale_monitors[branch] = (
                 monitor
@@ -4158,6 +4171,8 @@ class DailyLog(QWidget):
         def failed(message):
 
             self._sale_busy[branch] = False
+            self.sale_errors[branch] = True
+            self.update_sale_button(branch)
 
             if initial:
 
@@ -4430,6 +4445,8 @@ class DailyLog(QWidget):
             return
 
         self._sale_busy[branch] = True
+        self.sale_errors[branch] = False
+        self.update_sale_button(branch)
 
         monitor = SaleAPIMonitor(
             url
@@ -4438,6 +4455,7 @@ class DailyLog(QWidget):
         def finished(result):
 
             self._sale_busy[branch] = False
+            self.sale_errors[branch] = False
 
             self.sale_monitors[branch] = (
                 monitor
@@ -4479,6 +4497,7 @@ class DailyLog(QWidget):
         def failed(message):
 
             self._sale_busy[branch] = False
+            self.sale_errors[branch] = True
 
             self.sale_enabled[branch] = (
                 False
@@ -4606,12 +4625,16 @@ class DailyLog(QWidget):
             return
 
         self._sale_busy[branch] = True
+        self.sale_errors[branch] = False
+        self.update_sale_button(branch)
 
         def finished(result):
 
             self._sale_busy[branch] = (
                 False
             )
+            self.sale_errors[branch] = False
+            self.update_sale_button(branch)
 
             self._process_sale_result(
                 branch,
@@ -4623,6 +4646,8 @@ class DailyLog(QWidget):
             self._sale_busy[branch] = (
                 False
             )
+            self.sale_errors[branch] = True
+            self.update_sale_button(branch)
 
         run_async(
             self,
