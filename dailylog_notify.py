@@ -474,19 +474,23 @@ class NotifyApp(QWidget):
         source,
         title,
         message,
+        show_popup=True,
     ):
+        # Always keep the event in local history.
         self.history.add(
             source,
             title,
             message,
         )
 
-        self.tray.showMessage(
-            title,
-            message,
-            QSystemTrayIcon.MessageIcon.Information,
-            10000,
-        )
+        # Only current-day events may create a Windows popup.
+        if show_popup:
+            self.tray.showMessage(
+                title,
+                message,
+                QSystemTrayIcon.MessageIcon.Information,
+                10000,
+            )
 
     def enable_startup(self):
         if not getattr(
