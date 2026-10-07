@@ -219,6 +219,23 @@ class CloudDB:
             raise
         return response.data[0] if response.data else None
 
+    def publish_notification_event(self, source: str, title: str, message: str, notification_type: str = "info"):
+        self._require_login()
+        payload = {
+            "workspace_id": self.workspace_id,
+            "source": str(source or "").strip(),
+            "title": str(title or "").strip(),
+            "message": str(message or ""),
+            "notification_type": str(notification_type or "info"),
+            "created_by": self.user.id,
+        }
+        response = (
+            self.client.table("notification_events")
+            .insert(payload)
+            .execute()
+        )
+        return response.data[0] if response.data else None
+
     def update_log(self, log_id: int, title: str, description: str):
         self._require_login()
         response = (
