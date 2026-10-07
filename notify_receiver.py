@@ -1,5 +1,6 @@
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal, Slot
@@ -153,7 +154,7 @@ class _PollJob(QRunnable):
 
 
 class CentralNotifyReceiver(QObject):
-    event = Signal(str, str, str)
+    event = Signal(str, str, str, bool)
     status_changed = Signal(str)
     login_success = Signal(str)
     login_failed = Signal(str)
@@ -317,10 +318,29 @@ class CentralNotifyReceiver(QObject):
             title = str(row.get("title") or "DailyLog Notification")
             message = str(row.get("message") or "")
 
+            created_at = str(
+                row.get("created_at") or ""
+            ).strip()
+
+            show_popup = True
+            if created_at:
+                try:
+                    parsed = datetime.fromisoformat(
+                        created_at.replace("Z", "+00:00")
+                    )
+                    local_created = parsed.astimezone()
+                    local_today = datetime.now().astimezone().date()
+                    show_popup = (
+                        local_created.date() == local_today
+                    )
+                except ValueError:
+                    show_popup = True
+
             self.event.emit(
                 source,
                 title,
                 message,
+                show_popup,
             )
 
             if event_id > self.last_id:
