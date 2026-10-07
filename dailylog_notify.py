@@ -29,6 +29,7 @@ from update_checker import UpdateChecker
 APP_VERSION = "1.1.0"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
+DEFAULT_RECEIVER_EMAIL = "daily123@gmail.com"
 
 NOTIFY_RELEASES_API = (
     "https://api.github.com/repos/Pnck15/dailylogs/releases?per_page=20"
@@ -128,14 +129,16 @@ class LoginDialog(QDialog):
             QLabel("Email")
         )
 
-        self.email = QLineEdit(
-            str(
-                settings.value(
-                    "central/email",
-                    "",
-                )
-                or ""
+        saved_email = str(
+            settings.value(
+                "central/email",
+                DEFAULT_RECEIVER_EMAIL,
             )
+            or DEFAULT_RECEIVER_EMAIL
+        ).strip()
+
+        self.email = QLineEdit(
+            saved_email
         )
         self.email.setPlaceholderText(
             "employee@email.com"
