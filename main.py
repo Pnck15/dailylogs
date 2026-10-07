@@ -4919,6 +4919,13 @@ class DailyLog(QWidget):
                 else []
             )
 
+            # SA Notify is date-driven only:
+            # show current-day appointment matches, never edit/delete events.
+            if branch == "SA":
+                if event_type != "today_appointment":
+                    continue
+                nested_changes = []
+
             # Pure today reminders repeat from GAS every poll.
             # Persistently suppress only those reminders; a real edit in
             # the same row is still allowed through.
