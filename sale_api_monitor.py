@@ -1,9 +1,9 @@
 """Client for Sale Delivery row feeds and SA change-monitor feeds."""
 from datetime import date, datetime
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
-from urllib.request import Request, urlopen
 import json
 import re
+import requests
 
 
 _THAI_MONTHS = {
@@ -79,12 +79,30 @@ class SaleAPIMonitor:
     * Structured GAS: {changes:[{type,sheet,row,customer,model,changes,today_fields,row_data}]}
     """
     def __init__(self, url, timeout=300):
-        self.url = (url or "").strip()
+        self.url = self._normalize_url(url)
         self.timeout = timeout
         self.last_changes = []
         self.last_payload = {}
         self.latest_rows = []
         self._delivery_snapshot = None
+
+    @staticmethod
+    def _normalize_url(url):
+        text = str(url or "").strip()
+        # Accept URLs pasted from Markdown or copied with surrounding < >.
+        if text.startswith("[") and "](" in text and text.endswith(")"):
+            text = text.split("](", 1)[1][:-1].strip()
+        text = text.strip("<> ").replace("https:https://", "https://", 1)
+        if not text:
+            return ""
+        parts = urlsplit(text)
+        if parts.scheme not in ("http", "https"):
+            raise ValueError("Apps Script URL ต้องขึ้นต้นด้วย https://")
+        if parts.netloc != "script.google.com":
+            raise ValueError("URL ต้องเป็น Google Apps Script Web App (script.google.com)")
+        if not parts.path.rstrip("/").endswith("/exec"):
+            raise ValueError("Apps Script Web App URL ต้องลงท้ายด้วย /exec")
+        return text
 
     def _action_url(self):
         if not self.url:
@@ -96,23 +114,50 @@ class SaleAPIMonitor:
         return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
     def check(self, initial=False):
-        request = Request(
-            self._action_url(),
-            headers={"Accept": "application/json", "User-Agent": "DailyLog-Notifier/1.1"},
-            method="GET",
-        )
+        url = self._action_url()
         try:
-            with urlopen(request, timeout=self.timeout) as response:
-                raw = response.read().decode("utf-8-sig", errors="replace")
-                status = getattr(response, "status", 200)
-        except Exception as exc:
-            raise RuntimeError(f"เรียก Apps Script ไม่สำเร็จ/หมดเวลารอ: {exc}") from exc
+            response = requests.get(
+                url,
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "DailyLog-Notifier/1.2",
+                    "Cache-Control": "no-cache",
+                },
+                timeout=(10, self.timeout),
+                allow_redirects=True,
+            )
+        except requests.exceptions.ConnectTimeout as exc:
+            raise RuntimeError(
+                "เชื่อมต่อ Google Apps Script ไม่สำเร็จ: connect timeout"
+            ) from exc
+        except requests.exceptions.ReadTimeout as exc:
+            raise RuntimeError(
+                f"Google Apps Script ยังไม่ตอบกลับภายใน {self.timeout} วินาที"
+            ) from exc
+        except requests.exceptions.RequestException as exc:
+            raise RuntimeError(
+                f"เรียก Apps Script ไม่สำเร็จ: {exc}"
+            ) from exc
+
+        status = response.status_code
+        raw = response.content.decode("utf-8-sig", errors="replace")
+
         if status < 200 or status >= 300:
-            raise RuntimeError(f"Apps Script ตอบกลับ HTTP {status}")
+            preview = raw[:300].replace("\n", " ")
+            raise RuntimeError(
+                f"Apps Script ตอบกลับ HTTP {status}: {preview}"
+            )
+
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError as exc:
             preview = raw[:400].replace("\n", " ")
+            lowered = preview.lower()
+            if "<html" in lowered or "<!doctype" in lowered:
+                raise RuntimeError(
+                    "Apps Script Web App ตอบกลับเป็นหน้า HTML แทน JSON "
+                    "(ตรวจ Deployment/สิทธิ์การเข้าถึง และต้องใช้ URL /exec)"
+                ) from exc
             raise RuntimeError(f"คำตอบไม่ใช่ JSON: {preview}") from exc
         if not isinstance(payload, dict):
             raise RuntimeError("รูปแบบคำตอบ API ไม่ถูกต้อง: ต้องเป็น JSON object")
