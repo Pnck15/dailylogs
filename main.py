@@ -4798,148 +4798,323 @@ class DailyLog(QWidget):
             )
 
         # =====================================
-        # GAS CHANGE MONITOR EVENTS (SA & MainNoti)
+        # STRUCTURED GAS EVENTS
         # =====================================
 
-        column_labels = {
-            "B": "เวลานัดหมาย (预约时间)",
-            "C": "ลำดับ (序号)",
-            "D": "วันที่ (日期)",
-            "E": "ชื่อลูกค้า (客户的姓名)",
-            "F": "ทะเบียนรถ (车牌)",
-            "G": "เบอร์ติดต่อ (电话)",
-            "H": "รุ่นรถ (车型)",
-            "I": "แผนก BP/SV (部分)",
-            "J": "SA (SA 在)",
-            "K": "รายการคำสั่งซ่อม (保修项目)",
-            "L": "สถานะการโทรติดตาม (电话跟进状态)",
-            "M": "เวลาส่งมอบรถ (交车时间)",
-            "N": "นัดผ่าน (预约方式)",
-            "O": "สถานะ (预约状态)",
-            "P": "หมายเหตุ (备注)",
+        sa_column_labels = {
+            "B": "เวลานัดหมาย 预约时间",
+            "C": "ลำดับ 序号",
+            "D": "วันที่ 日期",
+            "E": "ชื่อ-นามสกุล ลูกค้า 客户的姓名",
+            "F": "ทะเบียนรถ 车牌",
+            "G": "เบอร์ติดต่อ 电话",
+            "H": "รุ่นรถ 车型",
+            "I": "แผนก BP/SV 部分",
+            "J": "SA 在",
+            "K": "รายการคำสั่งซ่อม 保修项目",
+            "L": (
+                "สถานะการโทรติดตาม "
+                "(รับนัด , ไม่สะดวก , ไม่รับสาย , เข้าศูนย์อื่น) "
+                "电话跟进状态：已预约 / 不方便 / 未接 / 去其他店"
+            ),
+            "M": "เวลาส่งมอบรถ 交车时间",
+            "N": "นัดผ่าน 预约方式",
+            "O": "สถานะ 预约状态",
+            "P": "หมายเหตุ 备注",
         }
 
         def value_text(value):
             if value is None or value == "":
                 return "-"
             if isinstance(value, (dict, list)):
-                return json.dumps(value, ensure_ascii=False)
+                return json.dumps(
+                    value,
+                    ensure_ascii=False,
+                )
             return str(value)
 
         def column_letter(value):
             if value is None:
                 return ""
-            text_value = str(value).strip().upper()
-            if text_value in column_labels:
+
+            text_value = str(
+                value
+            ).strip().upper()
+
+            if (
+                len(text_value) == 1
+                and "A" <= text_value <= "Z"
+            ):
                 return text_value
+
             if text_value.isdigit():
                 number = int(text_value)
                 if 1 <= number <= 26:
-                    return chr(64 + number)
+                    return chr(
+                        64 + number
+                    )
+
             return ""
 
-        for event in result.get("changes", []):
-            if not isinstance(event, dict):
-                event_text = value_text(event)
+        def event_item_label(item):
+            # Structured Sale Delivery GAS sends "header".
+            # SA may send either "header" or column metadata.
+            header = (
+                item.get("header")
+                or item.get("field")
+                or item.get("columnName")
+                or item.get("name")
+            )
+
+            if header:
+                return str(header)
+
+            col = column_letter(
+                item.get("columnLetter")
+                or item.get("column")
+                or item.get("col")
+                or item.get("columnIndex")
+                or item.get("colIndex")
+            )
+
+            if (
+                branch == "SA"
+                and col in sa_column_labels
+            ):
+                return sa_column_labels[col]
+
+            return col or "ข้อมูล"
+
+        for event in result.get(
+            "changes",
+            [],
+        ):
+
+            if not isinstance(
+                event,
+                dict,
+            ):
+
                 self.add_sale_notification(
-                    f"{title} - มีการเปลี่ยนแปลงข้อมูล",
-                    event_text,
+                    (
+                        f"{title} "
+                        "- มีการเปลี่ยนแปลงข้อมูล"
+                    ),
+                    value_text(event),
                     "edit",
                 )
                 continue
 
-            row_number = (
-                event.get("row")
-                or event.get("rowNumber")
-                or event.get("row_number")
-                or event.get("r")
-            )
-            sheet_name = (
-                event.get("sheetName")
-                or event.get("sheet_name")
-                or event.get("sheet")
-                or event.get("tab")
-            )
-            col = column_letter(
-                event.get("columnLetter")
-                or event.get("column")
-                or event.get("col")
-                or event.get("columnIndex")
-                or event.get("colIndex")
-            )
-            field_name = (
-                event.get("field")
-                or event.get("columnName")
-                or event.get("header")
-                or event.get("name")
-            )
-            label = column_labels.get(col, str(field_name or col or "ข้อมูล"))
-            lines = []
-            old_keys = ("oldValue", "old_value", "before", "old")
-            new_keys = ("newValue", "new_value", "after", "new", "value")
-            old_value = next((event[k] for k in old_keys if k in event), None)
-            new_value = next((event[k] for k in new_keys if k in event), None)
+            event_type = str(
+                event.get("type")
+                or "row_change"
+            ).strip()
 
-            if any(k in event for k in old_keys) or any(k in event for k in ("newValue", "new_value", "after", "new")):
-                lines.append(
-                    f"{label}: {value_text(old_value)} → {value_text(new_value)}"
+            customer = str(
+                event.get("customer")
+                or ""
+            ).strip()
+
+            model = str(
+                event.get("model")
+                or ""
+            ).strip()
+
+            lines = []
+
+            # Context สำคัญของรายการ
+            if customer:
+                if branch == "SA":
+                    lines.append(
+                        "ชื่อ-นามสกุล ลูกค้า "
+                        f"客户的姓名: {customer}"
+                    )
+                else:
+                    lines.append(
+                        f"Customer: {customer}"
+                    )
+
+            if model:
+                if branch == "SA":
+                    lines.append(
+                        f"รุ่นรถ 车型: {model}"
+                    )
+                else:
+                    lines.append(
+                        f"Model: {model}"
+                    )
+
+            # วันที่ที่ตรงกับวันนี้
+            today_fields = (
+                event.get("today_fields")
+                if isinstance(
+                    event.get("today_fields"),
+                    list,
+                )
+                else []
+            )
+
+            for item in today_fields:
+
+                if not isinstance(
+                    item,
+                    dict,
+                ):
+                    continue
+
+                label = (
+                    item.get("header")
+                    or item.get("field")
+                    or "วันที่"
                 )
 
-            nested = event.get("changes")
-            if isinstance(nested, list):
-                for item in nested:
-                    if isinstance(item, dict):
-                        item_col = column_letter(
-                            item.get("columnLetter") or item.get("column")
-                            or item.get("col") or item.get("columnIndex")
+                value = item.get(
+                    "value",
+                    "",
+                )
+
+                if value not in (
+                    None,
+                    "",
+                ):
+                    lines.append(
+                        f"{label}: {value}"
+                    )
+
+            # สิ่งที่เปลี่ยนทั้งหมดใน Row เดียวกัน
+            nested = (
+                event.get("changes")
+                if isinstance(
+                    event.get("changes"),
+                    list,
+                )
+                else []
+            )
+
+            for item in nested:
+
+                if not isinstance(
+                    item,
+                    dict,
+                ):
+                    lines.append(
+                        value_text(item)
+                    )
+                    continue
+
+                label = event_item_label(
+                    item
+                )
+
+                change_type = str(
+                    item.get("type")
+                    or ""
+                ).lower()
+
+                before = next(
+                    (
+                        item[key]
+                        for key in (
+                            "oldValue",
+                            "old_value",
+                            "before",
+                            "old",
                         )
-                        item_label = column_labels.get(
-                            item_col, str(item.get("field") or item.get("columnName") or "ข้อมูล")
+                        if key in item
+                    ),
+                    None,
+                )
+
+                after = next(
+                    (
+                        item[key]
+                        for key in (
+                            "newValue",
+                            "new_value",
+                            "after",
+                            "new",
+                            "value",
                         )
-                        before = next((item[k] for k in old_keys if k in item), None)
-                        after = next((item[k] for k in new_keys if k in item), None)
-                        if any(k in item for k in old_keys) or any(k in item for k in ("newValue", "new_value", "after", "new")):
-                            lines.append(f"{item_label}: {value_text(before)} → {value_text(after)}")
-                        else:
-                            lines.append(value_text(item))
-                    else:
-                        lines.append(value_text(item))
-            elif isinstance(nested, dict):
-                for key, value in nested.items():
-                    lines.append(f"{key}: {value_text(value)}")
+                        if key in item
+                    ),
+                    None,
+                )
+
+                if change_type == "created":
+
+                    lines.append(
+                        f"{label}: "
+                        f"{value_text(after)}"
+                    )
+
+                elif change_type == "deleted":
+
+                    lines.append(
+                        f"{label}: "
+                        "ลบข้อมูล "
+                        f"(เดิม: {value_text(before)})"
+                    )
+
+                else:
+
+                    lines.append(
+                        f"{label}: "
+                        f"{value_text(before)} "
+                        "→ "
+                        f"{value_text(after)}"
+                    )
 
             if not lines:
-                ignored = {
-                    "row", "rowNumber", "row_number", "r", "sheetName",
-                    "sheet_name", "sheet", "tab", "timestamp", "time",
-                    "event", "type", "changes",
-                }
-                for key, value in event.items():
-                    if key in ignored:
-                        continue
-                    key_col = column_letter(key)
-                    display_key = column_labels.get(key_col, key)
-                    lines.append(f"{display_key}: {value_text(value)}")
+                lines.append(
+                    "พบการเปลี่ยนแปลงข้อมูล"
+                )
 
-            header = []
-            if sheet_name:
-                header.append(f"แท็บ: {sheet_name}")
-            if row_number is not None:
-                header.append(f"แถว: {row_number}")
-            message = "\n".join(header + lines) or "พบการเปลี่ยนแปลงข้อมูล"
+            # ห้ามแสดง Row / Sheet metadata ใน Popup
+            message = "\n".join(
+                lines
+            )
+
+            if event_type == "delivery_today":
+
+                event_title = (
+                    f"{title} - ส่งรถวันนี้"
+                )
+                notification_type = "due"
+
+            elif event_type == "today_appointment":
+
+                event_title = (
+                    f"{title} - นัดหมายวันนี้"
+                )
+                notification_type = "due"
+
+            else:
+
+                event_title = (
+                    f"{title} "
+                    "- มีการเปลี่ยนแปลงข้อมูล"
+                )
+                notification_type = "edit"
+
             self.add_sale_notification(
-                f"{title} - มีการเปลี่ยนแปลงข้อมูล",
+                event_title,
                 message,
-                "edit",
+                notification_type,
             )
 
         # =====================================
         # DUE TODAY
         # =====================================
 
-        self.notify_due_today(
-            branch
-        )
+        # Structured GAS already emits delivery_today / today_appointment.
+        # Legacy row feeds still use get_due_today().
+        if not result.get(
+            "structured",
+            False,
+        ):
+            self.notify_due_today(
+                branch
+            )
 
     # =========================================
     # Delivery Due Today
