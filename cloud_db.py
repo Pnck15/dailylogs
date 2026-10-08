@@ -219,6 +219,79 @@ class CloudDB:
             raise
         return response.data[0] if response.data else None
 
+    def upsert_monitor_source(
+        self,
+        source_key: str,
+        source_name: str,
+        source_type: str,
+        gas_url: str,
+        enabled: bool = True,
+    ):
+        self._require_login()
+
+        if str(self.role or "").lower() != "admin":
+            raise RuntimeError(
+                "เฉพาะ Admin เท่านั้นที่ตั้งค่า Central Monitor ได้"
+            )
+
+        payload = {
+            "workspace_id": self.workspace_id,
+            "source_key": str(source_key or "").strip(),
+            "source_name": str(source_name or "").strip(),
+            "source_type": str(source_type or "").strip(),
+            "gas_url": str(gas_url or "").strip(),
+            "enabled": bool(enabled),
+            "updated_by": self.user.id,
+        }
+
+        if not payload["source_key"] or not payload["gas_url"]:
+            raise ValueError(
+                "source_key และ gas_url ห้ามว่าง"
+            )
+
+        response = (
+            self.client.table("monitor_sources")
+            .upsert(
+                payload,
+                on_conflict="workspace_id,source_key",
+            )
+            .execute()
+        )
+
+        return response.data[0] if response.data else None
+
+    def disable_monitor_source(
+        self,
+        source_key: str,
+    ):
+        self._require_login()
+
+        if str(self.role or "").lower() != "admin":
+            raise RuntimeError(
+                "เฉพาะ Admin เท่านั้นที่ตั้งค่า Central Monitor ได้"
+            )
+
+        response = (
+            self.client.table("monitor_sources")
+            .update(
+                {
+                    "enabled": False,
+                    "updated_by": self.user.id,
+                }
+            )
+            .eq(
+                "workspace_id",
+                self.workspace_id,
+            )
+            .eq(
+                "source_key",
+                str(source_key or "").strip(),
+            )
+            .execute()
+        )
+
+        return response.data
+
     def publish_notification_event(self, source: str, title: str, message: str, notification_type: str = "info"):
         self._require_login()
         payload = {
