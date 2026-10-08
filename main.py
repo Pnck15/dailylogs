@@ -528,6 +528,12 @@ class DailyLog(QWidget):
         self.start_saved_sale_monitors()
         self.update_line_button()
 
+        # Sync saved GAS endpoints to Supabase Central Worker.
+        QTimer.singleShot(
+            3000,
+            self.sync_saved_monitor_sources_to_cloud,
+        )
+
         self.restore_saved_background()
 
         # =========================================
@@ -3843,26 +3849,9 @@ class DailyLog(QWidget):
         )
 
         if show_toast:
-            if hasattr(self, "cloud"):
-                try:
-                    source = (
-                        str(title or "")
-                        .split(" - ", 1)[0]
-                        .strip()
-                    )
-                    self.cloud.call(
-                        "publish_notification_event",
-                        source,
-                        title,
-                        message,
-                        notification_type,
-                    )
-                except Exception as error:
-                    print(
-                        "[Central Notify Publish]",
-                        error,
-                    )
-
+            # GAS-based central events are published by the Supabase
+            # Central Worker so employee Notify clients do not depend on
+            # this Admin PC being online.
             if self.notification_channels.line_enabled():
                 ok, _line_message = (
                     self.notification_channels.send_line(
@@ -4018,6 +4007,105 @@ class DailyLog(QWidget):
         button.setToolTip(
             f"{self._sale_title(branch)}: {tip}"
         )
+
+    def _central_source_meta(
+        self,
+        branch,
+    ):
+        mapping = {
+            "Sathorn": (
+                "sale_sathorn",
+                "Sale Deli Sathorn",
+                "sale",
+            ),
+            "Srinakarin": (
+                "sale_srinakarin",
+                "Sale Deli Srinakarin",
+                "sale",
+            ),
+            "SA": (
+                "sa_sathorn",
+                "SA Sathorn",
+                "sa",
+            ),
+            "MainNoti": (
+                "main_noti",
+                "MainNoti",
+                "structured",
+            ),
+        }
+
+        return mapping.get(
+            branch
+        )
+
+    def sync_monitor_source_to_cloud(
+        self,
+        branch,
+        enabled=True,
+    ):
+        meta = self._central_source_meta(
+            branch
+        )
+
+        if not meta:
+            return
+
+        source_key, source_name, source_type = (
+            meta
+        )
+
+        url = (
+            self.sale_api_urls.get(
+                branch,
+                "",
+            ).strip()
+        )
+
+        if enabled and not url:
+            return
+
+        try:
+            if enabled:
+                self.cloud.call(
+                    "upsert_monitor_source",
+                    source_key,
+                    source_name,
+                    source_type,
+                    url,
+                    True,
+                )
+            else:
+                self.cloud.call(
+                    "disable_monitor_source",
+                    source_key,
+                )
+        except Exception as error:
+            print(
+                "[Central Monitor Sync]",
+                branch,
+                error,
+            )
+
+    def sync_saved_monitor_sources_to_cloud(
+        self,
+    ):
+        for branch in (
+            "Sathorn",
+            "Srinakarin",
+            "SA",
+            "MainNoti",
+        ):
+            if (
+                self.sale_api_urls.get(
+                    branch,
+                    "",
+                ).strip()
+            ):
+                self.sync_monitor_source_to_cloud(
+                    branch,
+                    enabled=True,
+                )
 
     # =========================================
     # Re-connect GAS Monitors
@@ -4278,6 +4366,11 @@ class DailyLog(QWidget):
 
             self.sale_enabled[branch] = (
                 True
+            )
+
+            self.sync_monitor_source_to_cloud(
+                branch,
+                enabled=True,
             )
 
             self._sale_timer(
@@ -4702,6 +4795,11 @@ class DailyLog(QWidget):
                 True
             )
 
+            self.sync_monitor_source_to_cloud(
+                branch,
+                enabled=True,
+            )
+
             self._sale_timer(
                 branch
             ).start()
@@ -4840,6 +4938,11 @@ class DailyLog(QWidget):
 
         setting_key = setting_keys.get(
             branch
+        )
+
+        self.sync_monitor_source_to_cloud(
+            branch,
+            enabled=False,
         )
 
         self.sale_api_urls[branch] = (
