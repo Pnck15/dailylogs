@@ -155,6 +155,7 @@ class SaleAPIMonitor:
         self.last_payload = {}
         self.latest_rows = []
         self._delivery_snapshot = None
+        self._snapshot_scope = None
 
         self.last_elapsed_seconds = 0.0
         self.last_action = ""
@@ -567,6 +568,102 @@ class SaleAPIMonitor:
 
         return payload
 
+    @staticmethod
+    def _row_identity(
+        values,
+        fallback_row,
+    ):
+        row = values.get(
+            "row",
+            fallback_row,
+        )
+
+        sheet = str(
+            values.get(
+                "sheet",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if sheet:
+            return (
+                f"{sheet}|{row}"
+            )
+
+        return str(
+            row
+        )
+
+    @staticmethod
+    def _row_data_signature(
+        values,
+    ):
+        row_data = values.get(
+            "row_data"
+        )
+
+        if isinstance(
+            row_data,
+            list,
+        ):
+            normalized = []
+
+            for item in row_data:
+                if not isinstance(
+                    item,
+                    dict,
+                ):
+                    continue
+
+                normalized.append(
+                    (
+                        str(
+                            item.get(
+                                "column",
+                                "",
+                            )
+                            or ""
+                        ).strip(),
+                        str(
+                            item.get(
+                                "header",
+                                "",
+                            )
+                            or ""
+                        ).strip(),
+                        str(
+                            item.get(
+                                "value",
+                                "",
+                            )
+                            or ""
+                        ).strip(),
+                    )
+                )
+
+            return tuple(
+                normalized
+            )
+
+        return tuple(
+            str(
+                values.get(
+                    field,
+                    "",
+                )
+                or ""
+            )
+            for field in (
+                "model",
+                "vin",
+                "customer",
+                "sale",
+                "pay_day",
+                "delivery_date",
+            )
+        )
+
     def check(
         self,
         initial=False,
@@ -632,7 +729,10 @@ class SaleAPIMonitor:
             ]
 
             current = {
-                str(row): values
+                self._row_identity(
+                    values,
+                    row,
+                ): values
                 for row, values
                 in normalized
             }
@@ -641,8 +741,37 @@ class SaleAPIMonitor:
             changed = []
             deleted = []
 
+            scope = (
+                str(
+                    payload.get(
+                        "version",
+                        "",
+                    )
+                    or ""
+                )
+                + "|"
+                + str(
+                    payload.get(
+                        "mode",
+                        "rows",
+                    )
+                    or "rows"
+                )
+                + "|"
+                + str(
+                    payload.get(
+                        "today",
+                        "",
+                    )
+                    or ""
+                )
+            )
+
             previous = (
                 self._delivery_snapshot
+                if self._snapshot_scope
+                == scope
+                else None
             )
 
             if previous is not None:
@@ -654,26 +783,26 @@ class SaleAPIMonitor:
                     if old is None:
                         added.append(
                             (
-                                values.get("row"),
+                                values.get(
+                                    "row"
+                                ),
                                 values,
                             )
                         )
 
-                    elif any(
-                        old.get(field, "")
-                        != values.get(field, "")
-                        for field in (
-                            "model",
-                            "vin",
-                            "customer",
-                            "sale",
-                            "pay_day",
-                            "delivery_date",
+                    elif (
+                        self._row_data_signature(
+                            old
+                        )
+                        != self._row_data_signature(
+                            values
                         )
                     ):
                         changed.append(
                             (
-                                values.get("row"),
+                                values.get(
+                                    "row"
+                                ),
                                 old,
                                 values,
                             )
@@ -682,12 +811,18 @@ class SaleAPIMonitor:
                 for key, old in previous.items():
                     if key not in current:
                         deleted.append(
-                            old.get("row")
+                            (
+                                old.get(
+                                    "row"
+                                ),
+                                old,
+                            )
                         )
 
             self._delivery_snapshot = (
                 current
             )
+            self._snapshot_scope = scope
             self.last_changes = []
 
             return {
