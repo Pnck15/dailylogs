@@ -519,11 +519,21 @@ class SaleAPIMonitor:
 
     def ping(self):
         """Fast connectivity test; GAS must support action=ping."""
-        payload = self._request_json(
-            "ping",
-            read_timeout=15,
-            max_retries=2,
-        )
+        try:
+            payload = self._request_json(
+                "ping",
+                read_timeout=15,
+                max_retries=2,
+            )
+        except RuntimeError as exc:
+            message = str(exc)
+            if "Unknown action: ping" in message:
+                raise RuntimeError(
+                    "GAS Deployment นี้เป็นเวอร์ชันเก่าและยังไม่รองรับ "
+                    "action=ping กรุณา Deploy Code.gs เวอร์ชันใหม่ "
+                    "แล้วใช้ URL /exec เดิม"
+                ) from exc
+            raise
 
         if payload.get(
             "action"
