@@ -4830,6 +4830,7 @@ class DailyLog(QWidget):
 
         self._sale_busy[branch] = True
         self.sale_errors[branch] = False
+        self.sale_last_error[branch] = ""
         self.update_sale_button(branch)
 
         def finished(result):
@@ -4838,6 +4839,7 @@ class DailyLog(QWidget):
                 False
             )
             self.sale_errors[branch] = False
+            self.sale_last_error[branch] = ""
             self.update_sale_button(branch)
 
             self._process_sale_result(
@@ -4851,6 +4853,9 @@ class DailyLog(QWidget):
                 False
             )
             self.sale_errors[branch] = True
+            self.sale_last_error[branch] = str(
+                _message
+            )
             self.update_sale_button(branch)
 
         run_async(
