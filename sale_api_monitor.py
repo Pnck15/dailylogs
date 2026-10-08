@@ -613,9 +613,8 @@ class SaleAPIMonitor:
 
         return ""
 
-    @classmethod
+    @staticmethod
     def _row_identity(
-        cls,
         values,
         fallback_row,
     ):
@@ -624,6 +623,28 @@ class SaleAPIMonitor:
             fallback_row,
         )
 
+        sheet = str(
+            values.get(
+                "sheet",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if sheet:
+            return (
+                f"{sheet}|ROW={row}"
+            )
+
+        return (
+            f"ROW={row}"
+        )
+
+    @classmethod
+    def _stable_identity(
+        cls,
+        values,
+    ):
         sheet = str(
             values.get(
                 "sheet",
@@ -651,9 +672,7 @@ class SaleAPIMonitor:
                     f"{sheet}|C={sequence}|F={plate}"
                 )
 
-            return (
-                f"{sheet}|ROW={row}"
-            )
+            return ""
 
         vin = str(
             values.get(
@@ -668,9 +687,43 @@ class SaleAPIMonitor:
                 f"VIN={vin}"
             )
 
-        return (
-            f"ROW={row}"
-        )
+        return ""
+
+    @classmethod
+    def _unique_stable_map(
+        cls,
+        rows,
+    ):
+        found = {}
+        duplicates = set()
+
+        for key, values in rows.items():
+            stable = (
+                cls._stable_identity(
+                    values
+                )
+            )
+
+            if not stable:
+                continue
+
+            if stable in found:
+                duplicates.add(
+                    stable
+                )
+                continue
+
+            found[stable] = (
+                key
+            )
+
+        for stable in duplicates:
+            found.pop(
+                stable,
+                None,
+            )
+
+        return found
 
     @staticmethod
     def _row_data_signature(
@@ -852,22 +905,39 @@ class SaleAPIMonitor:
             )
 
             if previous is not None:
-                for key, values in current.items():
-                    old = previous.get(
-                        key
+                matched_current = set()
+                matched_previous = set()
+
+                current_stable = (
+                    self._unique_stable_map(
+                        current
+                    )
+                )
+                previous_stable = (
+                    self._unique_stable_map(
+                        previous
+                    )
+                )
+
+                def compare_pair(
+                    current_key,
+                    previous_key,
+                ):
+                    values = current[
+                        current_key
+                    ]
+                    old = previous[
+                        previous_key
+                    ]
+
+                    matched_current.add(
+                        current_key
+                    )
+                    matched_previous.add(
+                        previous_key
                     )
 
-                    if old is None:
-                        added.append(
-                            (
-                                values.get(
-                                    "row"
-                                ),
-                                values,
-                            )
-                        )
-
-                    elif (
+                    if (
                         self._row_data_signature(
                             old
                         )
@@ -885,8 +955,64 @@ class SaleAPIMonitor:
                             )
                         )
 
+                # First match stable business identifiers so inserting or
+                # deleting physical Sheet rows does not create a cascade.
+                for stable, current_key in (
+                    current_stable.items()
+                ):
+                    previous_key = (
+                        previous_stable.get(
+                            stable
+                        )
+                    )
+
+                    if previous_key is None:
+                        continue
+
+                    compare_pair(
+                        current_key,
+                        previous_key,
+                    )
+
+                # Then match remaining rows by physical Sheet row. This also
+                # lets edits to VIN / sequence / plate be reported as edits
+                # instead of a false delete + add.
+                for current_key in current:
+                    if (
+                        current_key
+                        in matched_current
+                    ):
+                        continue
+
+                    if (
+                        current_key in previous
+                        and current_key
+                        not in matched_previous
+                    ):
+                        compare_pair(
+                            current_key,
+                            current_key,
+                        )
+
+                for key, values in current.items():
+                    if (
+                        key not in
+                        matched_current
+                    ):
+                        added.append(
+                            (
+                                values.get(
+                                    "row"
+                                ),
+                                values,
+                            )
+                        )
+
                 for key, old in previous.items():
-                    if key not in current:
+                    if (
+                        key not in
+                        matched_previous
+                    ):
                         deleted.append(
                             (
                                 old.get(
