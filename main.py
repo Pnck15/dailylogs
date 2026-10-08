@@ -2535,7 +2535,7 @@ class DailyLog(QWidget):
         notification_layout.setSpacing(5)
 
         self.notification_title = QLabel(
-            "🔔 Sale Delivery Notifications"
+            "🔔 Notification Logs"
         )
         self.notification_title.setStyleSheet(
             "font-weight: bold; padding: 4px;"
