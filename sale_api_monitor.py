@@ -469,6 +469,12 @@ class SaleAPIMonitor:
                         )
                         continue
 
+                    if payload.get("busy") is True:
+                        raise RuntimeError(
+                            "[GAS_BUSY] "
+                            + error_message
+                        )
+
                     raise RuntimeError(
                         error_message
                     )
