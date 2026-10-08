@@ -4595,6 +4595,7 @@ class DailyLog(QWidget):
         branch,
         url,
         dialog,
+        controls=None,
     ):
 
         if self._sale_busy.get(
@@ -4603,18 +4604,39 @@ class DailyLog(QWidget):
         ):
             return
 
+        controls = controls or {}
+
         self._sale_busy[branch] = True
         self.sale_errors[branch] = False
+        self.sale_last_error[branch] = ""
         self.update_sale_button(branch)
 
         monitor = SaleAPIMonitor(
             url
         )
 
+        def restore_controls():
+
+            for key in (
+                "start",
+                "reconnect",
+                "stop",
+                "url",
+            ):
+                widget = controls.get(
+                    key
+                )
+
+                if widget is not None:
+                    widget.setEnabled(
+                        True
+                    )
+
         def finished(result):
 
             self._sale_busy[branch] = False
             self.sale_errors[branch] = False
+            self.sale_last_error[branch] = ""
 
             self.sale_monitors[branch] = (
                 monitor
@@ -4632,31 +4654,51 @@ class DailyLog(QWidget):
                 branch
             )
 
+            api_version = str(
+                result.get("version")
+                or result.get("api_version")
+                or ""
+            ).strip()
+
+            message = (
+                "Re-connect สำเร็จ"
+            )
+
+            if api_version:
+                message += (
+                    f"\nAPI: {api_version}"
+                )
+
+            message += (
+                "\nกำลังอ่านข้อมูลรอบแรก..."
+            )
+
             self.add_sale_notification(
                 self._sale_title(
                     branch
                 ),
-                (
-                    "เชื่อมต่อสำเร็จ\n"
-                    f"พบข้อมูล "
-                    f"{result.get('count', 0)} "
-                    "รายการ"
-                ),
+                message,
                 "info",
-            )
-
-            self._process_sale_result(
-                branch,
-                result,
             )
 
             if dialog.isVisible():
                 dialog.accept()
 
+            QTimer.singleShot(
+                0,
+                lambda b=branch:
+                self.check_sale_delivery_plan(
+                    b
+                ),
+            )
+
         def failed(message):
 
             self._sale_busy[branch] = False
             self.sale_errors[branch] = True
+            self.sale_last_error[branch] = str(
+                message
+            )
 
             self.sale_enabled[branch] = (
                 False
@@ -4674,22 +4716,25 @@ class DailyLog(QWidget):
                 branch
             )
 
+            restore_controls()
+
             QMessageBox.critical(
                 dialog,
-                "เชื่อมต่อไม่สำเร็จ",
+                "Re-connect ไม่สำเร็จ",
                 (
                     "ไม่สามารถเชื่อมต่อ "
                     "Apps Script Web App ได้\n\n"
-                    f"{message}"
+                    f"{message}\n\n"
+                    "ตรวจว่า Deploy เป็น Web App, "
+                    "URL ลงท้าย /exec และ GAS รองรับ action=ping"
                 ),
             )
 
         run_async(
             self,
-            monitor.check,
+            monitor.ping,
             finished,
             failed,
-            True,
         )
 
     # =========================================
