@@ -447,6 +447,74 @@ function diffFullRow(
   return changes;
 }
 
+function rowDataColumn(
+  row: AnyRow,
+  column: string,
+) {
+  const wanted =
+    normalize(column)
+      .toUpperCase();
+
+  for (const item of rowData(row)) {
+    if (
+      normalize(item.column)
+        .toUpperCase()
+      === wanted
+    ) {
+      return normalize(
+        item.value,
+      );
+    }
+  }
+
+  return "";
+}
+
+function saleIdentity(
+  row: AnyRow,
+) {
+  const vin =
+    normalize(
+      row.vin,
+    );
+
+  if (vin) {
+    return `VIN=${vin}`;
+  }
+
+  return `ROW=${normalize(row.row)}`;
+}
+
+function saIdentity(
+  row: AnyRow,
+) {
+  const sheet =
+    normalize(
+      row.sheet,
+    );
+
+  const sequence =
+    rowDataColumn(
+      row,
+      "C",
+    );
+
+  const plate =
+    rowDataColumn(
+      row,
+      "F",
+    );
+
+  if (
+    sequence ||
+    plate
+  ) {
+    return `${sheet}|C=${sequence}|F=${plate}`;
+  }
+
+  return `${sheet}|ROW=${normalize(row.row)}`;
+}
+
 function sourceRows(payload: AnyRow) {
   if (Array.isArray(payload.rows)) {
     return payload.rows;
@@ -480,7 +548,11 @@ async function processSale(
 
     if (!rowNumber) continue;
 
-    current[rowNumber] = row;
+    current[
+      saleIdentity(
+        row,
+      )
+    ] = row;
   }
 
   const version = normalize(payload.version);
@@ -498,13 +570,13 @@ async function processSale(
       : {};
 
   if (initialized) {
-    for (const [rowNumber, row] of Object.entries(current)) {
-      const old = previous[rowNumber];
+    for (const [identity, row] of Object.entries(current)) {
+      const old = previous[identity];
 
       if (!old) {
         await publishEvent(
           source,
-          `${source.source_key}|new|${rowNumber}|${rowSignature(row)}`,
+          `${source.source_key}|new|${identity}|${rowSignature(row)}`,
           `${source.source_name} - เพิ่มข้อมูล`,
           "ข้อมูลที่เพิ่ม\n" + formatFullRow(row),
           "new",
@@ -518,7 +590,7 @@ async function processSale(
       if (changes.length) {
         await publishEvent(
           source,
-          `${source.source_key}|edit|${rowNumber}|${rowSignature(row)}`,
+          `${source.source_key}|edit|${identity}|${rowSignature(row)}`,
           `${source.source_name} - มีการแก้ไขข้อมูล`,
           (
             "ข้อมูลที่เปลี่ยน\n"
@@ -531,14 +603,14 @@ async function processSale(
       }
     }
 
-    for (const [rowNumber, old] of Object.entries(previous)) {
-      if (rowNumber in current) {
+    for (const [identity, old] of Object.entries(previous)) {
+      if (identity in current) {
         continue;
       }
 
       await publishEvent(
         source,
-        `${source.source_key}|delete|${rowNumber}|${rowSignature(old)}`,
+        `${source.source_key}|delete|${identity}|${rowSignature(old)}`,
         `${source.source_name} - ลบข้อมูล`,
         "ข้อมูลที่ถูกลบ\n" + formatFullRow(old),
         "delete",
@@ -548,7 +620,12 @@ async function processSale(
 
   const today = bangkokTodayKey();
 
-  for (const [rowNumber, row] of Object.entries(current)) {
+  for (const [identity, row] of Object.entries(current)) {
+    const rowNumber =
+      normalize(
+        row.row,
+      );
+
     const payToday =
       dateKeyFromText(row.pay_day) === today;
 
@@ -570,7 +647,7 @@ async function processSale(
 
     await publishEvent(
       source,
-      `${source.source_key}|due|${today}|${rowNumber}|${normalize(row.pay_day)}|${normalize(row.delivery_date)}`,
+      `${source.source_key}|due|${today}|${identity}|${normalize(row.pay_day)}|${normalize(row.delivery_date)}`,
       `${source.source_name} - ${dueKind}`,
       "ข้อมูลทั้งแถว\n" + formatFullRow(row),
       "due",
@@ -609,7 +686,11 @@ async function processSa(
       continue;
     }
 
-    current[`${sheet}|${rowNumber}`] = row;
+    current[
+      saIdentity(
+        row,
+      )
+    ] = row;
   }
 
   const version = normalize(payload.version);
