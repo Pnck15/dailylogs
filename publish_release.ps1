@@ -68,9 +68,13 @@ Write-Host "Repo    : $GitHubRepo"
 Write-Host "Tag     : $tag"
 Write-Host ""
 
-$existing = gh release view $tag --repo $GitHubRepo 2>$null
+$oldPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+gh release view $tag --repo $GitHubRepo *> $null
+$exists = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = $oldPreference
 
-if ($LASTEXITCODE -eq 0) {
+if ($exists) {
     throw "Release $tag already exists on GitHub. Increase APP_VERSION in main.py before publishing again."
 }
 
