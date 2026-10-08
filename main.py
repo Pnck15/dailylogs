@@ -272,6 +272,13 @@ class DailyLog(QWidget):
             "MainNoti": False,
         }
 
+        self._sale_retry_waiting = {
+            "Sathorn": False,
+            "Srinakarin": False,
+            "SA": False,
+            "MainNoti": False,
+        }
+
         # =========================================
         # Database / Cloud Login
         # =========================================
@@ -3957,6 +3964,12 @@ class DailyLog(QWidget):
         if self._sale_busy.get(branch, False):
             dot = "🟡"
             tip = "กำลังเชื่อมต่อ / กำลังตรวจสอบ"
+        elif self._sale_retry_waiting.get(branch, False):
+            dot = "🟡"
+            tip = (
+                "Apps Script กำลังทำงานจากคำขออื่น "
+                "ระบบจะลองใหม่อัตโนมัติ"
+            )
         elif self.sale_errors.get(branch, False):
             dot = "🔴"
             error_text = str(
@@ -4067,6 +4080,9 @@ class DailyLog(QWidget):
 
         self.sale_last_elapsed[branch] = (
             0.0
+        )
+        self._sale_retry_waiting[branch] = (
+            False
         )
 
         self.update_sale_button(
@@ -4863,6 +4879,7 @@ class DailyLog(QWidget):
             return
 
         self._sale_busy[branch] = True
+        self._sale_retry_waiting[branch] = False
         self.sale_errors[branch] = False
         self.sale_last_error[branch] = ""
         self.update_sale_button(branch)
@@ -4893,9 +4910,53 @@ class DailyLog(QWidget):
             self._sale_busy[branch] = (
                 False
             )
-            self.sale_errors[branch] = True
-            self.sale_last_error[branch] = str(
+
+            message = str(
                 _message
+            )
+
+            if message.startswith(
+                "[GAS_BUSY]"
+            ):
+                clean_message = (
+                    message
+                    .replace(
+                        "[GAS_BUSY]",
+                        "",
+                        1,
+                    )
+                    .strip()
+                )
+
+                self.sale_errors[branch] = (
+                    False
+                )
+                self._sale_retry_waiting[branch] = (
+                    True
+                )
+                self.sale_last_error[branch] = (
+                    clean_message
+                )
+
+                self.update_sale_button(
+                    branch
+                )
+
+                QTimer.singleShot(
+                    20000,
+                    lambda b=branch:
+                    self._retry_busy_sale_monitor(
+                        b
+                    ),
+                )
+                return
+
+            self._sale_retry_waiting[branch] = (
+                False
+            )
+            self.sale_errors[branch] = True
+            self.sale_last_error[branch] = (
+                message
             )
             self.update_sale_button(branch)
 
@@ -4905,6 +4966,49 @@ class DailyLog(QWidget):
             finished,
             failed,
             False,
+        )
+
+    def _retry_busy_sale_monitor(
+        self,
+        branch,
+    ):
+        """Retry a temporary GAS ScriptLock conflict without marking red."""
+
+        if not self.sale_enabled.get(
+            branch,
+            False,
+        ):
+            self._sale_retry_waiting[branch] = (
+                False
+            )
+            self.update_sale_button(
+                branch
+            )
+            return
+
+        if self.sale_monitors.get(
+            branch
+        ) is None:
+            self._sale_retry_waiting[branch] = (
+                False
+            )
+            self.update_sale_button(
+                branch
+            )
+            return
+
+        if self._sale_busy.get(
+            branch,
+            False,
+        ):
+            return
+
+        self._sale_retry_waiting[branch] = (
+            False
+        )
+
+        self.check_sale_delivery_plan(
+            branch
         )
 
     # =========================================
