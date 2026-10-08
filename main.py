@@ -5034,8 +5034,26 @@ class DailyLog(QWidget):
 
                 self._sale_retry_waiting[b] = False
                 self.sale_errors[b] = True
+
+                if error_text.startswith(
+                    "[GAS_404]"
+                ):
+                    clean_error = (
+                        error_text
+                        .replace(
+                            "[GAS_404]",
+                            "",
+                            1,
+                        )
+                        .strip()
+                    )
+                else:
+                    clean_error = (
+                        error_text
+                    )
+
                 self.sale_last_error[b] = (
-                    error_text
+                    clean_error
                 )
                 self.update_sale_button(b)
 
@@ -5045,7 +5063,7 @@ class DailyLog(QWidget):
                     self._sale_title(b),
                     (
                         "Web App เชื่อมต่อได้ แต่การอ่านข้อมูลไม่สำเร็จ\n"
-                        f"{error_text}"
+                        f"{clean_error}"
                     ),
                     "info",
                     show_toast=False,
