@@ -27,7 +27,7 @@ from update_checker import UpdateChecker
 from workers import run_async
 
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
 DEFAULT_RECEIVER_EMAIL = "daily123@gmail.com"
@@ -35,6 +35,31 @@ DEFAULT_RECEIVER_EMAIL = "daily123@gmail.com"
 NOTIFY_RELEASES_API = (
     "https://api.github.com/repos/Pnck15/dailylogs/releases?per_page=20"
 )
+
+
+SOURCE_OPTIONS = [
+    {
+        "key": "sale_sathorn",
+        "label": "Sale Deli Sathorn",
+        "aliases": {"Sale Deli Sathorn"},
+    },
+    {
+        "key": "sale_srinakarin",
+        "label": "Sale Deli Srinakarin",
+        "aliases": {"Sale Deli Srinakarin"},
+    },
+    {
+        "key": "sa_sathorn",
+        "label": "SA Sathorn",
+        # Backward compatibility with events already published as SA Notify.
+        "aliases": {"SA Sathorn", "SA Notify"},
+    },
+    {
+        "key": "sa_srinakarin",
+        "label": "SA Srinakarin",
+        "aliases": {"SA Srinakarin"},
+    },
+]
 
 
 def make_tray_icon():
@@ -242,6 +267,159 @@ class LoginDialog(QDialog):
         super().done(result)
 
 
+class SourceSelectionDialog(QDialog):
+    def __init__(
+        self,
+        settings,
+        first_run=False,
+        parent=None,
+    ):
+        super().__init__(parent)
+
+        self.settings = settings
+        self.first_run = first_run
+        self.checkboxes = {}
+
+        self.setWindowTitle(
+            "DailyLog Notify - Notification Sources"
+        )
+        self.resize(
+            430,
+            330,
+        )
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+
+        title = QLabel(
+            "เลือกแหล่งข้อมูลที่เครื่องนี้ต้องการรับแจ้งเตือน"
+        )
+        title.setWordWrap(True)
+        layout.addWidget(title)
+
+        note = QLabel(
+            "ตั้งค่าครั้งแรกเพียงครั้งเดียว "
+            "จากนั้น DailyLogNotify จะจำรายการนี้และทำงานอัตโนมัติเมื่อเปิด Windows"
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        saved = set()
+
+        raw = str(
+            settings.value(
+                "sources/selected",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if raw:
+            saved = {
+                item.strip()
+                for item in raw.split(",")
+                if item.strip()
+            }
+
+        for option in SOURCE_OPTIONS:
+            checkbox = QCheckBox(
+                option["label"]
+            )
+            checkbox.setChecked(
+                option["key"] in saved
+            )
+            checkbox.stateChanged.connect(
+                self._update_save_button
+            )
+            self.checkboxes[
+                option["key"]
+            ] = checkbox
+            layout.addWidget(
+                checkbox
+            )
+
+        future_note = QLabel(
+            "SA Srinakarin สามารถเลือกเตรียมไว้ได้ "
+            "และจะเริ่มรับอัตโนมัติเมื่อมี Source นี้ในระบบกลาง"
+        )
+        future_note.setWordWrap(True)
+        layout.addWidget(
+            future_note
+        )
+
+        layout.addStretch()
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+
+        cancel = QPushButton(
+            "Cancel"
+        )
+        self.save_button = QPushButton(
+            "Save"
+        )
+
+        buttons.addWidget(
+            cancel
+        )
+        buttons.addWidget(
+            self.save_button
+        )
+        layout.addLayout(
+            buttons
+        )
+
+        cancel.clicked.connect(
+            self.reject
+        )
+        self.save_button.clicked.connect(
+            self._save
+        )
+
+        self._update_save_button()
+
+    def selected_keys(self):
+        return [
+            key
+            for key, checkbox
+            in self.checkboxes.items()
+            if checkbox.isChecked()
+        ]
+
+    def _update_save_button(self):
+        # At least one source must be selected.
+        self.save_button.setEnabled(
+            bool(
+                self.selected_keys()
+            )
+        )
+
+    def _save(self):
+        selected = self.selected_keys()
+
+        if not selected:
+            QMessageBox.warning(
+                self,
+                "Notification Sources",
+                "กรุณาเลือกอย่างน้อย 1 แหล่งข้อมูล",
+            )
+            return
+
+        self.settings.setValue(
+            "sources/selected",
+            ",".join(
+                selected
+            ),
+        )
+        self.settings.setValue(
+            "sources/configured",
+            True,
+        )
+        self.settings.sync()
+        self.accept()
+
+
+
 class NotifyApp(QWidget):
     def __init__(self):
         super().__init__()
@@ -282,12 +460,18 @@ class NotifyApp(QWidget):
         history_button = QPushButton(
             "Notification History"
         )
+        sources_button = QPushButton(
+            "Notification Sources"
+        )
         login_button = QPushButton(
             "Login / Change account"
         )
 
         buttons.addWidget(
             history_button
+        )
+        buttons.addWidget(
+            sources_button
         )
         buttons.addWidget(
             login_button
@@ -299,6 +483,13 @@ class NotifyApp(QWidget):
         layout.addWidget(
             self.info
         )
+
+        self.sources_label = QLabel("")
+        self.sources_label.setWordWrap(True)
+        layout.addWidget(
+            self.sources_label
+        )
+
         layout.addLayout(
             buttons
         )
@@ -313,9 +504,14 @@ class NotifyApp(QWidget):
         history_button.clicked.connect(
             self.open_history
         )
+        sources_button.clicked.connect(
+            self.open_source_selection
+        )
         login_button.clicked.connect(
             self.open_login
         )
+
+        self.update_sources_label()
 
         # -----------------------------------------
         # Tray
@@ -341,6 +537,10 @@ class NotifyApp(QWidget):
             "Notification History",
             self,
         )
+        sources_action = QAction(
+            "Notification Sources",
+            self,
+        )
         login_action = QAction(
             "Login / Change account",
             self,
@@ -359,6 +559,9 @@ class NotifyApp(QWidget):
         )
         tray_menu.addAction(
             history_action
+        )
+        tray_menu.addAction(
+            sources_action
         )
         tray_menu.addAction(
             login_action
@@ -380,6 +583,9 @@ class NotifyApp(QWidget):
         )
         history_action.triggered.connect(
             self.open_history
+        )
+        sources_action.triggered.connect(
+            self.open_source_selection
         )
         login_action.triggered.connect(
             self.open_login
@@ -419,6 +625,9 @@ class NotifyApp(QWidget):
             )
             self.receiver.login_failed.connect(
                 self._background_login_failed
+            )
+            self.receiver.login_success.connect(
+                self._receiver_login_success
             )
 
             if self.receiver.has_saved_credentials():
@@ -482,6 +691,131 @@ class NotifyApp(QWidget):
             str(message)
         )
 
+    def _source_filter_configured(self):
+        return self.settings.value(
+            "sources/configured",
+            False,
+            type=bool,
+        )
+
+    def _selected_source_keys(self):
+        raw = str(
+            self.settings.value(
+                "sources/selected",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if not raw:
+            return set()
+
+        return {
+            item.strip()
+            for item in raw.split(",")
+            if item.strip()
+        }
+
+    def _source_allowed(
+        self,
+        source,
+    ):
+        if not self._source_filter_configured():
+            return False
+
+        selected = self._selected_source_keys()
+        source_text = str(
+            source or ""
+        ).strip()
+
+        for option in SOURCE_OPTIONS:
+            if (
+                option["key"] in selected
+                and source_text in option["aliases"]
+            ):
+                return True
+
+        return False
+
+    def update_sources_label(self):
+        selected = self._selected_source_keys()
+
+        labels = [
+            option["label"]
+            for option in SOURCE_OPTIONS
+            if option["key"] in selected
+        ]
+
+        if labels:
+            self.sources_label.setText(
+                "รับแจ้งเตือน: "
+                + ", ".join(
+                    labels
+                )
+            )
+        else:
+            self.sources_label.setText(
+                "รับแจ้งเตือน: ยังไม่ได้เลือกแหล่งข้อมูล"
+            )
+
+    def _receiver_login_success(
+        self,
+        _email,
+    ):
+        if self._source_filter_configured():
+            self.update_sources_label()
+            return
+
+        # Pause before the receiver performs its first poll.
+        # The user must choose notification sources once.
+        if self.receiver is not None:
+            self.receiver.pause()
+
+        self.showNormal()
+
+        QTimer.singleShot(
+            0,
+            lambda:
+            self.open_source_selection(
+                first_run=True
+            ),
+        )
+
+    def open_source_selection(
+        self,
+        first_run=False,
+    ):
+        dialog = SourceSelectionDialog(
+            self.settings,
+            first_run=first_run,
+            parent=self,
+        )
+
+        result = dialog.exec()
+
+        if (
+            result
+            == QDialog.DialogCode.Accepted
+        ):
+            self.update_sources_label()
+
+            if (
+                self.receiver is not None
+                and self.receiver.client is not None
+            ):
+                self.receiver.resume()
+
+            if (
+                first_run
+                and "--startup" in sys.argv
+            ):
+                self.hide()
+
+        elif first_run:
+            self.status.setText(
+                "🟡 Central Notification: รอเลือกแหล่งข้อมูล"
+            )
+
     def open_login(self):
         if self.receiver is None:
             QMessageBox.warning(
@@ -510,7 +844,12 @@ class NotifyApp(QWidget):
         message,
         show_popup=True,
     ):
-        # Always keep the event in local history.
+        # This PC receives only the sources selected on first setup.
+        if not self._source_allowed(
+            source
+        ):
+            return
+
         self.history.add(
             source,
             title,
@@ -558,7 +897,7 @@ class NotifyApp(QWidget):
     def _fetch_update_info(self):
         headers = {
             "Accept": "application/vnd.github+json",
-            "User-Agent": "DailyLogNotify-Updater/1.2",
+            "User-Agent": "DailyLogNotify-Updater/1.3",
             "Cache-Control": "no-cache",
         }
 
@@ -649,7 +988,7 @@ class NotifyApp(QWidget):
             timeout=(5, 12),
             headers={
                 "User-Agent":
-                    "DailyLogNotify-Updater/1.2",
+                    "DailyLogNotify-Updater/1.3",
                 "Cache-Control":
                     "no-cache",
             },
