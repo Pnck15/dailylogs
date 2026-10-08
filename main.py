@@ -4214,6 +4214,7 @@ class DailyLog(QWidget):
 
         self._sale_busy[branch] = True
         self.sale_errors[branch] = False
+        self.sale_last_error[branch] = ""
         self.update_sale_button(branch)
 
         monitor = self.sale_monitors.get(
@@ -4224,7 +4225,6 @@ class DailyLog(QWidget):
             monitor is None
             or initial
         ):
-
             monitor = SaleAPIMonitor(
                 url
             )
@@ -4233,6 +4233,7 @@ class DailyLog(QWidget):
 
             self._sale_busy[branch] = False
             self.sale_errors[branch] = False
+            self.sale_last_error[branch] = ""
 
             self.sale_monitors[branch] = (
                 monitor
@@ -4251,20 +4252,43 @@ class DailyLog(QWidget):
             )
 
             if initial:
+                api_version = str(
+                    result.get("version")
+                    or result.get("api_version")
+                    or ""
+                ).strip()
+
+                message = (
+                    "เชื่อมต่อ Apps Script Web App สำเร็จ"
+                )
+
+                if api_version:
+                    message += (
+                        f"\nAPI: {api_version}"
+                    )
+
+                message += (
+                    "\nกำลังอ่านข้อมูลรอบแรก..."
+                )
 
                 self.add_sale_notification(
                     self._sale_title(
                         branch
                     ),
-                    (
-                        "เชื่อมต่อสำเร็จ\n"
-                        f"พบข้อมูล "
-                        f"{result.get('count', 0)} "
-                        "รายการ"
-                    ),
+                    message,
                     "info",
                     show_toast=False,
                 )
+
+                QTimer.singleShot(
+                    0,
+                    lambda b=branch:
+                    self.check_sale_delivery_plan(
+                        b
+                    ),
+                )
+
+                return
 
             self._process_sale_result(
                 branch,
@@ -4275,10 +4299,11 @@ class DailyLog(QWidget):
 
             self._sale_busy[branch] = False
             self.sale_errors[branch] = True
-            self.update_sale_button(branch)
+            self.sale_last_error[branch] = str(
+                message
+            )
 
             if initial:
-
                 self.sale_enabled[branch] = (
                     False
                 )
@@ -4291,29 +4316,38 @@ class DailyLog(QWidget):
                     branch
                 ).stop()
 
-                self.update_sale_button(
-                    branch
-                )
+            self.update_sale_button(
+                branch
+            )
 
+            if initial:
                 self.add_sale_notification(
                     self._sale_title(
                         branch
                     ),
                     (
-                        "เชื่อมต่อไม่สำเร็จ\n"
+                        "Re-connect ไม่สำเร็จ\n"
                         f"{message}"
                     ),
                     "info",
                     show_toast=False,
                 )
 
-        run_async(
-            self,
-            monitor.check,
-            finished,
-            failed,
-            initial,
-        )
+        if initial:
+            run_async(
+                self,
+                monitor.ping,
+                finished,
+                failed,
+            )
+        else:
+            run_async(
+                self,
+                monitor.check,
+                finished,
+                failed,
+                False,
+            )
 
     # =========================================
     # Configure Sale Branch / MainNoti
