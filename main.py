@@ -113,6 +113,13 @@ class DailyLog(QWidget):
             "MainNoti": False,
         }
 
+        self.sale_last_error = {
+            "Sathorn": "",
+            "Srinakarin": "",
+            "SA": "",
+            "MainNoti": "",
+        }
+
         self.sale_notifications = []
 
         self.sale_due_notified = set()
