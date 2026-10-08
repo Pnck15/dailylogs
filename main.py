@@ -4419,6 +4419,10 @@ class DailyLog(QWidget):
             "เริ่มแจ้งเตือน"
         )
 
+        reconnect_button = QPushButton(
+            "🔄 Re-connect"
+        )
+
         stop_button = QPushButton(
             "หยุดแจ้งเตือน"
         )
@@ -4429,6 +4433,10 @@ class DailyLog(QWidget):
 
         button_layout.addWidget(
             start_button
+        )
+
+        button_layout.addWidget(
+            reconnect_button
         )
 
         button_layout.addWidget(
@@ -4493,6 +4501,10 @@ class DailyLog(QWidget):
                 False
             )
 
+            reconnect_button.setEnabled(
+                False
+            )
+
             stop_button.setEnabled(
                 False
             )
@@ -4545,9 +4557,19 @@ class DailyLog(QWidget):
                 branch,
                 url,
                 dialog,
+                controls={
+                    "start": start_button,
+                    "reconnect": reconnect_button,
+                    "stop": stop_button,
+                    "url": url_input,
+                },
             )
 
         start_button.clicked.connect(
+            start_monitoring
+        )
+
+        reconnect_button.clicked.connect(
             start_monitoring
         )
 
