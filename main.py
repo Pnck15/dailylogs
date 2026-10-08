@@ -279,6 +279,12 @@ class DailyLog(QWidget):
             "MainNoti": False,
         }
 
+        # Heavy GAS scans are serialized across all sources.
+        # Pings may run in parallel, but only one action=changes call
+        # is allowed at a time to avoid hammering Google Sheets/GAS.
+        self._gas_scan_active = None
+        self._gas_scan_queue = []
+
         # =========================================
         # Database / Cloud Login
         # =========================================
@@ -4062,6 +4068,12 @@ class DailyLog(QWidget):
             branch
         ).stop()
 
+        self._gas_scan_queue = [
+            queued
+            for queued in self._gas_scan_queue
+            if queued != branch
+        ]
+
         self.sale_enabled[branch] = (
             False
         )
@@ -4132,6 +4144,12 @@ class DailyLog(QWidget):
             self._sale_timer(
                 branch
             ).stop()
+
+            self._gas_scan_queue = [
+                queued
+                for queued in self._gas_scan_queue
+                if queued != branch
+            ]
 
             self.sale_enabled[branch] = (
                 False
@@ -4856,6 +4874,13 @@ class DailyLog(QWidget):
         self,
         branch="Sathorn",
     ):
+        """Queue one GAS data scan.
+
+        Connection pings are lightweight and may finish together, but the
+        expensive action=changes requests are serialized globally so Sathorn,
+        Srinakarin, SA and MainNoti never perform heavy sheet scans at the
+        same time.
+        """
 
         if not self.sale_enabled.get(
             branch,
@@ -4868,112 +4893,183 @@ class DailyLog(QWidget):
         ) is None:
             return
 
-        monitor = self.sale_monitors[
-            branch
-        ]
-
-        if self._sale_busy.get(
-            branch,
-            False,
+        if (
+            branch == self._gas_scan_active
+            or branch in self._gas_scan_queue
         ):
             return
 
-        self._sale_busy[branch] = True
-        self._sale_retry_waiting[branch] = False
-        self.sale_errors[branch] = False
-        self.sale_last_error[branch] = ""
-        self.update_sale_button(branch)
+        self._gas_scan_queue.append(
+            branch
+        )
 
-        def finished(result):
-
-            self._sale_busy[branch] = (
-                False
+        # If another source is scanning, this source is healthy but waiting.
+        if self._gas_scan_active is not None:
+            self._sale_retry_waiting[branch] = (
+                True
             )
             self.sale_errors[branch] = False
-            self.sale_last_error[branch] = ""
-            self.sale_last_elapsed[branch] = float(
-                result.get(
-                    "_elapsed_seconds",
-                    0.0,
-                )
-                or 0.0
+            self.sale_last_error[branch] = (
+                "รอคิวตรวจข้อมูลจาก GAS ช่องทางอื่น"
             )
-            self.update_sale_button(branch)
+            self.update_sale_button(
+                branch
+            )
 
-            self._process_sale_result(
+        self._run_next_gas_scan()
+
+    def _run_next_gas_scan(self):
+        if self._gas_scan_active is not None:
+            return
+
+        while self._gas_scan_queue:
+            branch = self._gas_scan_queue.pop(0)
+
+            if not self.sale_enabled.get(
                 branch,
-                result,
-            )
-
-        def failed(_message):
-
-            self._sale_busy[branch] = (
-                False
-            )
-
-            message = str(
-                _message
-            )
-
-            if message.startswith(
-                "[GAS_BUSY]"
+                False,
             ):
-                clean_message = (
-                    message
-                    .replace(
-                        "[GAS_BUSY]",
-                        "",
-                        1,
-                    )
-                    .strip()
-                )
-
-                self.sale_errors[branch] = (
+                self._sale_retry_waiting[branch] = (
                     False
                 )
-                self._sale_retry_waiting[branch] = (
-                    True
-                )
-                self.sale_last_error[branch] = (
-                    clean_message
-                )
-
                 self.update_sale_button(
                     branch
                 )
+                continue
 
-                QTimer.singleShot(
-                    20000,
-                    lambda b=branch:
-                    self._retry_busy_sale_monitor(
-                        b
-                    ),
+            monitor = self.sale_monitors.get(
+                branch
+            )
+
+            if monitor is None:
+                self._sale_retry_waiting[branch] = (
+                    False
                 )
-                return
+                self.update_sale_button(
+                    branch
+                )
+                continue
 
-            self._sale_retry_waiting[branch] = (
-                False
-            )
-            self.sale_errors[branch] = True
-            self.sale_last_error[branch] = (
-                message
-            )
+            self._gas_scan_active = branch
+            self._sale_busy[branch] = True
+            self._sale_retry_waiting[branch] = False
+            self.sale_errors[branch] = False
+            self.sale_last_error[branch] = ""
             self.update_sale_button(branch)
 
-        run_async(
-            self,
-            monitor.check,
-            finished,
-            failed,
-            False,
-        )
+            def finished(
+                result,
+                b=branch,
+            ):
+                self._sale_busy[b] = False
+                self._gas_scan_active = None
+                self._sale_retry_waiting[b] = False
+                self.sale_errors[b] = False
+                self.sale_last_error[b] = ""
+                self.sale_last_elapsed[b] = float(
+                    result.get(
+                        "_elapsed_seconds",
+                        0.0,
+                    )
+                    or 0.0
+                )
+                self.update_sale_button(b)
 
-    def _retry_busy_sale_monitor(
+                self._process_sale_result(
+                    b,
+                    result,
+                )
+
+                QTimer.singleShot(
+                    800,
+                    self._run_next_gas_scan,
+                )
+
+            def failed(
+                message,
+                b=branch,
+            ):
+                self._sale_busy[b] = False
+                self._gas_scan_active = None
+
+                error_text = str(
+                    message
+                )
+
+                if error_text.startswith(
+                    "[GAS_BUSY]"
+                ):
+                    clean_message = (
+                        error_text
+                        .replace(
+                            "[GAS_BUSY]",
+                            "",
+                            1,
+                        )
+                        .strip()
+                    )
+
+                    self.sale_errors[b] = False
+                    self._sale_retry_waiting[b] = True
+                    self.sale_last_error[b] = (
+                        clean_message
+                    )
+                    self.update_sale_button(b)
+
+                    # Do not put the same request back immediately because
+                    # the server-side GAS execution may still hold the lock.
+                    QTimer.singleShot(
+                        20000,
+                        lambda branch_to_retry=b:
+                        self._queue_busy_gas_retry(
+                            branch_to_retry
+                        ),
+                    )
+
+                    QTimer.singleShot(
+                        800,
+                        self._run_next_gas_scan,
+                    )
+                    return
+
+                self._sale_retry_waiting[b] = False
+                self.sale_errors[b] = True
+                self.sale_last_error[b] = (
+                    error_text
+                )
+                self.update_sale_button(b)
+
+                # Keep the exact reason visible in the DailyLog notification
+                # list without creating a popup/LINE/central event.
+                self.add_sale_notification(
+                    self._sale_title(b),
+                    (
+                        "Web App เชื่อมต่อได้ แต่การอ่านข้อมูลไม่สำเร็จ\n"
+                        f"{error_text}"
+                    ),
+                    "info",
+                    show_toast=False,
+                )
+
+                QTimer.singleShot(
+                    800,
+                    self._run_next_gas_scan,
+                )
+
+            run_async(
+                self,
+                monitor.check,
+                finished,
+                failed,
+                False,
+            )
+
+            return
+
+    def _queue_busy_gas_retry(
         self,
         branch,
     ):
-        """Retry a temporary GAS ScriptLock conflict without marking red."""
-
         if not self.sale_enabled.get(
             branch,
             False,
@@ -4997,16 +5093,15 @@ class DailyLog(QWidget):
             )
             return
 
-        if self._sale_busy.get(
-            branch,
-            False,
+        if (
+            branch == self._gas_scan_active
+            or branch in self._gas_scan_queue
         ):
             return
 
         self._sale_retry_waiting[branch] = (
             False
         )
-
         self.check_sale_delivery_plan(
             branch
         )
