@@ -41,13 +41,14 @@ def main():
     target = Path(sys.argv[2]).resolve()
     url = sys.argv[3].strip()
     expected_sha256 = sys.argv[4].strip().lower() if len(sys.argv) >= 5 else ""
+    relaunch_args = sys.argv[5:] if len(sys.argv) >= 6 else []
 
     wait_for_process(parent_pid)
     if not url.startswith(("http://", "https://")):
         return 3
 
     temp_dir = Path(tempfile.mkdtemp(prefix="DailyLogUpdate_"))
-    new_file = temp_dir / "DailyLog.exe"
+    new_file = temp_dir / target.name
     backup = target.with_suffix(".old.exe")
 
     try:
@@ -85,7 +86,10 @@ def main():
         if last_error is not None:
             raise last_error
 
-        subprocess.Popen([str(target)], close_fds=True)
+        subprocess.Popen(
+            [str(target), *relaunch_args],
+            close_fds=True,
+        )
         return 0
     except Exception:
         if backup.exists() and not target.exists():
