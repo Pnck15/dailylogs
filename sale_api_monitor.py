@@ -569,7 +569,53 @@ class SaleAPIMonitor:
         return payload
 
     @staticmethod
+    def _row_data_column(
+        values,
+        column,
+    ):
+        row_data = values.get(
+            "row_data"
+        )
+
+        if not isinstance(
+            row_data,
+            list,
+        ):
+            return ""
+
+        wanted = str(
+            column or ""
+        ).strip().upper()
+
+        for item in row_data:
+            if not isinstance(
+                item,
+                dict,
+            ):
+                continue
+
+            current = str(
+                item.get(
+                    "column",
+                    "",
+                )
+                or ""
+            ).strip().upper()
+
+            if current == wanted:
+                return str(
+                    item.get(
+                        "value",
+                        "",
+                    )
+                    or ""
+                ).strip()
+
+        return ""
+
+    @classmethod
     def _row_identity(
+        cls,
         values,
         fallback_row,
     ):
@@ -587,12 +633,43 @@ class SaleAPIMonitor:
         ).strip()
 
         if sheet:
-            return (
-                f"{sheet}|{row}"
+            sequence = (
+                cls._row_data_column(
+                    values,
+                    "C",
+                )
+            )
+            plate = (
+                cls._row_data_column(
+                    values,
+                    "F",
+                )
             )
 
-        return str(
-            row
+            if sequence or plate:
+                return (
+                    f"{sheet}|C={sequence}|F={plate}"
+                )
+
+            return (
+                f"{sheet}|ROW={row}"
+            )
+
+        vin = str(
+            values.get(
+                "vin",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if vin:
+            return (
+                f"VIN={vin}"
+            )
+
+        return (
+            f"ROW={row}"
         )
 
     @staticmethod
