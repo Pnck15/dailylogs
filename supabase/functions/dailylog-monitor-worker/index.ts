@@ -1349,12 +1349,17 @@ Deno.serve(async (req) => {
 
   const sources = (data ?? []) as SourceRow[];
 
-  const results = await Promise.all(
-    sources.map(
-      (source) =>
-        processSource(source),
-    ),
-  );
+  // Process sources sequentially. Heavy Google Sheets/GAS reads
+  // should never compete with each other in the same worker execution.
+  const results = [];
+
+  for (const source of sources) {
+    results.push(
+      await processSource(
+        source,
+      ),
+    );
+  }
 
   return new Response(
     JSON.stringify({
