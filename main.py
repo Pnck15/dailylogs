@@ -1536,12 +1536,32 @@ class DailyLog(QWidget):
 
         notify_menu.addSeparator()
 
-        reconnect_all_action = notify_menu.addAction(
-            "🔄 Re-connect all GAS"
+        reconnect_menu = notify_menu.addMenu(
+            "🔄 Re-connect GAS"
+        )
+
+        reconnect_all_action = reconnect_menu.addAction(
+            "Re-connect all GAS"
         )
         reconnect_all_action.triggered.connect(
             self.reconnect_all_sale_monitors
         )
+
+        reconnect_menu.addSeparator()
+
+        for branch, label in (
+            ("Sathorn", "Sale Deli Sathorn"),
+            ("Srinakarin", "Sale Deli Srinakarin"),
+            ("SA", "SA Notify"),
+            ("MainNoti", "MainNoti"),
+        ):
+            action = reconnect_menu.addAction(
+                f"Re-connect {label}"
+            )
+            action.triggered.connect(
+                lambda checked=False, b=branch:
+                self.reconnect_sale_monitor(b)
+            )
 
         notify_menu.addSeparator()
 
@@ -3984,6 +4004,83 @@ class DailyLog(QWidget):
     # Re-connect GAS Monitors
     # =========================================
 
+    def reconnect_sale_monitor(
+        self,
+        branch,
+    ):
+        """Reconnect one configured GAS source without duplicating clients."""
+
+        url = (
+            self.sale_api_urls.get(
+                branch,
+                "",
+            ).strip()
+        )
+
+        if not url:
+            self.update_sale_button(
+                branch
+            )
+            QMessageBox.information(
+                self,
+                "Re-connect GAS",
+                (
+                    f"{self._sale_title(branch)} "
+                    "ยังไม่มี GAS URL ที่บันทึกไว้"
+                ),
+            )
+            return False
+
+        if self._sale_busy.get(
+            branch,
+            False,
+        ):
+            QMessageBox.information(
+                self,
+                "Re-connect GAS",
+                (
+                    f"{self._sale_title(branch)} "
+                    "กำลังเชื่อมต่อ/ตรวจสอบอยู่แล้ว"
+                ),
+            )
+            return False
+
+        self._sale_timer(
+            branch
+        ).stop()
+
+        self.sale_enabled[branch] = (
+            False
+        )
+
+        self.sale_monitors[branch] = (
+            None
+        )
+
+        self.sale_errors[branch] = (
+            False
+        )
+
+        self.sale_last_error[branch] = (
+            ""
+        )
+
+        self.sale_last_elapsed[branch] = (
+            0.0
+        )
+
+        self.update_sale_button(
+            branch
+        )
+
+        self._start_sale_check(
+            branch,
+            url,
+            initial=True,
+        )
+
+        return True
+
     def reconnect_all_sale_monitors(self):
 
         connected = 0
@@ -4008,6 +4105,12 @@ class DailyLog(QWidget):
                 )
                 continue
 
+            if self._sale_busy.get(
+                branch,
+                False,
+            ):
+                continue
+
             connected += 1
 
             self._sale_timer(
@@ -4029,7 +4132,14 @@ class DailyLog(QWidget):
             self.sale_last_error[branch] = (
                 ""
             )
-            self.sale_last_elapsed[branch] = 0.0
+
+            self.sale_last_elapsed[branch] = (
+                0.0
+            )
+
+            self.update_sale_button(
+                branch
+            )
 
             self._start_sale_check(
                 branch,
@@ -4041,7 +4151,10 @@ class DailyLog(QWidget):
             QMessageBox.information(
                 self,
                 "Re-connect GAS",
-                "ยังไม่มี GAS URL ที่บันทึกไว้",
+                (
+                    "ไม่มี GAS URL ที่พร้อม Re-connect "
+                    "หรือทุกช่องทางกำลังตรวจสอบอยู่"
+                ),
             )
 
     # =========================================
