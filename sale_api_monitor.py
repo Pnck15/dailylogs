@@ -160,7 +160,6 @@ class SaleAPIMonitor:
         self.last_action = ""
         self.last_attempts = 0
 
-        self._session = requests.Session()
         self._request_lock = threading.Lock()
 
     @staticmethod
@@ -239,6 +238,12 @@ class SaleAPIMonitor:
         )
 
         query["action"] = action
+        query["_dl_ts"] = str(
+            int(
+                time.time()
+                * 1000
+            )
+        )
 
         return urlunsplit(
             (
@@ -309,7 +314,7 @@ class SaleAPIMonitor:
                 )
 
                 try:
-                    response = self._session.get(
+                    response = requests.get(
                         url,
                         headers={
                             "Accept":
@@ -389,6 +394,14 @@ class SaleAPIMonitor:
                         * attempt
                     )
                     continue
+
+                if status == 404:
+                    raise RuntimeError(
+                        "[GAS_404] Apps Script Web App URL นี้หา Deployment ไม่พบ "
+                        "หรือ Deployment เดิมถูกแทนที่/ลบไปแล้ว "
+                        "ให้เปิด Apps Script > Deploy > Manage deployments "
+                        "แล้วคัดลอก Web app URL ที่ลงท้าย /exec มาใส่ใหม่"
+                    )
 
                 if (
                     status < 200
