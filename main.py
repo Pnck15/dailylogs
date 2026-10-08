@@ -1525,6 +1525,15 @@ class DailyLog(QWidget):
 
         notify_menu.addSeparator()
 
+        reconnect_all_action = notify_menu.addAction(
+            "🔄 Re-connect all GAS"
+        )
+        reconnect_all_action.triggered.connect(
+            self.reconnect_all_sale_monitors
+        )
+
+        notify_menu.addSeparator()
+
         line_action = notify_menu.addAction(
             "LINE Messaging API"
         )
@@ -4088,6 +4097,69 @@ class DailyLog(QWidget):
         button.setToolTip(
             f"{self._sale_title(branch)}: {tip}"
         )
+
+    # =========================================
+    # Re-connect GAS Monitors
+    # =========================================
+
+    def reconnect_all_sale_monitors(self):
+
+        connected = 0
+
+        for branch in (
+            "Sathorn",
+            "Srinakarin",
+            "SA",
+            "MainNoti",
+        ):
+
+            url = (
+                self.sale_api_urls.get(
+                    branch,
+                    "",
+                ).strip()
+            )
+
+            if not url:
+                self.update_sale_button(
+                    branch
+                )
+                continue
+
+            connected += 1
+
+            self._sale_timer(
+                branch
+            ).stop()
+
+            self.sale_enabled[branch] = (
+                False
+            )
+
+            self.sale_monitors[branch] = (
+                None
+            )
+
+            self.sale_errors[branch] = (
+                False
+            )
+
+            self.sale_last_error[branch] = (
+                ""
+            )
+
+            self._start_sale_check(
+                branch,
+                url,
+                initial=True,
+            )
+
+        if connected == 0:
+            QMessageBox.information(
+                self,
+                "Re-connect GAS",
+                "ยังไม่มี GAS URL ที่บันทึกไว้",
+            )
 
     # =========================================
     # Start Saved Monitors
