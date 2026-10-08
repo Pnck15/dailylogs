@@ -4062,7 +4062,18 @@ class DailyLog(QWidget):
             tip = "กำลังเชื่อมต่อ / กำลังตรวจสอบ"
         elif self.sale_errors.get(branch, False):
             dot = "🔴"
-            tip = "เชื่อมต่อไม่สำเร็จ / รอรอบตรวจถัดไป"
+            error_text = str(
+                self.sale_last_error.get(branch, "")
+                or ""
+            ).strip()
+            tip = (
+                "เชื่อมต่อ/อ่านข้อมูลไม่สำเร็จ"
+                + (
+                    f"\n{error_text[:220]}"
+                    if error_text
+                    else ""
+                )
+            )
         elif self.sale_enabled.get(branch, False):
             dot = "🟢"
             tip = "ทำงานปกติ"
