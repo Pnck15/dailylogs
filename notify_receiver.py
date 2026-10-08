@@ -171,6 +171,7 @@ class CentralNotifyReceiver(QObject):
         self.last_id = 0
         self._busy = False
         self._login_busy = False
+        self._paused = False
 
         self.timer = QTimer(self)
         self.timer.setInterval(POLL_INTERVAL_MS)
@@ -290,8 +291,28 @@ class CentralNotifyReceiver(QObject):
         )
         self.login_failed.emit(message)
 
+    def pause(self):
+        self._paused = True
+        self.timer.stop()
+
+    def resume(self):
+        self._paused = False
+
+        if (
+            self.client is not None
+            and self.workspace_id
+        ):
+            if not self.timer.isActive():
+                self.timer.start()
+            self.poll()
+
     def poll(self):
-        if self._busy or not self.client or not self.workspace_id:
+        if (
+            self._paused
+            or self._busy
+            or not self.client
+            or not self.workspace_id
+        ):
             return
 
         self._busy = True
@@ -378,6 +399,7 @@ class CentralNotifyReceiver(QObject):
         self.workspace_id = ""
         self.role = ""
         self.email = ""
+        self._paused = False
 
         self.settings.remove("central/password")
         self.settings.sync()
