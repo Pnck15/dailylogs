@@ -24,9 +24,10 @@ from PySide6.QtWidgets import (
 from notify_history import NotificationHistory
 from notify_receiver import CentralNotifyReceiver
 from update_checker import UpdateChecker
+from workers import run_async
 
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
 DEFAULT_RECEIVER_EMAIL = "daily123@gmail.com"
@@ -38,7 +39,7 @@ NOTIFY_RELEASES_API = (
 
 def make_tray_icon():
     pixmap = QPixmap(64, 64)
-    pixmap.fill(QColor("#2563EB"))
+    pixmap.fill(QColor("#DC2626"))
 
     painter = QPainter(pixmap)
     painter.setPen(QColor("white"))
@@ -255,6 +256,9 @@ class NotifyApp(QWidget):
         self.setWindowTitle(
             "DailyLog Notify"
         )
+        self.setWindowIcon(
+            make_tray_icon()
+        )
         self.setFixedSize(
             430,
             200,
@@ -341,6 +345,10 @@ class NotifyApp(QWidget):
             "Login / Change account",
             self,
         )
+        update_action = QAction(
+            "Check for updates",
+            self,
+        )
         exit_action = QAction(
             "Exit",
             self,
@@ -354,6 +362,9 @@ class NotifyApp(QWidget):
         )
         tray_menu.addAction(
             login_action
+        )
+        tray_menu.addAction(
+            update_action
         )
         tray_menu.addSeparator()
         tray_menu.addAction(
@@ -372,6 +383,11 @@ class NotifyApp(QWidget):
         )
         login_action.triggered.connect(
             self.open_login
+        )
+        update_action.triggered.connect(
+            lambda: self.check_for_updates(
+                manual=True
+            )
         )
         exit_action.triggered.connect(
             QApplication.quit
@@ -425,13 +441,28 @@ class NotifyApp(QWidget):
             login_action.setEnabled(False)
 
         # -----------------------------------------
-        # Auto update
+        # Automatic update
         # -----------------------------------------
 
+        self._update_check_running = False
+
+        # Check shortly after startup without blocking the receiver.
         QTimer.singleShot(
-            2500,
+            5000,
             self.check_for_updates,
         )
+
+        # Keep long-running tray clients current as well.
+        self.update_timer = QTimer(
+            self
+        )
+        self.update_timer.setInterval(
+            6 * 60 * 60 * 1000
+        )
+        self.update_timer.timeout.connect(
+            self.check_for_updates
+        )
+        self.update_timer.start()
 
     def _show_login_if_needed(self):
         if (
@@ -524,139 +555,204 @@ class NotifyApp(QWidget):
             "✅ Start with Windows"
         )
 
-    def check_for_updates(self):
-        try:
-            headers = {
-                "Accept": "application/vnd.github+json",
-                "User-Agent": "DailyLogNotify-Updater",
-                "Cache-Control": "no-cache",
+    def _fetch_update_info(self):
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "DailyLogNotify-Updater/1.2",
+            "Cache-Control": "no-cache",
+        }
+
+        response = requests.get(
+            NOTIFY_RELEASES_API,
+            timeout=(5, 12),
+            headers=headers,
+        )
+        response.raise_for_status()
+
+        releases = response.json()
+
+        if not isinstance(
+            releases,
+            list,
+        ):
+            return {
+                "available": False,
             }
 
-            response = requests.get(
-                NOTIFY_RELEASES_API,
-                timeout=(5, 10),
-                headers=headers,
-            )
-            response.raise_for_status()
-
-            releases = response.json()
-
-            if not isinstance(
-                releases,
-                list,
-            ):
-                return
-
-            release = next(
-                (
-                    item
-                    for item in releases
-                    if isinstance(item, dict)
-                    and str(
-                        item.get("tag_name", "")
-                    ).startswith("notify-v")
-                    and not item.get("draft")
-                ),
-                None,
-            )
-
-            if not release:
-                return
-
-            asset = next(
-                (
-                    item
-                    for item in release.get(
-                        "assets",
-                        [],
+        release = next(
+            (
+                item
+                for item in releases
+                if isinstance(
+                    item,
+                    dict,
+                )
+                and str(
+                    item.get(
+                        "tag_name",
+                        "",
                     )
-                    if isinstance(item, dict)
-                    and item.get("name")
-                    == "notify-version.json"
-                ),
-                None,
+                ).startswith(
+                    "notify-v"
+                )
+                and not item.get(
+                    "draft"
+                )
+            ),
+            None,
+        )
+
+        if not release:
+            return {
+                "available": False,
+            }
+
+        asset = next(
+            (
+                item
+                for item in release.get(
+                    "assets",
+                    [],
+                )
+                if isinstance(
+                    item,
+                    dict,
+                )
+                and item.get(
+                    "name"
+                )
+                == "notify-version.json"
+            ),
+            None,
+        )
+
+        if not asset:
+            return {
+                "available": False,
+            }
+
+        manifest_url = str(
+            asset.get(
+                "browser_download_url",
+                "",
             )
+            or ""
+        ).strip()
 
-            if not asset:
-                return
+        if not manifest_url:
+            return {
+                "available": False,
+            }
 
-            manifest_url = str(
-                asset.get(
-                    "browser_download_url",
-                    "",
-                )
-                or ""
-            ).strip()
+        manifest_response = requests.get(
+            manifest_url,
+            timeout=(5, 12),
+            headers={
+                "User-Agent":
+                    "DailyLogNotify-Updater/1.2",
+                "Cache-Control":
+                    "no-cache",
+            },
+        )
+        manifest_response.raise_for_status()
 
-            if not manifest_url:
-                return
+        data = manifest_response.json()
 
-            manifest_response = requests.get(
-                manifest_url,
-                timeout=(5, 10),
-                headers={
-                    "User-Agent": "DailyLogNotify-Updater",
-                    "Cache-Control": "no-cache",
-                },
+        latest = str(
+            data.get(
+                "version",
+                "",
             )
-            manifest_response.raise_for_status()
+            or ""
+        ).strip()
 
-            data = manifest_response.json()
+        if (
+            not latest
+            or UpdateChecker._version_tuple(
+                latest
+            )
+            <= UpdateChecker._version_tuple(
+                APP_VERSION
+            )
+        ):
+            return {
+                "available": False,
+                "latest": latest,
+            }
 
-            latest = str(
-                data.get("version", "")
-                or ""
-            ).strip()
+        url = str(
+            data.get(
+                "download_url",
+                "",
+            )
+            or ""
+        ).strip()
 
-            if (
-                not latest
-                or UpdateChecker._version_tuple(
-                    latest
-                )
-                <= UpdateChecker._version_tuple(
-                    APP_VERSION
-                )
+        sha = str(
+            data.get(
+                "sha256",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if not url:
+            return {
+                "available": False,
+            }
+
+        return {
+            "available": True,
+            "latest": latest,
+            "download_url": url,
+            "sha256": sha,
+        }
+
+    def check_for_updates(
+        self,
+        manual=False,
+    ):
+        """Check in the background and install Notify updates automatically."""
+
+        if self._update_check_running:
+            return
+
+        self._update_check_running = True
+
+        def finished(result):
+            self._update_check_running = False
+
+            if not result.get(
+                "available",
+                False,
             ):
+                if manual:
+                    QMessageBox.information(
+                        self,
+                        "DailyLog Notify Update",
+                        (
+                            "ใช้เวอร์ชันล่าสุดแล้ว\n"
+                            f"Version: {APP_VERSION}"
+                        ),
+                    )
                 return
 
-            url = str(
-                data.get(
-                    "download_url",
-                    "",
-                )
-                or ""
-            ).strip()
-
-            sha = str(
-                data.get(
-                    "sha256",
-                    "",
-                )
-                or ""
-            ).strip()
-
-            if not url:
-                return
-
-            answer = QMessageBox.question(
-                self,
-                "DailyLog Notify Update",
-                (
-                    f"มีเวอร์ชันใหม่ {latest}\n"
-                    f"เวอร์ชันปัจจุบัน {APP_VERSION}\n\n"
-                    "อัปเดตตอนนี้หรือไม่?"
-                ),
-            )
-
-            if (
-                answer
-                != QMessageBox.StandardButton.Yes
-                or not getattr(
-                    sys,
-                    "frozen",
-                    False,
-                )
+            if not getattr(
+                sys,
+                "frozen",
+                False,
             ):
+                if manual:
+                    QMessageBox.information(
+                        self,
+                        "DailyLog Notify Update",
+                        (
+                            "พบเวอร์ชันใหม่ "
+                            f"{result.get('latest', '')}\n"
+                            "Auto Update จะติดตั้งเมื่อรัน "
+                            "DailyLogNotify.exe ที่ Build แล้ว"
+                        ),
+                    )
                 return
 
             updater = os.path.join(
@@ -669,30 +765,103 @@ class NotifyApp(QWidget):
             if not os.path.isfile(
                 updater
             ):
-                QMessageBox.warning(
-                    self,
-                    "Update",
-                    "ไม่พบ DailyLogUpdater.exe",
+                message = (
+                    "พบเวอร์ชันใหม่ แต่ไม่พบ "
+                    "DailyLogUpdater.exe"
                 )
+                self.status.setToolTip(
+                    message
+                )
+                print(
+                    "[Notify Update]",
+                    message,
+                )
+                if manual:
+                    QMessageBox.warning(
+                        self,
+                        "DailyLog Notify Update",
+                        message,
+                    )
                 return
 
-            subprocess.Popen(
-                [
-                    updater,
-                    str(os.getpid()),
-                    sys.executable,
-                    url,
-                    sha,
-                ]
+            args = [
+                updater,
+                str(
+                    os.getpid()
+                ),
+                sys.executable,
+                str(
+                    result.get(
+                        "download_url",
+                        "",
+                    )
+                ),
+                str(
+                    result.get(
+                        "sha256",
+                        "",
+                    )
+                ),
+            ]
+
+            # Keep startup launches silent after updater restarts the app.
+            if "--startup" in sys.argv:
+                args.append(
+                    "--startup"
+                )
+
+            self.status.setText(
+                (
+                    "🟡 DailyLog Notify: "
+                    f"กำลังอัปเดตเป็น {result.get('latest', '')}"
+                )
             )
+
+            try:
+                subprocess.Popen(
+                    args
+                )
+            except Exception as error:
+                self.status.setText(
+                    "🔴 DailyLog Notify: เริ่ม Updater ไม่สำเร็จ"
+                )
+                self.status.setToolTip(
+                    str(error)
+                )
+                if manual:
+                    QMessageBox.warning(
+                        self,
+                        "DailyLog Notify Update",
+                        str(error),
+                    )
+                return
 
             QApplication.quit()
 
-        except Exception as error:
+        def failed(message):
+            self._update_check_running = False
+
             print(
                 "[Notify Update]",
-                error,
+                message,
             )
+
+            if manual:
+                QMessageBox.warning(
+                    self,
+                    "DailyLog Notify Update",
+                    (
+                        "ตรวจสอบ Update ไม่สำเร็จ\n\n"
+                        f"{message}"
+                    ),
+                )
+
+        run_async(
+            self,
+            self._fetch_update_info,
+            finished,
+            failed,
+        )
 
     def closeEvent(self, event):
         event.ignore()
@@ -705,6 +874,9 @@ if __name__ == "__main__":
     )
     app.setQuitOnLastWindowClosed(
         False
+    )
+    app.setWindowIcon(
+        make_tray_icon()
     )
 
     window = NotifyApp()
