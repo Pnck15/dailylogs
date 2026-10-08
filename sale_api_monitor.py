@@ -104,26 +104,35 @@ class SaleAPIMonitor:
             raise ValueError("Apps Script Web App URL ต้องลงท้ายด้วย /exec")
         return text
 
-    def _action_url(self):
+    def _action_url(self, action="changes"):
         if not self.url:
             raise ValueError("ไม่ได้กำหนด Apps Script Web App URL")
         parts = urlsplit(self.url)
         query = dict(parse_qsl(parts.query, keep_blank_values=True))
-        # Sale Delivery GAS ignores this parameter; SA GAS requires it.
-        query["action"] = "changes"
-        return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+        query["action"] = action
+        return urlunsplit(
+            (
+                parts.scheme,
+                parts.netloc,
+                parts.path,
+                urlencode(query),
+                parts.fragment,
+            )
+        )
 
-    def check(self, initial=False):
-        url = self._action_url()
+    def _request_json(self, action, read_timeout=None):
+        url = self._action_url(action)
+        timeout = self.timeout if read_timeout is None else read_timeout
+
         try:
             response = requests.get(
                 url,
                 headers={
                     "Accept": "application/json",
-                    "User-Agent": "DailyLog-Notifier/1.2",
+                    "User-Agent": "DailyLog-Notifier/1.3",
                     "Cache-Control": "no-cache",
                 },
-                timeout=(10, self.timeout),
+                timeout=(10, timeout),
                 allow_redirects=True,
             )
         except requests.exceptions.ConnectTimeout as exc:
@@ -132,7 +141,11 @@ class SaleAPIMonitor:
             ) from exc
         except requests.exceptions.ReadTimeout as exc:
             raise RuntimeError(
-                f"Google Apps Script ยังไม่ตอบกลับภายใน {self.timeout} วินาที"
+                f"Google Apps Script ยังไม่ตอบกลับภายใน {timeout} วินาที"
+            ) from exc
+        except requests.exceptions.SSLError as exc:
+            raise RuntimeError(
+                f"SSL/TLS ของ Apps Script เชื่อมต่อไม่สำเร็จ: {exc}"
             ) from exc
         except requests.exceptions.RequestException as exc:
             raise RuntimeError(
@@ -140,7 +153,10 @@ class SaleAPIMonitor:
             ) from exc
 
         status = response.status_code
-        raw = response.content.decode("utf-8-sig", errors="replace")
+        raw = response.content.decode(
+            "utf-8-sig",
+            errors="replace",
+        )
 
         if status < 200 or status >= 300:
             preview = raw[:300].replace("\n", " ")
@@ -156,13 +172,50 @@ class SaleAPIMonitor:
             if "<html" in lowered or "<!doctype" in lowered:
                 raise RuntimeError(
                     "Apps Script Web App ตอบกลับเป็นหน้า HTML แทน JSON "
-                    "(ตรวจ Deployment/สิทธิ์การเข้าถึง และต้องใช้ URL /exec)"
+                    "(ตรวจ Deploy > Who has access และต้องใช้ URL /exec)"
                 ) from exc
-            raise RuntimeError(f"คำตอบไม่ใช่ JSON: {preview}") from exc
+            raise RuntimeError(
+                f"คำตอบไม่ใช่ JSON: {preview}"
+            ) from exc
+
         if not isinstance(payload, dict):
-            raise RuntimeError("รูปแบบคำตอบ API ไม่ถูกต้อง: ต้องเป็น JSON object")
+            raise RuntimeError(
+                "รูปแบบคำตอบ API ไม่ถูกต้อง: ต้องเป็น JSON object"
+            )
+
         if payload.get("success") is False or payload.get("ok") is False:
-            raise RuntimeError(str(payload.get("message") or payload.get("error") or "API แจ้งว่าไม่สำเร็จ"))
+            raise RuntimeError(
+                str(
+                    payload.get("message")
+                    or payload.get("error")
+                    or "API แจ้งว่าไม่สำเร็จ"
+                )
+            )
+
+        payload["_http_status"] = status
+        payload["_final_url"] = response.url
+        payload["_action"] = action
+        return payload
+
+    def ping(self):
+        """Fast connectivity test. Does not scan the spreadsheet."""
+        payload = self._request_json(
+            "ping",
+            read_timeout=min(20, self.timeout),
+        )
+
+        if payload.get("action") not in (None, "ping"):
+            raise RuntimeError(
+                "Apps Script ตอบกลับได้ แต่ไม่ใช่ ping response"
+            )
+
+        return payload
+
+    def check(self, initial=False):
+        payload = self._request_json(
+            "changes",
+            read_timeout=self.timeout,
+        )
 
         self.last_payload = payload
         # The Sale Delivery GAS returns the same records in rows and data.
