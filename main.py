@@ -43,6 +43,7 @@ from PySide6.QtGui import (
 from cloud_worker import CloudService
 from workers import run_async
 from sale_api_monitor import SaleAPIMonitor
+from sheet_monitor import NotificationPresenter
 from update_checker import UpdateChecker
 from notify_channels import NotificationChannels
 
@@ -120,6 +121,13 @@ class DailyLog(QWidget):
             "MainNoti": "",
         }
 
+        self.sale_last_elapsed = {
+            "Sathorn": 0.0,
+            "Srinakarin": 0.0,
+            "SA": 0.0,
+            "MainNoti": 0.0,
+        }
+
         self.sale_notifications = []
 
         self.sale_due_notified = set()
@@ -127,6 +135,9 @@ class DailyLog(QWidget):
         # Admin-only notification integrations (GAS / LINE)
         self.notification_channels = NotificationChannels()
         self.line_status = "idle"
+
+        # Presentation only. This object never calls GAS.
+        self.notification_presenter = NotificationPresenter(self)
 
         # =========================================
         # Settings
@@ -2505,6 +2516,10 @@ class DailyLog(QWidget):
         self.notification_list.setSpacing(4)
         self.notification_list.setUniformItemSizes(False)
 
+        self.notification_presenter.set_central_list(
+            self.notification_list
+        )
+
         notification_layout.addWidget(
             self.notification_title
         )
@@ -3760,50 +3775,15 @@ class DailyLog(QWidget):
         notification_type="info",
         show_toast=True,
     ):
+        """Record and present a notification.
 
+        GAS/network access never happens here. SaleAPIMonitor is the only
+        connection layer; sheet_monitor.NotificationPresenter owns the
+        list/popup UI.
+        """
         now = datetime.now().strftime(
             "%H:%M:%S"
         )
-
-        icons = {
-            "new": "🟢",
-            "edit": "🟡",
-            "delete": "🔴",
-            "due": "🚗",
-            "info": "🔔",
-        }
-
-        icon = icons.get(
-            notification_type,
-            "🔔",
-        )
-
-        item = QListWidgetItem(
-            (
-                f"{icon} {now}  {title}\n"
-                f"    {message}"
-            )
-        )
-
-        if hasattr(
-            self,
-            "notification_list",
-        ):
-
-            self.notification_list.insertItem(
-                0,
-                item,
-            )
-
-            while (
-                self.notification_list.count()
-                > 50
-            ):
-
-                self.notification_list.takeItem(
-                    self.notification_list.count()
-                    - 1
-                )
 
         self.sale_notifications.insert(
             0,
@@ -3819,20 +3799,24 @@ class DailyLog(QWidget):
             len(self.sale_notifications)
             > 50
         ):
-
             self.sale_notifications.pop()
 
+        self.notification_presenter.present(
+            title=title,
+            message=message,
+            notification_type=notification_type,
+            show_popup=show_toast,
+            max_items=50,
+        )
+
         if show_toast:
-
-            self.show_sale_toast(
-                title,
-                message,
-                notification_type,
-            )
-
             if hasattr(self, "cloud"):
                 try:
-                    source = str(title or "").split(" - ", 1)[0].strip()
+                    source = (
+                        str(title or "")
+                        .split(" - ", 1)[0]
+                        .strip()
+                    )
                     self.cloud.call(
                         "publish_notification_event",
                         source,
@@ -3841,13 +3825,22 @@ class DailyLog(QWidget):
                         notification_type,
                     )
                 except Exception as error:
-                    print("[Central Notify Publish]", error)
+                    print(
+                        "[Central Notify Publish]",
+                        error,
+                    )
 
             if self.notification_channels.line_enabled():
-                ok, _line_message = self.notification_channels.send_line(
-                    f"{title}\n{message}"
+                ok, _line_message = (
+                    self.notification_channels.send_line(
+                        f"{title}\n{message}"
+                    )
                 )
-                self.line_status = "idle" if ok else "error"
+                self.line_status = (
+                    "idle"
+                    if ok
+                    else "error"
+                )
                 self.update_line_button()
 
     def show_sale_toast(
@@ -3856,141 +3849,16 @@ class DailyLog(QWidget):
         message,
         notification_type="info",
     ):
+        """Backward-compatible UI helper; no GAS access."""
+        from sheet_monitor import Notification
 
-        icons = {
-            "new": "🟢",
-            "edit": "🟡",
-            "delete": "🔴",
-            "due": "🚗",
-            "info": "🔔",
-        }
-
-        icon = icons.get(
-            notification_type,
-            "🔔",
-        )
-
-        dialog = QDialog(
-            self,
-            Qt.WindowType.Tool
-            | Qt.WindowType.WindowStaysOnTopHint,
-        )
-
-        dialog.setWindowTitle(
-            title
-        )
-
-        dialog.setModal(
-            False
-        )
-
-        dialog.setAttribute(
-            Qt.WidgetAttribute.WA_DeleteOnClose,
-            True,
-        )
-
-        dialog.setMinimumWidth(
-            210
-        )
-
-        layout = QVBoxLayout(
-            dialog
-        )
-
-        label = QLabel(
-            (
-                f"{icon} "
-                f"<b>{title}</b><br>"
-                f"{message.replace(chr(10), '<br>')}"
+        self.notification_presenter.show_popup(
+            Notification(
+                title=title,
+                message=message,
+                notification_type=notification_type,
             )
         )
-
-        label.setWordWrap(
-            True
-        )
-
-        label.setTextFormat(
-            Qt.TextFormat.RichText
-        )
-
-        label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-            | Qt.TextInteractionFlag.TextSelectableByKeyboard
-        )
-
-        layout.addWidget(
-            label
-        )
-
-        dialog.setStyleSheet(
-            """
-            QDialog {
-                background: #FFFFFF;
-                color: #111827;
-                border: 1px solid #94A3B8;
-                border-radius: 10px;
-            }
-
-            QLabel {
-                background: transparent;
-                color: #111827;
-                padding: 8px;
-                font-size: 11px;
-            }
-
-            QPushButton {
-                background: #374151;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 6px;
-                padding: 6px 14px;
-            }
-
-            QPushButton:hover {
-                background: #1F2937;
-                color: #FFFFFF;
-            }
-            """
-        )
-
-        self._sale_popups = getattr(
-            self,
-            "_sale_popups",
-            [],
-        )
-
-        self._sale_popups.append(
-            dialog
-        )
-
-        dialog.finished.connect(
-            lambda _=0, d=dialog:
-            (
-                self._sale_popups.remove(d)
-                if d in self._sale_popups
-                else None
-            )
-        )
-
-        dialog.adjustSize()
-
-        pos = self.mapToGlobal(
-            self.rect().topRight()
-        )
-
-        dialog.move(
-            pos.x()
-            - dialog.width()
-            - 12,
-            pos.y()
-            + 45,
-        )
-
-        dialog.show()
-
-        dialog.raise_()
-
-        dialog.activateWindow()
 
     # =========================================
     # Sale Monitor Helpers
@@ -4085,7 +3953,21 @@ class DailyLog(QWidget):
             )
         elif self.sale_enabled.get(branch, False):
             dot = "🟢"
-            tip = "ทำงานปกติ"
+            elapsed = float(
+                self.sale_last_elapsed.get(
+                    branch,
+                    0.0,
+                )
+                or 0.0
+            )
+            tip = (
+                "ทำงานปกติ"
+                + (
+                    f"\nรอบล่าสุด {elapsed:.2f} วินาที"
+                    if elapsed > 0
+                    else ""
+                )
+            )
         elif self.sale_api_urls.get(branch, "").strip():
             dot = "🔴"
             tip = "เชื่อมต่อไม่สำเร็จ / ไม่ทำงาน"
@@ -4147,6 +4029,7 @@ class DailyLog(QWidget):
             self.sale_last_error[branch] = (
                 ""
             )
+            self.sale_last_elapsed[branch] = 0.0
 
             self._start_sale_check(
                 branch,
@@ -4234,6 +4117,13 @@ class DailyLog(QWidget):
             self._sale_busy[branch] = False
             self.sale_errors[branch] = False
             self.sale_last_error[branch] = ""
+            self.sale_last_elapsed[branch] = float(
+                result.get(
+                    "_elapsed_seconds",
+                    0.0,
+                )
+                or 0.0
+            )
 
             self.sale_monitors[branch] = (
                 monitor
@@ -4258,8 +4148,20 @@ class DailyLog(QWidget):
                     or ""
                 ).strip()
 
+                elapsed = float(
+                    result.get(
+                        "_elapsed_seconds",
+                        0.0,
+                    )
+                    or 0.0
+                )
                 message = (
                     "เชื่อมต่อ Apps Script Web App สำเร็จ"
+                    + (
+                        f" ({elapsed:.2f} วินาที)"
+                        if elapsed > 0
+                        else ""
+                    )
                 )
 
                 if api_version:
@@ -4637,6 +4539,13 @@ class DailyLog(QWidget):
             self._sale_busy[branch] = False
             self.sale_errors[branch] = False
             self.sale_last_error[branch] = ""
+            self.sale_last_elapsed[branch] = float(
+                result.get(
+                    "_elapsed_seconds",
+                    0.0,
+                )
+                or 0.0
+            )
 
             self.sale_monitors[branch] = (
                 monitor
@@ -4660,8 +4569,20 @@ class DailyLog(QWidget):
                 or ""
             ).strip()
 
+            elapsed = float(
+                result.get(
+                    "_elapsed_seconds",
+                    0.0,
+                )
+                or 0.0
+            )
             message = (
                 "Re-connect สำเร็จ"
+                + (
+                    f" ({elapsed:.2f} วินาที)"
+                    if elapsed > 0
+                    else ""
+                )
             )
 
             if api_version:
@@ -4840,6 +4761,13 @@ class DailyLog(QWidget):
             )
             self.sale_errors[branch] = False
             self.sale_last_error[branch] = ""
+            self.sale_last_elapsed[branch] = float(
+                result.get(
+                    "_elapsed_seconds",
+                    0.0,
+                )
+                or 0.0
+            )
             self.update_sale_button(branch)
 
             self._process_sale_result(
