@@ -1544,7 +1544,7 @@ class DailyLog(QWidget):
         for branch, label in (
             ("Sathorn", "Sale Deli Sathorn GAS"),
             ("Srinakarin", "Sale Deli Srinakarin GAS"),
-            ("SA", "SA Notify GAS"),
+            ("SA", "SA Sathorn GAS"),
             ("MainNoti", "MainNoti GAS"),
         ):
             action = notify_menu.addAction(label)
@@ -1571,7 +1571,7 @@ class DailyLog(QWidget):
         for branch, label in (
             ("Sathorn", "Sale Deli Sathorn"),
             ("Srinakarin", "Sale Deli Srinakarin"),
-            ("SA", "SA Notify"),
+            ("SA", "SA Sathorn"),
             ("MainNoti", "MainNoti"),
         ):
             action = reconnect_menu.addAction(
@@ -3930,7 +3930,7 @@ class DailyLog(QWidget):
     ):
 
         if branch == "SA":
-            return "SA Notify"
+            return "SA Sathorn"
 
         if branch == "MainNoti":
             return "MainNoti"
@@ -3947,7 +3947,7 @@ class DailyLog(QWidget):
         labels = {
             "Sathorn": "Sathorn",
             "Srinakarin": "Srinakarin",
-            "SA": "SA",
+            "SA": "SA Sathorn",
             "MainNoti": "MainNoti",
         }
 
@@ -5241,6 +5241,311 @@ class DailyLog(QWidget):
             branch
         )
 
+        def row_data_items(values):
+            items = (
+                values.get(
+                    "row_data"
+                )
+                if isinstance(
+                    values,
+                    dict,
+                )
+                else None
+            )
+
+            if isinstance(
+                items,
+                list,
+            ):
+                return [
+                    item
+                    for item in items
+                    if isinstance(
+                        item,
+                        dict,
+                    )
+                ]
+
+            fallback = []
+
+            for (
+                label,
+                key,
+            ) in (
+                ("Model", "model"),
+                ("VIN", "vin"),
+                ("Customer", "customer"),
+                ("Sale", "sale"),
+                ("Pay Day", "pay_day"),
+                (
+                    "Delivery Date",
+                    "delivery_date",
+                ),
+            ):
+                fallback.append({
+                    "column": "",
+                    "header": label,
+                    "value":
+                        values.get(
+                            key,
+                            "",
+                        )
+                        if isinstance(
+                            values,
+                            dict,
+                        )
+                        else "",
+                })
+
+            return fallback
+
+        def row_data_map(values):
+            result_map = {}
+
+            for item in row_data_items(
+                values
+            ):
+                column = str(
+                    item.get(
+                        "column",
+                        "",
+                    )
+                    or ""
+                ).strip()
+
+                header = str(
+                    item.get(
+                        "header",
+                        "",
+                    )
+                    or ""
+                ).strip()
+
+                key = (
+                    column
+                    or header
+                )
+
+                if not key:
+                    continue
+
+                result_map[key] = {
+                    "column": column,
+                    "header": header,
+                    "value": str(
+                        item.get(
+                            "value",
+                            "",
+                        )
+                        or ""
+                    ),
+                }
+
+            return result_map
+
+        def row_item_label(item):
+            column = str(
+                item.get(
+                    "column",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            header = str(
+                item.get(
+                    "header",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            if column and header:
+                return (
+                    f"{column} - {header}"
+                )
+
+            return (
+                header
+                or column
+                or "ข้อมูล"
+            )
+
+        def format_full_row(values):
+            lines = []
+
+            for item in row_data_items(
+                values
+            ):
+                value = str(
+                    item.get(
+                        "value",
+                        "",
+                    )
+                    or ""
+                ).strip()
+
+                if value == "":
+                    continue
+
+                lines.append(
+                    (
+                        f"{row_item_label(item)}: "
+                        f"{value}"
+                    )
+                )
+
+            if not lines:
+                return "ไม่มีข้อมูลในแถว"
+
+            return "\n".join(
+                lines
+            )
+
+        def full_row_changes(
+            old_values,
+            new_values,
+        ):
+            old_map = row_data_map(
+                old_values
+            )
+            new_map = row_data_map(
+                new_values
+            )
+
+            ordered_keys = []
+
+            for item in row_data_items(
+                new_values
+            ):
+                key = (
+                    str(
+                        item.get(
+                            "column",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+                    or str(
+                        item.get(
+                            "header",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+                )
+
+                if (
+                    key
+                    and key not in
+                    ordered_keys
+                ):
+                    ordered_keys.append(
+                        key
+                    )
+
+            for item in row_data_items(
+                old_values
+            ):
+                key = (
+                    str(
+                        item.get(
+                            "column",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+                    or str(
+                        item.get(
+                            "header",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+                )
+
+                if (
+                    key
+                    and key not in
+                    ordered_keys
+                ):
+                    ordered_keys.append(
+                        key
+                    )
+
+            changes = []
+
+            for key in ordered_keys:
+                old_item = old_map.get(
+                    key,
+                    {},
+                )
+                new_item = new_map.get(
+                    key,
+                    {},
+                )
+
+                old_value = str(
+                    old_item.get(
+                        "value",
+                        "",
+                    )
+                    or ""
+                )
+
+                new_value = str(
+                    new_item.get(
+                        "value",
+                        "",
+                    )
+                    or ""
+                )
+
+                if (
+                    old_value ==
+                    new_value
+                ):
+                    continue
+
+                label = row_item_label(
+                    new_item
+                    or old_item
+                )
+
+                if (
+                    old_value == ""
+                    and new_value != ""
+                ):
+                    changes.append(
+                        (
+                            f"{label}: เพิ่ม "
+                            f"{new_value}"
+                        )
+                    )
+
+                elif (
+                    old_value != ""
+                    and new_value == ""
+                ):
+                    changes.append(
+                        (
+                            f"{label}: ลบ "
+                            f"{old_value}"
+                        )
+                    )
+
+                else:
+                    changes.append(
+                        (
+                            f"{label}: "
+                            f"{old_value or '-'} "
+                            "→ "
+                            f"{new_value or '-'}"
+                        )
+                    )
+
+            return changes
+
         # =====================================
         # NEW
         # =====================================
@@ -5249,23 +5554,15 @@ class DailyLog(QWidget):
             "added",
             [],
         ):
-
             message = (
-                f"Row: {row}\n"
-                f"Model: "
-                f"{values.get('model', '-')}\n"
-                f"VIN: "
-                f"{values.get('vin', '-')}\n"
-                f"Customer: "
-                f"{values.get('customer', '-')}\n"
-                f"Sale: "
-                f"{values.get('sale', '-')}\n"
-                f"Delivery: "
-                f"{values.get('delivery_date', '-')}"
+                "ข้อมูลที่เพิ่ม\n"
+                + format_full_row(
+                    values
+                )
             )
 
             self.add_sale_notification(
-                f"{title} - เพิ่มรายการใหม่",
+                f"{title} - เพิ่มข้อมูล",
                 message,
                 "new",
             )
@@ -5282,75 +5579,74 @@ class DailyLog(QWidget):
             "changed",
             [],
         ):
+            changes = full_row_changes(
+                old_values,
+                new_values,
+            )
 
-            changes = []
+            if not changes:
+                continue
 
-            fields = [
-                ("Model", "model"),
-                ("VIN", "vin"),
-                ("Customer", "customer"),
-                ("Sale", "sale"),
-                ("Pay Day", "pay_day"),
+            message = (
+                "ข้อมูลที่เปลี่ยน\n"
+                + "\n".join(
+                    changes
+                )
+                + "\n\nข้อมูลทั้งแถว\n"
+                + format_full_row(
+                    new_values
+                )
+            )
+
+            self.add_sale_notification(
                 (
-                    "Delivery Date",
-                    "delivery_date",
+                    f"{title} "
+                    "- มีการแก้ไขข้อมูล"
                 ),
-            ]
-
-            for label, key in fields:
-
-                old_value = old_values.get(
-                    key,
-                    "",
-                )
-
-                new_value = new_values.get(
-                    key,
-                    "",
-                )
-
-                if old_value != new_value:
-
-                    changes.append(
-                        (
-                            f"{label}: "
-                            f"{old_value or '-'} "
-                            f"→ "
-                            f"{new_value or '-'}"
-                        )
-                    )
-
-            if changes:
-
-                message = (
-                    f"Row: {row}\n"
-                    + "\n".join(changes)
-                )
-
-                self.add_sale_notification(
-                    (
-                        f"{title} "
-                        "- มีการแก้ไขข้อมูล"
-                    ),
-                    message,
-                    "edit",
-                )
+                message,
+                "edit",
+            )
 
         # =====================================
         # DELETE
         # =====================================
 
-        for row in result.get(
+        for deleted_item in result.get(
             "deleted",
             [],
         ):
+            if (
+                isinstance(
+                    deleted_item,
+                    (tuple, list),
+                )
+                and len(
+                    deleted_item
+                ) >= 2
+            ):
+                row = (
+                    deleted_item[0]
+                )
+                old_values = (
+                    deleted_item[1]
+                )
+            else:
+                row = deleted_item
+                old_values = {}
+
+            message = (
+                "ข้อมูลที่ถูกลบ\n"
+                + format_full_row(
+                    old_values
+                )
+            )
 
             self.add_sale_notification(
                 (
                     f"{title} "
-                    "- รายการถูกลบ"
+                    "- ลบข้อมูล"
                 ),
-                f"Row: {row}",
+                message,
                 "delete",
             )
 
@@ -5738,6 +6034,11 @@ class DailyLog(QWidget):
         branch="Sathorn",
     ):
 
+        # SA uses the merged Column-D current-day scope and only reports
+        # add/edit/delete changes inside that scope.
+        if branch == "SA":
+            return
+
         monitor = self.sale_monitors.get(
             branch
         )
@@ -5745,19 +6046,123 @@ class DailyLog(QWidget):
         if monitor is None:
             return
 
+        def format_row(values):
+            items = (
+                values.get(
+                    "row_data"
+                )
+                if isinstance(
+                    values,
+                    dict,
+                )
+                else None
+            )
+
+            lines = []
+
+            if isinstance(
+                items,
+                list,
+            ):
+                for item in items:
+                    if not isinstance(
+                        item,
+                        dict,
+                    ):
+                        continue
+
+                    value = str(
+                        item.get(
+                            "value",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+
+                    if not value:
+                        continue
+
+                    column = str(
+                        item.get(
+                            "column",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+
+                    header = str(
+                        item.get(
+                            "header",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+
+                    label = (
+                        (
+                            f"{column} - {header}"
+                            if column and header
+                            else header
+                            or column
+                        )
+                        or "ข้อมูล"
+                    )
+
+                    lines.append(
+                        f"{label}: {value}"
+                    )
+
+            if not lines:
+                for label, key in (
+                    ("Model", "model"),
+                    ("VIN", "vin"),
+                    (
+                        "Customer",
+                        "customer",
+                    ),
+                    ("Sale", "sale"),
+                    (
+                        "Pay Day",
+                        "pay_day",
+                    ),
+                    (
+                        "Delivery Date",
+                        "delivery_date",
+                    ),
+                ):
+                    value = str(
+                        values.get(
+                            key,
+                            "",
+                        )
+                        or ""
+                    ).strip()
+
+                    if value:
+                        lines.append(
+                            f"{label}: {value}"
+                        )
+
+            return "\n".join(
+                lines
+            )
+
         for row, values in (
             monitor.get_due_today()
         ):
-
-            delivery_date = values.get(
-                "delivery_date",
-                "",
+            due_fields = (
+                values.get(
+                    "due_fields",
+                    [],
+                )
+                or []
             )
 
             notification_key = (
                 f"{branch}-"
+                f"{date.today().isoformat()}-"
                 f"{row}-"
-                f"{delivery_date}"
+                f"{'|'.join(due_fields)}"
             )
 
             if (
@@ -5770,26 +6175,36 @@ class DailyLog(QWidget):
                 notification_key
             )
 
+            if due_fields == [
+                "Pay Day"
+            ]:
+                suffix = (
+                    "Pay Day วันนี้"
+                )
+
+            elif due_fields == [
+                "Delivery Date"
+            ]:
+                suffix = (
+                    "ส่งรถวันนี้"
+                )
+
+            else:
+                suffix = (
+                    "Pay Day / Delivery Date วันนี้"
+                )
+
             message = (
-                f"Row: {row}\n"
-                f"Model: "
-                f"{values.get('model', '-')}\n"
-                f"VIN: "
-                f"{values.get('vin', '-')}\n"
-                f"Customer: "
-                f"{values.get('customer', '-')}\n"
-                f"Sale: "
-                f"{values.get('sale', '-')}\n"
-                f"Pay Day: "
-                f"{values.get('pay_day', '-')}\n"
-                f"Delivery Date: "
-                f"{delivery_date}"
+                "ข้อมูลทั้งแถว\n"
+                + format_row(
+                    values
+                )
             )
 
             self.add_sale_notification(
                 (
                     f"{self._sale_title(branch)} "
-                    "- ถึงกำหนดส่งรถวันนี้"
+                    f"- {suffix}"
                 ),
                 message,
                 "due",
