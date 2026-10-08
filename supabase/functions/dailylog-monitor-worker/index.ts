@@ -470,7 +470,13 @@ function rowDataColumn(
   return "";
 }
 
-function saleIdentity(
+function salePhysicalIdentity(
+  row: AnyRow,
+) {
+  return `ROW=${normalize(row.row)}`;
+}
+
+function saleStableIdentity(
   row: AnyRow,
 ) {
   const vin =
@@ -478,14 +484,20 @@ function saleIdentity(
       row.vin,
     );
 
-  if (vin) {
-    return `VIN=${vin}`;
-  }
-
-  return `ROW=${normalize(row.row)}`;
+  return vin
+    ? `VIN=${vin}`
+    : "";
 }
 
-function saIdentity(
+function saPhysicalIdentity(
+  row: AnyRow,
+) {
+  return (
+    `${normalize(row.sheet)}|ROW=${normalize(row.row)}`
+  );
+}
+
+function saStableIdentity(
   row: AnyRow,
 ) {
   const sheet =
@@ -506,13 +518,192 @@ function saIdentity(
     );
 
   if (
-    sequence ||
-    plate
+    !sequence &&
+    !plate
   ) {
-    return `${sheet}|C=${sequence}|F=${plate}`;
+    return "";
   }
 
-  return `${sheet}|ROW=${normalize(row.row)}`;
+  return `${sheet}|C=${sequence}|F=${plate}`;
+}
+
+function uniqueStableMap(
+  rows: Record<string, AnyRow>,
+  getStable: (row: AnyRow) => string,
+) {
+  const result =
+    new Map<string, string>();
+
+  const duplicates =
+    new Set<string>();
+
+  for (
+    const [
+      physicalKey,
+      row,
+    ]
+    of Object.entries(
+      rows,
+    )
+  ) {
+    const stable =
+      getStable(
+        row,
+      );
+
+    if (!stable) {
+      continue;
+    }
+
+    if (
+      result.has(
+        stable,
+      )
+    ) {
+      duplicates.add(
+        stable,
+      );
+      continue;
+    }
+
+    result.set(
+      stable,
+      physicalKey,
+    );
+  }
+
+  for (
+    const stable
+    of duplicates
+  ) {
+    result.delete(
+      stable,
+    );
+  }
+
+  return result;
+}
+
+function reconcileRows(
+  current: Record<string, AnyRow>,
+  previous: Record<string, AnyRow>,
+  getStable: (row: AnyRow) => string,
+) {
+  const pairs:
+    Array<[string, string]> = [];
+
+  const matchedCurrent =
+    new Set<string>();
+
+  const matchedPrevious =
+    new Set<string>();
+
+  const currentStable =
+    uniqueStableMap(
+      current,
+      getStable,
+    );
+
+  const previousStable =
+    uniqueStableMap(
+      previous,
+      getStable,
+    );
+
+  // Match stable business identifiers first. This prevents a physical
+  // row insert/delete from shifting every later row into a false edit.
+  for (
+    const [
+      stable,
+      currentKey,
+    ]
+    of currentStable.entries()
+  ) {
+    const previousKey =
+      previousStable.get(
+        stable,
+      );
+
+    if (!previousKey) {
+      continue;
+    }
+
+    pairs.push([
+      currentKey,
+      previousKey,
+    ]);
+
+    matchedCurrent.add(
+      currentKey,
+    );
+
+    matchedPrevious.add(
+      previousKey,
+    );
+  }
+
+  // Fall back to the same physical row for remaining records.
+  // Therefore editing VIN / sequence / plate itself is still an EDIT.
+  for (
+    const currentKey
+    of Object.keys(
+      current,
+    )
+  ) {
+    if (
+      matchedCurrent.has(
+        currentKey,
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      currentKey in previous &&
+      !matchedPrevious.has(
+        currentKey,
+      )
+    ) {
+      pairs.push([
+        currentKey,
+        currentKey,
+      ]);
+
+      matchedCurrent.add(
+        currentKey,
+      );
+
+      matchedPrevious.add(
+        currentKey,
+      );
+    }
+  }
+
+  const added =
+    Object.keys(
+      current,
+    ).filter(
+      (key) =>
+        !matchedCurrent.has(
+          key,
+        ),
+    );
+
+  const deleted =
+    Object.keys(
+      previous,
+    ).filter(
+      (key) =>
+        !matchedPrevious.has(
+          key,
+        ),
+    );
+
+  return {
+    pairs,
+    added,
+    deleted,
+  };
 }
 
 function sourceRows(payload: AnyRow) {
@@ -532,9 +723,15 @@ async function processSale(
   payload: AnyRow,
   state: AnyRow,
 ) {
-  const current: Record<string, AnyRow> = {};
+  const current:
+    Record<string, AnyRow> = {};
 
-  for (const item of sourceRows(payload)) {
+  for (
+    const item
+    of sourceRows(
+      payload,
+    )
+  ) {
     if (
       !item ||
       typeof item !== "object" ||
@@ -543,121 +740,240 @@ async function processSale(
       continue;
     }
 
-    const row = item as AnyRow;
-    const rowNumber = normalize(row.row);
+    const row =
+      item as AnyRow;
 
-    if (!rowNumber) continue;
+    const physical =
+      salePhysicalIdentity(
+        row,
+      );
+
+    if (
+      physical ===
+      "ROW="
+    ) {
+      continue;
+    }
 
     current[
-      saleIdentity(
-        row,
-      )
+      physical
     ] = row;
   }
 
-  const version = normalize(payload.version);
+  const version =
+    normalize(
+      payload.version,
+    );
 
   const initialized =
     state.initialized === true &&
-    normalize(state.version) === version;
+    normalize(
+      state.version,
+    ) === version;
 
   const previous =
     initialized &&
     state.rows &&
     typeof state.rows === "object" &&
-    !Array.isArray(state.rows)
-      ? state.rows as Record<string, AnyRow>
+    !Array.isArray(
+      state.rows,
+    )
+      ? state.rows as
+          Record<string, AnyRow>
       : {};
 
   if (initialized) {
-    for (const [identity, row] of Object.entries(current)) {
-      const old = previous[identity];
+    const reconciled =
+      reconcileRows(
+        current,
+        previous,
+        saleStableIdentity,
+      );
 
-      if (!old) {
-        await publishEvent(
-          source,
-          `${source.source_key}|new|${identity}|${rowSignature(row)}`,
-          `${source.source_name} - เพิ่มข้อมูล`,
-          "ข้อมูลที่เพิ่ม\n" + formatFullRow(row),
-          "new",
-        );
-        continue;
-      }
+    for (
+      const [
+        currentKey,
+        previousKey,
+      ]
+      of reconciled.pairs
+    ) {
+      const row =
+        current[
+          currentKey
+        ];
+
+      const old =
+        previous[
+          previousKey
+        ];
 
       const changes =
-        diffFullRow(old, row);
-
-      if (changes.length) {
-        await publishEvent(
-          source,
-          `${source.source_key}|edit|${identity}|${rowSignature(row)}`,
-          `${source.source_name} - มีการแก้ไขข้อมูล`,
-          (
-            "ข้อมูลที่เปลี่ยน\n"
-            + changes.join("\n")
-            + "\n\nข้อมูลทั้งแถว\n"
-            + formatFullRow(row)
-          ),
-          "edit",
+        diffFullRow(
+          old,
+          row,
         );
-      }
-    }
 
-    for (const [identity, old] of Object.entries(previous)) {
-      if (identity in current) {
+      if (
+        !changes.length
+      ) {
         continue;
       }
+
+      const identity =
+        saleStableIdentity(
+          row,
+        )
+        || currentKey;
+
+      await publishEvent(
+        source,
+        `${source.source_key}|edit|${identity}|${rowSignature(row)}`,
+        `${source.source_name} - มีการแก้ไขข้อมูล`,
+        (
+          "ข้อมูลที่เปลี่ยน\n"
+          + changes.join(
+            "\n",
+          )
+          + "\n\nข้อมูลทั้งแถว\n"
+          + formatFullRow(
+            row,
+          )
+        ),
+        "edit",
+      );
+    }
+
+    for (
+      const currentKey
+      of reconciled.added
+    ) {
+      const row =
+        current[
+          currentKey
+        ];
+
+      const identity =
+        saleStableIdentity(
+          row,
+        )
+        || currentKey;
+
+      await publishEvent(
+        source,
+        `${source.source_key}|new|${identity}|${rowSignature(row)}`,
+        `${source.source_name} - เพิ่มข้อมูล`,
+        (
+          "ข้อมูลที่เพิ่ม\n"
+          + formatFullRow(
+            row,
+          )
+        ),
+        "new",
+      );
+    }
+
+    for (
+      const previousKey
+      of reconciled.deleted
+    ) {
+      const old =
+        previous[
+          previousKey
+        ];
+
+      const identity =
+        saleStableIdentity(
+          old,
+        )
+        || previousKey;
 
       await publishEvent(
         source,
         `${source.source_key}|delete|${identity}|${rowSignature(old)}`,
         `${source.source_name} - ลบข้อมูล`,
-        "ข้อมูลที่ถูกลบ\n" + formatFullRow(old),
+        (
+          "ข้อมูลที่ถูกลบ\n"
+          + formatFullRow(
+            old,
+          )
+        ),
         "delete",
       );
     }
   }
 
-  const today = bangkokTodayKey();
+  const today =
+    bangkokTodayKey();
 
-  for (const [identity, row] of Object.entries(current)) {
-    const rowNumber =
-      normalize(
-        row.row,
-      );
-
+  for (
+    const [
+      physicalKey,
+      row,
+    ]
+    of Object.entries(
+      current,
+    )
+  ) {
     const payToday =
-      dateKeyFromText(row.pay_day) === today;
+      dateKeyFromText(
+        row.pay_day,
+      ) === today;
 
     const deliveryToday =
-      dateKeyFromText(row.delivery_date) === today;
+      dateKeyFromText(
+        row.delivery_date,
+      ) === today;
 
-    if (!payToday && !deliveryToday) {
+    if (
+      !payToday &&
+      !deliveryToday
+    ) {
       continue;
     }
 
     let dueKind =
       "Pay Day / Delivery Date วันนี้";
 
-    if (payToday && !deliveryToday) {
-      dueKind = "Pay Day วันนี้";
-    } else if (deliveryToday && !payToday) {
-      dueKind = "ส่งรถวันนี้";
+    if (
+      payToday &&
+      !deliveryToday
+    ) {
+      dueKind =
+        "Pay Day วันนี้";
+    } else if (
+      deliveryToday &&
+      !payToday
+    ) {
+      dueKind =
+        "ส่งรถวันนี้";
     }
+
+    const identity =
+      saleStableIdentity(
+        row,
+      )
+      || physicalKey;
 
     await publishEvent(
       source,
       `${source.source_key}|due|${today}|${identity}|${normalize(row.pay_day)}|${normalize(row.delivery_date)}`,
       `${source.source_name} - ${dueKind}`,
-      "ข้อมูลทั้งแถว\n" + formatFullRow(row),
+      (
+        "ข้อมูลทั้งแถว\n"
+        + formatFullRow(
+          row,
+        )
+      ),
       "due",
     );
   }
 
   return {
-    initialized: true,
+    initialized:
+      true,
     version,
-    rows: current,
+    rows:
+      current,
     today,
   };
 }
@@ -667,9 +983,15 @@ async function processSa(
   payload: AnyRow,
   state: AnyRow,
 ) {
-  const current: Record<string, AnyRow> = {};
+  const current:
+    Record<string, AnyRow> = {};
 
-  for (const item of sourceRows(payload)) {
+  for (
+    const item
+    of sourceRows(
+      payload,
+    )
+  ) {
     if (
       !item ||
       typeof item !== "object" ||
@@ -678,98 +1000,197 @@ async function processSa(
       continue;
     }
 
-    const row = item as AnyRow;
-    const sheet = normalize(row.sheet);
-    const rowNumber = normalize(row.row);
+    const row =
+      item as AnyRow;
 
-    if (!sheet || !rowNumber) {
+    const sheet =
+      normalize(
+        row.sheet,
+      );
+
+    const rowNumber =
+      normalize(
+        row.row,
+      );
+
+    if (
+      !sheet ||
+      !rowNumber
+    ) {
       continue;
     }
 
     current[
-      saIdentity(
+      saPhysicalIdentity(
         row,
       )
     ] = row;
   }
 
-  const version = normalize(payload.version);
+  const version =
+    normalize(
+      payload.version,
+    );
 
   const today =
-    normalize(payload.today) ||
+    normalize(
+      payload.today,
+    )
+    ||
     bangkokTodayKey();
 
   const initialized =
     state.initialized === true &&
-    normalize(state.version) === version &&
-    normalize(state.today) === today;
+    normalize(
+      state.version,
+    ) === version &&
+    normalize(
+      state.today,
+    ) === today;
 
   const previous =
     initialized &&
     state.rows &&
     typeof state.rows === "object" &&
-    !Array.isArray(state.rows)
-      ? state.rows as Record<string, AnyRow>
+    !Array.isArray(
+      state.rows,
+    )
+      ? state.rows as
+          Record<string, AnyRow>
       : {};
 
-  // New day/version = baseline only.
-  // Later scans detect every B:P cell change inside today's
-  // merged Column-D ranges.
+  // First scan of each new day/version becomes the baseline.
   if (initialized) {
-    for (const [identity, row] of Object.entries(current)) {
-      const old = previous[identity];
+    const reconciled =
+      reconcileRows(
+        current,
+        previous,
+        saStableIdentity,
+      );
 
-      if (!old) {
-        await publishEvent(
-          source,
-          `${source.source_key}|new|${today}|${identity}|${rowSignature(row)}`,
-          `${source.source_name} - เพิ่มข้อมูล`,
-          "ข้อมูลที่เพิ่ม\n" + formatFullRow(row),
-          "new",
-        );
-        continue;
-      }
+    for (
+      const [
+        currentKey,
+        previousKey,
+      ]
+      of reconciled.pairs
+    ) {
+      const row =
+        current[
+          currentKey
+        ];
+
+      const old =
+        previous[
+          previousKey
+        ];
 
       const changes =
-        diffFullRow(old, row);
-
-      if (changes.length) {
-        await publishEvent(
-          source,
-          `${source.source_key}|edit|${today}|${identity}|${rowSignature(row)}`,
-          `${source.source_name} - มีการแก้ไขข้อมูล`,
-          (
-            "ข้อมูลที่เปลี่ยน\n"
-            + changes.join("\n")
-            + "\n\nข้อมูลทั้งแถว\n"
-            + formatFullRow(row)
-          ),
-          "edit",
+        diffFullRow(
+          old,
+          row,
         );
-      }
-    }
 
-    for (const [identity, old] of Object.entries(previous)) {
-      if (identity in current) {
+      if (
+        !changes.length
+      ) {
         continue;
       }
+
+      const identity =
+        saStableIdentity(
+          row,
+        )
+        || currentKey;
+
+      await publishEvent(
+        source,
+        `${source.source_key}|edit|${today}|${identity}|${rowSignature(row)}`,
+        `${source.source_name} - มีการแก้ไขข้อมูล`,
+        (
+          "ข้อมูลที่เปลี่ยน\n"
+          + changes.join(
+            "\n",
+          )
+          + "\n\nข้อมูลทั้งแถว\n"
+          + formatFullRow(
+            row,
+          )
+        ),
+        "edit",
+      );
+    }
+
+    for (
+      const currentKey
+      of reconciled.added
+    ) {
+      const row =
+        current[
+          currentKey
+        ];
+
+      const identity =
+        saStableIdentity(
+          row,
+        )
+        || currentKey;
+
+      await publishEvent(
+        source,
+        `${source.source_key}|new|${today}|${identity}|${rowSignature(row)}`,
+        `${source.source_name} - เพิ่มข้อมูล`,
+        (
+          "ข้อมูลที่เพิ่ม\n"
+          + formatFullRow(
+            row,
+          )
+        ),
+        "new",
+      );
+    }
+
+    for (
+      const previousKey
+      of reconciled.deleted
+    ) {
+      const old =
+        previous[
+          previousKey
+        ];
+
+      const identity =
+        saStableIdentity(
+          old,
+        )
+        || previousKey;
 
       await publishEvent(
         source,
         `${source.source_key}|delete|${today}|${identity}|${rowSignature(old)}`,
         `${source.source_name} - ลบข้อมูล`,
-        "ข้อมูลที่ถูกลบ\n" + formatFullRow(old),
+        (
+          "ข้อมูลที่ถูกลบ\n"
+          + formatFullRow(
+            old,
+          )
+        ),
         "delete",
       );
     }
   }
 
   return {
-    initialized: true,
+    initialized:
+      true,
     version,
     today,
-    rows: current,
-    mode: normalize(payload.mode),
+    rows:
+      current,
+    mode:
+      normalize(
+        payload.mode,
+      ),
   };
 }
 
