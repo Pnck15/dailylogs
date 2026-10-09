@@ -44,7 +44,7 @@ gh release create $tag `
  --target $commit `
  --latest=false `
  --title "DailyLogNotify $version" `
- --notes "DailyLogNotify $version: automatic updates, verified downloads, updater recovery and smaller appointment notification popups. First installation requires both DailyLogNotify.exe and DailyLogUpdater.exe in the same writable folder. Existing configured clients update without signing in again."
+ --notes "DailyLogNotify ${version}: automatic updates, verified downloads, updater recovery and smaller appointment notification popups. First installation requires both DailyLogNotify.exe and DailyLogUpdater.exe in the same writable folder. Existing configured clients update without signing in again."
 if ($LASTEXITCODE -ne 0) { throw "GitHub Release creation failed." }
 Write-Host "Published: https://github.com/$GitHubRepo/releases/tag/$tag"
 
