@@ -810,6 +810,10 @@ class NotifyApp(QWidget):
             "System Status",
             self,
         )
+        test_popup_action = QAction(
+            "Test Notification Popup",
+            self,
+        )
         update_action = QAction(
             "Check for updates",
             self,
@@ -833,6 +837,9 @@ class NotifyApp(QWidget):
         )
         tray_menu.addAction(
             status_action
+        )
+        tray_menu.addAction(
+            test_popup_action
         )
         tray_menu.addAction(
             update_action
@@ -860,6 +867,9 @@ class NotifyApp(QWidget):
         )
         status_action.triggered.connect(
             self.open_system_status
+        )
+        test_popup_action.triggered.connect(
+            self.show_test_popup
         )
         update_action.triggered.connect(
             lambda: self.check_for_updates(
@@ -1582,6 +1592,16 @@ class NotifyApp(QWidget):
                 message,
             )
 
+    def show_test_popup(self):
+        self._show_notify_popup(
+            "DailyLogNotify - Test",
+            (
+                "ทดสอบ Popup ของ DailyLogNotify\n"
+                "หน้าต่างนี้ไม่ใช้ Windows Notification\n"
+                "สามารถเลือกข้อความเพื่อ Copy ได้ และจะปิดอัตโนมัติใน 10 นาที"
+            ),
+        )
+
     def _show_notify_popup(
         self,
         title,
@@ -1645,7 +1665,7 @@ class NotifyApp(QWidget):
             - margin
         )
 
-        # Newest popup stays closest to the lower-left corner.
+        # Newest popup stays closest to the lower-right corner.
         for popup in reversed(
             self._notify_popups
         ):
@@ -1654,10 +1674,13 @@ class NotifyApp(QWidget):
 
             popup.adjustSize()
 
+            width = popup.width()
             height = popup.height()
             x = (
-                area.left()
-                + margin
+                area.right()
+                - width
+                - margin
+                + 1
             )
             y = (
                 y
