@@ -29,6 +29,7 @@ from workers import run_async
 
 
 APP_VERSION = "1.5.0"
+DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
 DEFAULT_RECEIVER_EMAIL = "daily123@gmail.com"
@@ -748,6 +749,19 @@ class NotifyApp(QWidget):
             self.startup_label
         )
 
+        self.version_label = QLabel(
+            f"Version {APP_VERSION} • {DEVELOPER_CREDIT}"
+        )
+        self.version_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.version_label.setStyleSheet(
+            "color: #6B7280; font-size: 10px;"
+        )
+        layout.addWidget(
+            self.version_label
+        )
+
         history_button.clicked.connect(
             self.open_history
         )
@@ -792,6 +806,10 @@ class NotifyApp(QWidget):
             "Login / Change account",
             self,
         )
+        status_action = QAction(
+            "System Status",
+            self,
+        )
         update_action = QAction(
             "Check for updates",
             self,
@@ -812,6 +830,9 @@ class NotifyApp(QWidget):
         )
         tray_menu.addAction(
             login_action
+        )
+        tray_menu.addAction(
+            status_action
         )
         tray_menu.addAction(
             update_action
@@ -836,6 +857,9 @@ class NotifyApp(QWidget):
         )
         login_action.triggered.connect(
             self.open_login
+        )
+        status_action.triggered.connect(
+            self.open_system_status
         )
         update_action.triggered.connect(
             lambda: self.check_for_updates(
@@ -1220,6 +1244,251 @@ class NotifyApp(QWidget):
                 "🟡 Central Notification: รอเลือกแหล่งข้อมูล"
             )
 
+    def open_system_status(self):
+        dialog = QDialog(
+            self
+        )
+        dialog.setWindowTitle(
+            "DailyLogNotify - System Status"
+        )
+        dialog.resize(
+            470,
+            390,
+        )
+
+        layout = QVBoxLayout(
+            dialog
+        )
+
+        login_ok = bool(
+            self.receiver is not None
+            and self.receiver.client is not None
+            and self.receiver.workspace_id
+        )
+
+        email = (
+            str(
+                self.receiver.email
+                or ""
+            ).strip()
+            if self.receiver is not None
+            else ""
+        )
+
+        selected = (
+            self._selected_source_keys()
+        )
+
+        selected_labels = [
+            str(
+                option.get(
+                    "label",
+                    "",
+                )
+                or ""
+            ).strip()
+            for option in self.source_options
+            if str(
+                option.get(
+                    "key",
+                    "",
+                )
+                or ""
+            ).strip()
+            in selected
+        ]
+
+        selected_labels = [
+            label
+            for label in selected_labels
+            if label
+        ]
+
+        updater_path = os.path.join(
+            os.path.dirname(
+                sys.executable
+            ),
+            "DailyLogUpdater.exe",
+        )
+
+        updater_ok = bool(
+            getattr(
+                sys,
+                "frozen",
+                False,
+            )
+            and os.path.isfile(
+                updater_path
+            )
+        )
+
+        startup_ok = False
+
+        if getattr(
+            sys,
+            "frozen",
+            False,
+        ):
+            run = QSettings(
+                (
+                    r"HKEY_CURRENT_USER\Software\Microsoft\Windows"
+                    r"\CurrentVersion\Run"
+                ),
+                QSettings.Format.NativeFormat,
+            )
+
+            startup_value = str(
+                run.value(
+                    "DailyLogNotify",
+                    "",
+                )
+                or ""
+            )
+
+            startup_ok = (
+                os.path.normcase(
+                    os.path.abspath(
+                        sys.executable
+                    )
+                )
+                in os.path.normcase(
+                    startup_value
+                )
+            )
+
+        status_box = QTextEdit()
+        status_box.setReadOnly(
+            True
+        )
+        status_box.setPlainText(
+            "\n".join(
+                [
+                    f"Version: {APP_VERSION}",
+                    DEVELOPER_CREDIT,
+                    "",
+                    (
+                        "Central Login: ✅ Connected"
+                        if login_ok
+                        else "Central Login: ❌ Not connected"
+                    ),
+                    (
+                        f"User: {email}"
+                        if email
+                        else "User: -"
+                    ),
+                    (
+                        "Windows Startup: ✅ Enabled"
+                        if startup_ok
+                        else (
+                            "Windows Startup: ⚠️ Not confirmed"
+                            if getattr(
+                                sys,
+                                "frozen",
+                                False,
+                            )
+                            else "Windows Startup: Source mode"
+                        )
+                    ),
+                    (
+                        "Updater: ✅ Ready"
+                        if updater_ok
+                        else (
+                            "Updater: ❌ DailyLogUpdater.exe not found"
+                            if getattr(
+                                sys,
+                                "frozen",
+                                False,
+                            )
+                            else "Updater: Source mode"
+                        )
+                    ),
+                    "",
+                    "Notification Sources:",
+                    (
+                        "\n".join(
+                            f"• {label}"
+                            for label in selected_labels
+                        )
+                        if selected_labels
+                        else "• ยังไม่ได้เลือก Source"
+                    ),
+                ]
+            )
+        )
+        status_box.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        layout.addWidget(
+            status_box
+        )
+
+        buttons = QHBoxLayout()
+
+        central_button = QPushButton(
+            "Test Central Now"
+        )
+        update_button = QPushButton(
+            "Check Update Now"
+        )
+        close_button = QPushButton(
+            "Close"
+        )
+
+        buttons.addWidget(
+            central_button
+        )
+        buttons.addWidget(
+            update_button
+        )
+        buttons.addStretch()
+        buttons.addWidget(
+            close_button
+        )
+
+        layout.addLayout(
+            buttons
+        )
+
+        def test_central():
+            if (
+                self.receiver is None
+                or self.receiver.client is None
+            ):
+                QMessageBox.warning(
+                    dialog,
+                    "Central Notification",
+                    "ยังไม่ได้ Login หรือ Central ยังไม่เชื่อมต่อ",
+                )
+                return
+
+            self.receiver.poll()
+
+            QMessageBox.information(
+                dialog,
+                "Central Notification",
+                (
+                    "ส่งคำขอตรวจ Central แล้ว\n\n"
+                    "ถ้าสถานะหน้า DailyLogNotify ยังคงเป็นสีเขียว "
+                    "แสดงว่า receiver ทำงานปกติ"
+                ),
+            )
+
+        central_button.clicked.connect(
+            test_central
+        )
+        update_button.clicked.connect(
+            lambda:
+            self.check_for_updates(
+                manual=True
+            )
+        )
+        close_button.clicked.connect(
+            dialog.close
+        )
+
+        dialog.exec()
+
     def open_login(self):
         if self.receiver is None:
             QMessageBox.warning(
@@ -1567,7 +1836,8 @@ class NotifyApp(QWidget):
                         "DailyLog Notify Update",
                         (
                             "ใช้เวอร์ชันล่าสุดแล้ว\n"
-                            f"Version: {APP_VERSION}"
+                            f"Version: {APP_VERSION}\n\n"
+                            f"{DEVELOPER_CREDIT}"
                         ),
                     )
                 return
@@ -1585,7 +1855,8 @@ class NotifyApp(QWidget):
                             "พบเวอร์ชันใหม่ "
                             f"{result.get('latest', '')}\n"
                             "Auto Update จะติดตั้งเมื่อรัน "
-                            "DailyLogNotify.exe ที่ Build แล้ว"
+                            "DailyLogNotify.exe ที่ Build แล้ว\n\n"
+                            f"{DEVELOPER_CREDIT}"
                         ),
                     )
                 return
@@ -1687,7 +1958,8 @@ class NotifyApp(QWidget):
                     "DailyLog Notify Update",
                     (
                         "ตรวจสอบ Update ไม่สำเร็จ\n\n"
-                        f"{message}"
+                        f"{message}\n\n"
+                        f"{DEVELOPER_CREDIT}"
                     ),
                 )
 
