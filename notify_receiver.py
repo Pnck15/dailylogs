@@ -113,6 +113,24 @@ class _LoginJob(QRunnable):
             if latest.data:
                 latest_id = int(latest.data[0].get("id") or 0)
 
+            notify_sources = []
+
+            try:
+                source_response = (
+                    client.rpc(
+                        "get_notify_sources"
+                    ).execute()
+                )
+                notify_sources = (
+                    source_response.data
+                    or []
+                )
+            except Exception:
+                # Login must still succeed even if source discovery
+                # is temporarily unavailable. The periodic source
+                # refresh will try again.
+                notify_sources = []
+
             self.signals.done.emit(
                 {
                     "client": client,
@@ -121,6 +139,7 @@ class _LoginJob(QRunnable):
                     "role": role,
                     "email": self.email,
                     "latest_id": latest_id,
+                    "notify_sources": notify_sources,
                 }
             )
         except Exception as exc:
@@ -311,6 +330,13 @@ class CentralNotifyReceiver(QObject):
             self.settings.remove("central/password")
 
         self.settings.sync()
+
+        self._sources_done(
+            result.get(
+                "notify_sources",
+                [],
+            )
+        )
 
         if not self.timer.isActive():
             self.timer.start()
