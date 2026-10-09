@@ -108,7 +108,7 @@ async function fetchGasJson(url: string) {
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
-    55_000,
+    105_000,
   );
 
   try {
@@ -1298,10 +1298,22 @@ async function processSource(
         payload.partial === true,
     };
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : String(error);
+    let message = "";
+
+    if (error instanceof Error) {
+      message = error.message;
+    } else if (
+      error &&
+      typeof error === "object"
+    ) {
+      try {
+        message = JSON.stringify(error);
+      } catch {
+        message = String(error);
+      }
+    } else {
+      message = String(error);
+    }
 
     await saveState(
       source,
