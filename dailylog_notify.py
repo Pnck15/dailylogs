@@ -28,7 +28,7 @@ from update_checker import UpdateChecker
 from workers import run_async
 
 
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.5.0"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
 DEFAULT_RECEIVER_EMAIL = "daily123@gmail.com"
@@ -92,7 +92,7 @@ class HistoryDialog(QDialog):
         self.history = history
 
         self.setWindowTitle(
-            "DailyLog Notification History"
+            "DailyLogNotify - ประวัติแจ้งเตือนทั้งหมด"
         )
         self.resize(620, 420)
 
@@ -110,7 +110,7 @@ class HistoryDialog(QDialog):
     def reload(self):
         self.list_widget.clear()
 
-        for item in self.history.recent(200):
+        for item in self.history.all():
             created_at = item.get("created_at", "")
             source = item.get("source", "")
             title = item.get("title", "")
@@ -435,17 +435,18 @@ class SourceSelectionDialog(QDialog):
 
 
 class NotifyPopup(QDialog):
-    """Independent in-app notification popup.
+    """Independent DailyLogNotify popup.
 
-    This does not depend on Windows Notification settings.
-    The detail text is selectable/copyable and the popup remains
-    visible until the user closes it.
+    This popup does not depend on Windows Notification settings.
+    Text can be selected/copied, the user can close it with X,
+    and each popup closes automatically after 10 minutes.
     """
 
     def __init__(
         self,
         title,
         message,
+        history_callback=None,
         parent=None,
     ):
         super().__init__(
@@ -461,6 +462,11 @@ class NotifyPopup(QDialog):
         )
 
         self.setModal(False)
+
+        self.history_callback = (
+            history_callback
+        )
+
         self.setMinimumWidth(430)
         self.setMaximumWidth(520)
 
@@ -587,7 +593,7 @@ class NotifyPopup(QDialog):
         footer = QHBoxLayout()
 
         hint = QLabel(
-            "ลากเลือกข้อความแล้ว Ctrl+C เพื่อ Copy"
+            "เลือกข้อความแล้ว Ctrl+C ได้ • ปิดอัตโนมัติใน 10 นาที"
         )
         hint.setStyleSheet(
             "color: #6B7280; font-size: 10px;"
@@ -612,10 +618,43 @@ class NotifyPopup(QDialog):
             footer
         )
 
+        history_button = QPushButton(
+            "ดูประวัติแจ้งเตือนทั้งหมด"
+        )
+        history_button.setToolTip(
+            "เปิด All Notification Logs ใน DailyLogNotify"
+        )
+        history_button.clicked.connect(
+            self.open_history
+        )
+        root.addWidget(
+            history_button
+        )
+
         self.resize(
             460,
-            270,
+            305,
         )
+
+        self._auto_close_timer = QTimer(
+            self
+        )
+        self._auto_close_timer.setSingleShot(
+            True
+        )
+        self._auto_close_timer.setInterval(
+            10 * 60 * 1000
+        )
+        self._auto_close_timer.timeout.connect(
+            self.close
+        )
+        self._auto_close_timer.start()
+
+    def open_history(self):
+        if callable(
+            self.history_callback
+        ):
+            self.history_callback()
 
     def copy_all(self):
         QApplication.clipboard().setText(
@@ -659,7 +698,7 @@ class NotifyApp(QWidget):
 
         self.info = QLabel(
             "รับ Notification จาก DailyLog Central\n"
-            "ไม่ต้องตั้งค่า GAS หรือ LINE ในเครื่องนี้"
+            "แสดง Popup ของ DailyLogNotify เอง ไม่ใช้ Windows Notification"
         )
         self.info.setWordWrap(True)
 
@@ -1241,7 +1280,8 @@ class NotifyApp(QWidget):
         popup = NotifyPopup(
             title,
             message,
-            None,
+            history_callback=self.open_history,
+            parent=None,
         )
 
         self._notify_popups.append(
@@ -1353,7 +1393,7 @@ class NotifyApp(QWidget):
     def _fetch_update_info(self):
         headers = {
             "Accept": "application/vnd.github+json",
-            "User-Agent": "DailyLogNotify-Updater/1.4",
+            "User-Agent": "DailyLogNotify-Updater/1.5",
             "Cache-Control": "no-cache",
         }
 
@@ -1444,7 +1484,7 @@ class NotifyApp(QWidget):
             timeout=(5, 12),
             headers={
                 "User-Agent":
-                    "DailyLogNotify-Updater/1.4",
+                    "DailyLogNotify-Updater/1.5",
                 "Cache-Control":
                     "no-cache",
             },
