@@ -8,6 +8,7 @@ from supabase import create_client
 
 
 POLL_INTERVAL_MS = 15000
+SOURCE_REFRESH_INTERVAL_MS = 5 * 60 * 1000
 
 
 def _read_env_file(path):
@@ -126,6 +127,30 @@ class _LoginJob(QRunnable):
             self.signals.error.emit(str(exc))
 
 
+class _SourceJob(QRunnable):
+    def __init__(self, client):
+        super().__init__()
+        self.client = client
+        self.signals = _Signals()
+
+    @Slot()
+    def run(self):
+        try:
+            response = (
+                self.client.rpc(
+                    "get_notify_sources"
+                ).execute()
+            )
+
+            self.signals.done.emit(
+                response.data or []
+            )
+        except Exception as exc:
+            self.signals.error.emit(
+                str(exc)
+            )
+
+
 class _PollJob(QRunnable):
     def __init__(self, client, workspace_id, last_id):
         super().__init__()
@@ -140,7 +165,7 @@ class _PollJob(QRunnable):
             response = (
                 self.client.table("notification_events")
                 .select(
-                    "id, source, title, message, notification_type, created_at"
+                    "id, source_key, source, title, message, notification_type, created_at"
                 )
                 .eq("workspace_id", self.workspace_id)
                 .gt("id", self.last_id)
@@ -154,7 +179,14 @@ class _PollJob(QRunnable):
 
 
 class CentralNotifyReceiver(QObject):
-    event = Signal(str, str, str, bool)
+    event = Signal(
+        str,
+        str,
+        str,
+        bool,
+        str,
+    )
+    source_list_changed = Signal(object)
     status_changed = Signal(str)
     login_success = Signal(str)
     login_failed = Signal(str)
@@ -176,6 +208,14 @@ class CentralNotifyReceiver(QObject):
         self.timer = QTimer(self)
         self.timer.setInterval(POLL_INTERVAL_MS)
         self.timer.timeout.connect(self.poll)
+
+        self.source_timer = QTimer(self)
+        self.source_timer.setInterval(
+            SOURCE_REFRESH_INTERVAL_MS
+        )
+        self.source_timer.timeout.connect(
+            self.refresh_sources
+        )
 
         self.url, self.key = load_notify_config()
 
@@ -275,6 +315,11 @@ class CentralNotifyReceiver(QObject):
         if not self.timer.isActive():
             self.timer.start()
 
+        if not self.source_timer.isActive():
+            self.source_timer.start()
+
+        self.refresh_sources()
+
         self.status_changed.emit(
             f"🟢 Central Notification: {self.email}"
         )
@@ -286,10 +331,90 @@ class CentralNotifyReceiver(QObject):
         self.client = None
         self.workspace_id = ""
         self.timer.stop()
+        self.source_timer.stop()
         self.status_changed.emit(
             "🔴 Central Notification: Login ไม่สำเร็จ"
         )
         self.login_failed.emit(message)
+
+    def refresh_sources(self):
+        if self.client is None:
+            return
+
+        job = _SourceJob(
+            self.client
+        )
+        job.signals.done.connect(
+            self._sources_done
+        )
+        job.signals.error.connect(
+            self._sources_error
+        )
+        self.pool.start(job)
+
+    def _sources_done(
+        self,
+        rows,
+    ):
+        normalized = []
+
+        for item in rows or []:
+            if not isinstance(
+                item,
+                dict,
+            ):
+                continue
+
+            key = str(
+                item.get(
+                    "source_key",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            name = str(
+                item.get(
+                    "source_name",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            if not key or not name:
+                continue
+
+            normalized.append({
+                "key": key,
+                "label": name,
+                "source_type": str(
+                    item.get(
+                        "source_type",
+                        "",
+                    )
+                    or ""
+                ).strip(),
+                "display_order": int(
+                    item.get(
+                        "display_order",
+                        100,
+                    )
+                    or 100
+                ),
+            })
+
+        self.source_list_changed.emit(
+            normalized
+        )
+
+    def _sources_error(
+        self,
+        message,
+    ):
+        print(
+            "[Central Notify Sources]",
+            message,
+        )
 
     def pause(self):
         self._paused = True
@@ -336,6 +461,10 @@ class CentralNotifyReceiver(QObject):
                 event_id = 0
 
             source = str(row.get("source") or "DailyLog")
+            source_key = str(
+                row.get("source_key")
+                or ""
+            ).strip()
             title = str(row.get("title") or "DailyLog Notification")
             message = str(row.get("message") or "")
 
@@ -362,6 +491,7 @@ class CentralNotifyReceiver(QObject):
                 title,
                 message,
                 show_popup,
+                source_key,
             )
 
             if event_id > self.last_id:
@@ -387,13 +517,24 @@ class CentralNotifyReceiver(QObject):
 
     def logout(self):
         self.timer.stop()
+        self.source_timer.stop()
         self._busy = False
 
         if self.client is not None:
             try:
-                self.client.auth.sign_out()
-            except Exception:
-                pass
+                # Important for shared receiver accounts:
+                # logging out on this PC must not revoke sessions
+                # on other PCs.
+                self.client.auth.sign_out(
+                    {
+                        "scope": "local",
+                    }
+                )
+            except Exception as error:
+                print(
+                    "[Central Notify Local Logout]",
+                    error,
+                )
 
         self.client = None
         self.workspace_id = ""
