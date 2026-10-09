@@ -1579,6 +1579,13 @@ class DailyLog(QWidget):
             self.open_main_notification_sources
         )
 
+        devices_action = notify_menu.addAction(
+            "🖥 DailyLogNotify Devices / Sessions..."
+        )
+        devices_action.triggered.connect(
+            self.open_notify_devices_sessions
+        )
+
         notify_menu.addSeparator()
 
         reconnect_menu = notify_menu.addMenu(
@@ -1649,6 +1656,581 @@ class DailyLog(QWidget):
         menu.exec(
             self.menu_button.mapToGlobal(
                 self.menu_button.rect().bottomLeft()
+            )
+        )
+
+    # =========================================
+    # DailyLogNotify Devices / Sessions
+    # =========================================
+
+    def open_notify_devices_sessions(
+        self,
+    ):
+        dialog = QDialog(
+            self
+        )
+        dialog.setWindowTitle(
+            "DailyLogNotify Devices / Sessions"
+        )
+        dialog.resize(
+            820,
+            560,
+        )
+
+        layout = QVBoxLayout(
+            dialog
+        )
+
+        info = QLabel(
+            "ตรวจสอบเครื่องที่ Login DailyLogNotify และออก Session รายเครื่อง\n"
+            "เครื่องที่ยังเป็นเวอร์ชันเก่าจะขึ้น Unknown/Legacy จนกว่าจะอัปเดตและส่ง Heartbeat"
+        )
+        info.setWordWrap(
+            True
+        )
+        layout.addWidget(
+            info
+        )
+
+        session_list = QListWidget()
+        layout.addWidget(
+            session_list,
+            2,
+        )
+
+        details = QTextEdit()
+        details.setReadOnly(
+            True
+        )
+        details.setMinimumHeight(
+            180
+        )
+        details.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        layout.addWidget(
+            details,
+            1,
+        )
+
+        status = QLabel(
+            ""
+        )
+        status.setWordWrap(
+            True
+        )
+        layout.addWidget(
+            status
+        )
+
+        buttons = QHBoxLayout()
+
+        refresh_button = QPushButton(
+            "Refresh"
+        )
+        logout_button = QPushButton(
+            "Logout Selected Session"
+        )
+        close_button = QPushButton(
+            "Close"
+        )
+
+        logout_button.setEnabled(
+            False
+        )
+
+        buttons.addWidget(
+            refresh_button
+        )
+        buttons.addWidget(
+            logout_button
+        )
+        buttons.addStretch()
+        buttons.addWidget(
+            close_button
+        )
+
+        layout.addLayout(
+            buttons
+        )
+
+        dialog._session_list = (
+            session_list
+        )
+        dialog._details = (
+            details
+        )
+        dialog._status = (
+            status
+        )
+        dialog._logout_button = (
+            logout_button
+        )
+        dialog._session_rows = {}
+
+        def selected_changed():
+            item = (
+                session_list.currentItem()
+            )
+
+            if item is None:
+                logout_button.setEnabled(
+                    False
+                )
+                details.clear()
+                return
+
+            session_id = str(
+                item.data(
+                    Qt.ItemDataRole.UserRole
+                )
+                or ""
+            ).strip()
+
+            row = (
+                dialog._session_rows.get(
+                    session_id,
+                    {}
+                )
+            )
+
+            if not row:
+                logout_button.setEnabled(
+                    False
+                )
+                details.clear()
+                return
+
+            registered = bool(
+                row.get(
+                    "device_registered",
+                    False,
+                )
+            )
+            online = bool(
+                row.get(
+                    "online",
+                    False,
+                )
+            )
+
+            sources = row.get(
+                "selected_sources",
+                [],
+            )
+
+            if isinstance(
+                sources,
+                str,
+            ):
+                try:
+                    sources = json.loads(
+                        sources
+                    )
+                except Exception:
+                    sources = [
+                        sources
+                    ]
+
+            if not isinstance(
+                sources,
+                list,
+            ):
+                sources = []
+
+            source_text = (
+                ", ".join(
+                    str(item)
+                    for item in sources
+                    if str(
+                        item
+                    ).strip()
+                )
+                or "-"
+            )
+
+            detail_lines = [
+                (
+                    "Status: 🟢 Online"
+                    if online
+                    else (
+                        "Status: ⚪ Registered / Offline"
+                        if registered
+                        else "Status: ⚪ Legacy session / ยังไม่มี Device Heartbeat"
+                    )
+                ),
+                (
+                    "User: "
+                    + str(
+                        row.get(
+                            "user_email",
+                            "",
+                        )
+                        or "-"
+                    )
+                ),
+                (
+                    "Device: "
+                    + str(
+                        row.get(
+                            "device_name",
+                            "",
+                        )
+                        or "Unknown"
+                    )
+                ),
+                (
+                    "App Version: "
+                    + str(
+                        row.get(
+                            "app_version",
+                            "",
+                        )
+                        or "Unknown"
+                    )
+                ),
+                (
+                    "Device ID: "
+                    + str(
+                        row.get(
+                            "device_id",
+                            "",
+                        )
+                        or "-"
+                    )
+                ),
+                (
+                    "Session ID: "
+                    + session_id
+                ),
+                (
+                    "Session Created: "
+                    + str(
+                        row.get(
+                            "session_created_at",
+                            "",
+                        )
+                        or "-"
+                    )
+                ),
+                (
+                    "Session Updated: "
+                    + str(
+                        row.get(
+                            "session_updated_at",
+                            "",
+                        )
+                        or "-"
+                    )
+                ),
+                (
+                    "Last Heartbeat: "
+                    + str(
+                        row.get(
+                            "last_seen_at",
+                            "",
+                        )
+                        or "-"
+                    )
+                ),
+                (
+                    "Windows Startup: "
+                    + (
+                        "✅"
+                        if row.get(
+                            "startup_enabled",
+                            False,
+                        )
+                        else "⚪"
+                    )
+                ),
+                (
+                    "Updater Ready: "
+                    + (
+                        "✅"
+                        if row.get(
+                            "updater_ready",
+                            False,
+                        )
+                        else "⚪"
+                    )
+                ),
+                (
+                    "Sources: "
+                    + source_text
+                ),
+            ]
+
+            details.setPlainText(
+                "\n".join(
+                    detail_lines
+                )
+            )
+
+            logout_button.setEnabled(
+                True
+            )
+
+        def logout_selected():
+            item = (
+                session_list.currentItem()
+            )
+
+            if item is None:
+                return
+
+            session_id = str(
+                item.data(
+                    Qt.ItemDataRole.UserRole
+                )
+                or ""
+            ).strip()
+
+            row = (
+                dialog._session_rows.get(
+                    session_id,
+                    {}
+                )
+            )
+
+            if not session_id:
+                return
+
+            device_name = str(
+                row.get(
+                    "device_name",
+                    "",
+                )
+                or "Unknown device"
+            )
+            user_email = str(
+                row.get(
+                    "user_email",
+                    "",
+                )
+                or ""
+            )
+
+            answer = QMessageBox.question(
+                dialog,
+                "Logout DailyLogNotify Session",
+                (
+                    "ต้องการออก Session นี้หรือไม่?\n\n"
+                    f"Device: {device_name}\n"
+                    f"User: {user_email}\n"
+                    f"Session: {session_id[:12]}..."
+                ),
+            )
+
+            if (
+                answer
+                != QMessageBox.StandardButton.Yes
+            ):
+                return
+
+            logout_button.setEnabled(
+                False
+            )
+            status.setText(
+                "กำลังออก Session..."
+            )
+
+            request_id = self.cloud.call(
+                "revoke_notify_session",
+                session_id,
+            )
+
+            self._cloud_pending[
+                request_id
+            ] = (
+                "notify_session_revoke",
+                dialog,
+            )
+
+        session_list.currentItemChanged.connect(
+            lambda _current, _previous:
+            selected_changed()
+        )
+        refresh_button.clicked.connect(
+            lambda:
+            self._load_notify_sessions(
+                dialog
+            )
+        )
+        logout_button.clicked.connect(
+            logout_selected
+        )
+        close_button.clicked.connect(
+            dialog.close
+        )
+
+        self._load_notify_sessions(
+            dialog
+        )
+
+        dialog.exec()
+
+    def _load_notify_sessions(
+        self,
+        dialog,
+    ):
+        if dialog is None:
+            return
+
+        dialog._status.setText(
+            "กำลังโหลด DailyLogNotify Sessions..."
+        )
+
+        request_id = self.cloud.call(
+            "list_notify_sessions"
+        )
+
+        self._cloud_pending[
+            request_id
+        ] = (
+            "notify_sessions_load",
+            dialog,
+        )
+
+    def _render_notify_sessions(
+        self,
+        dialog,
+        rows,
+    ):
+        if (
+            dialog is None
+            or not dialog.isVisible()
+        ):
+            return
+
+        dialog._session_rows = {}
+        dialog._session_list.clear()
+        dialog._details.clear()
+        dialog._logout_button.setEnabled(
+            False
+        )
+
+        online_count = 0
+        registered_count = 0
+
+        for row in rows or []:
+            if not isinstance(
+                row,
+                dict,
+            ):
+                continue
+
+            session_id = str(
+                row.get(
+                    "session_id",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            if not session_id:
+                continue
+
+            dialog._session_rows[
+                session_id
+            ] = row
+
+            registered = bool(
+                row.get(
+                    "device_registered",
+                    False,
+                )
+            )
+            online = bool(
+                row.get(
+                    "online",
+                    False,
+                )
+            )
+
+            if registered:
+                registered_count += 1
+
+            if online:
+                online_count += 1
+
+            icon = (
+                "🟢"
+                if online
+                else "⚪"
+            )
+
+            device_name = str(
+                row.get(
+                    "device_name",
+                    "",
+                )
+                or (
+                    "Unknown device (Legacy)"
+                    if not registered
+                    else "Unknown device"
+                )
+            )
+
+            version = str(
+                row.get(
+                    "app_version",
+                    "",
+                )
+                or (
+                    "Legacy"
+                    if not registered
+                    else "Unknown"
+                )
+            )
+
+            email = str(
+                row.get(
+                    "user_email",
+                    "",
+                )
+                or ""
+            )
+
+            last_seen = str(
+                row.get(
+                    "last_seen_at",
+                    "",
+                )
+                or row.get(
+                    "session_updated_at",
+                    "",
+                )
+                or ""
+            )
+
+            item = QListWidgetItem(
+                (
+                    f"{icon} {device_name} | "
+                    f"{email} | v{version}\n"
+                    f"Last seen: {last_seen} | "
+                    f"Session: {session_id[:12]}..."
+                )
+            )
+            item.setData(
+                Qt.ItemDataRole.UserRole,
+                session_id,
+            )
+
+            dialog._session_list.addItem(
+                item
+            )
+
+        total = len(
+            dialog._session_rows
+        )
+
+        dialog._status.setText(
+            (
+                f"Sessions: {total} | "
+                f"Registered devices: {registered_count} | "
+                f"Online: {online_count}"
             )
         )
 
@@ -3663,6 +4245,40 @@ class DailyLog(QWidget):
 
             self.back_to_calendar()
 
+        elif kind == "notify_sessions_load":
+
+            dialog = payload
+
+            if (
+                dialog is not None
+                and dialog.isVisible()
+            ):
+                self._render_notify_sessions(
+                    dialog,
+                    result or [],
+                )
+
+        elif kind == "notify_session_revoke":
+
+            dialog = payload
+
+            if (
+                dialog is not None
+                and dialog.isVisible()
+            ):
+                if result:
+                    dialog._status.setText(
+                        "✅ ออก Session แล้ว"
+                    )
+                else:
+                    dialog._status.setText(
+                        "⚠️ ไม่พบ Session หรือ Session ถูกออกแล้ว"
+                    )
+
+                self._load_notify_sessions(
+                    dialog
+                )
+
         elif kind == "main_sources_load":
 
             dialog = payload
@@ -3866,6 +4482,27 @@ class DailyLog(QWidget):
                     f"{message}"
                 ),
             )
+
+        elif kind in {
+            "notify_sessions_load",
+            "notify_session_revoke",
+        }:
+
+            dialog = payload
+
+            if (
+                dialog is not None
+                and dialog.isVisible()
+            ):
+                dialog._status.setText(
+                    "❌ Session Manager Error\n"
+                    f"{message}"
+                )
+                dialog._logout_button.setEnabled(
+                    bool(
+                        dialog._session_list.currentItem()
+                    )
+                )
 
         elif kind in {
             "main_sources_load",
