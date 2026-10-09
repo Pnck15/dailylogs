@@ -2098,10 +2098,7 @@ class DailyLog(QWidget):
         dialog,
         rows,
     ):
-        if (
-            dialog is None
-            or not dialog.isVisible()
-        ):
+        if dialog is None:
             return
 
         dialog._session_rows = {}
