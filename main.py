@@ -252,6 +252,7 @@ class DailyLog(QWidget):
 
         self._main_event_last_id = 0
         self._main_event_cursor_ready = False
+        self._main_event_poll_busy = False
         self.main_notification_timer = QTimer(
             self
         )
@@ -1646,6 +1647,800 @@ class DailyLog(QWidget):
                 self.menu_button.rect().bottomLeft()
             )
         )
+
+    # =========================================
+    # Dynamic Main Notification Sources
+    # =========================================
+
+    def open_main_notification_sources(
+        self,
+    ):
+        dialog = QDialog(
+            self
+        )
+        dialog.setWindowTitle(
+            "Main Notification Sources"
+        )
+        dialog.resize(
+            760,
+            470,
+        )
+
+        root = QHBoxLayout(
+            dialog
+        )
+
+        left = QVBoxLayout()
+        left.addWidget(
+            QLabel(
+                "Configured Sources"
+            )
+        )
+
+        source_list = QListWidget()
+        left.addWidget(
+            source_list
+        )
+
+        left_buttons = QHBoxLayout()
+        new_button = QPushButton(
+            "+ New"
+        )
+        reload_button = QPushButton(
+            "Reload"
+        )
+        left_buttons.addWidget(
+            new_button
+        )
+        left_buttons.addWidget(
+            reload_button
+        )
+        left.addLayout(
+            left_buttons
+        )
+
+        root.addLayout(
+            left,
+            1,
+        )
+
+        right = QVBoxLayout()
+
+        right.addWidget(
+            QLabel(
+                "Source Name"
+            )
+        )
+        name_input = QLineEdit()
+        name_input.setPlaceholderText(
+            "เช่น Finance Status / Booking / Stock"
+        )
+        right.addWidget(
+            name_input
+        )
+
+        right.addWidget(
+            QLabel(
+                "Apps Script Web App URL"
+            )
+        )
+        url_input = QLineEdit()
+        url_input.setPlaceholderText(
+            "https://script.google.com/macros/s/.../exec"
+        )
+        right.addWidget(
+            url_input
+        )
+
+        enabled_check = QCheckBox(
+            "Enable monitoring"
+        )
+        enabled_check.setChecked(
+            True
+        )
+
+        notify_check = QCheckBox(
+            "Show this Source in DailyLogNotify"
+        )
+        notify_check.setChecked(
+            False
+        )
+
+        right.addWidget(
+            enabled_check
+        )
+        right.addWidget(
+            notify_check
+        )
+
+        explain = QLabel(
+            "ถ้าไม่ติ๊ก DailyLogNotify: Event ยังเข้า DailyLog.exe "
+            "ผ่าน Central แต่จะไม่ปรากฏเป็นตัวเลือกในเครื่องพนักงาน"
+        )
+        explain.setWordWrap(
+            True
+        )
+        right.addWidget(
+            explain
+        )
+
+        status = QLabel("")
+        status.setWordWrap(
+            True
+        )
+        right.addWidget(
+            status
+        )
+
+        right.addStretch()
+
+        buttons = QHBoxLayout()
+
+        test_button = QPushButton(
+            "Test Connection"
+        )
+        save_button = QPushButton(
+            "Save"
+        )
+        delete_button = QPushButton(
+            "Delete"
+        )
+        close_button = QPushButton(
+            "Close"
+        )
+
+        buttons.addWidget(
+            test_button
+        )
+        buttons.addWidget(
+            save_button
+        )
+        buttons.addWidget(
+            delete_button
+        )
+        buttons.addStretch()
+        buttons.addWidget(
+            close_button
+        )
+        right.addLayout(
+            buttons
+        )
+
+        root.addLayout(
+            right,
+            2,
+        )
+
+        dialog._source_list = (
+            source_list
+        )
+        dialog._name_input = (
+            name_input
+        )
+        dialog._url_input = (
+            url_input
+        )
+        dialog._enabled_check = (
+            enabled_check
+        )
+        dialog._notify_check = (
+            notify_check
+        )
+        dialog._status = status
+        dialog._source_rows = {}
+        dialog._source_key = ""
+
+        def clear_form():
+            dialog._source_key = ""
+            source_list.clearSelection()
+            name_input.clear()
+            url_input.clear()
+            enabled_check.setChecked(
+                True
+            )
+            notify_check.setChecked(
+                False
+            )
+            delete_button.setEnabled(
+                False
+            )
+            status.setText(
+                "สร้าง Source ใหม่"
+            )
+
+        def select_source():
+            item = (
+                source_list.currentItem()
+            )
+
+            if item is None:
+                return
+
+            key = str(
+                item.data(
+                    Qt.ItemDataRole.UserRole
+                )
+                or ""
+            )
+
+            row = (
+                dialog._source_rows.get(
+                    key
+                )
+            )
+
+            if not row:
+                return
+
+            dialog._source_key = key
+
+            name_input.setText(
+                str(
+                    row.get(
+                        "source_name",
+                        "",
+                    )
+                    or ""
+                )
+            )
+            url_input.setText(
+                str(
+                    row.get(
+                        "gas_url",
+                        "",
+                    )
+                    or ""
+                )
+            )
+            enabled_check.setChecked(
+                bool(
+                    row.get(
+                        "enabled",
+                        True,
+                    )
+                )
+            )
+            notify_check.setChecked(
+                bool(
+                    row.get(
+                        "publish_to_notify",
+                        False,
+                    )
+                )
+            )
+            delete_button.setEnabled(
+                True
+            )
+            status.setText(
+                f"Source key: {key}"
+            )
+
+        def test_connection():
+            url = (
+                url_input.text()
+                .strip()
+                .replace(
+                    "https:https://",
+                    "https://",
+                    1,
+                )
+            )
+
+            if not url:
+                QMessageBox.warning(
+                    dialog,
+                    "Main Notification Source",
+                    "กรุณาใส่ Apps Script Web App URL",
+                )
+                return
+
+            if (
+                "docs.google.com/spreadsheets"
+                in url
+                or "/spreadsheets/d/"
+                in url
+            ):
+                QMessageBox.warning(
+                    dialog,
+                    "URL ไม่ถูกต้อง",
+                    (
+                        "ต้องใช้ Apps Script Web App URL "
+                        "ที่ลงท้ายด้วย /exec"
+                    ),
+                )
+                return
+
+            status.setText(
+                "กำลังทดสอบ Connection..."
+            )
+            test_button.setEnabled(
+                False
+            )
+
+            monitor = SaleAPIMonitor(
+                url
+            )
+
+            def ok(result):
+                test_button.setEnabled(
+                    True
+                )
+                version = str(
+                    result.get(
+                        "version",
+                        "",
+                    )
+                    or ""
+                ).strip()
+                status.setText(
+                    "✅ Connection สำเร็จ"
+                    + (
+                        f" | API: {version}"
+                        if version
+                        else ""
+                    )
+                )
+
+            def failed(message):
+                test_button.setEnabled(
+                    True
+                )
+                status.setText(
+                    "❌ Connection ไม่สำเร็จ\n"
+                    f"{message}"
+                )
+
+            run_async(
+                self,
+                monitor.ping,
+                ok,
+                failed,
+            )
+
+        def save_source():
+            name = (
+                name_input.text()
+                .strip()
+            )
+            url = (
+                url_input.text()
+                .strip()
+                .replace(
+                    "https:https://",
+                    "https://",
+                    1,
+                )
+            )
+
+            if not name or not url:
+                QMessageBox.warning(
+                    dialog,
+                    "Main Notification Source",
+                    "กรุณาใส่ Source Name และ Web App URL",
+                )
+                return
+
+            if (
+                "docs.google.com/spreadsheets"
+                in url
+                or "/spreadsheets/d/"
+                in url
+                or not url.startswith(
+                    (
+                        "http://",
+                        "https://",
+                    )
+                )
+            ):
+                QMessageBox.warning(
+                    dialog,
+                    "URL ไม่ถูกต้อง",
+                    (
+                        "ต้องใช้ Apps Script Web App URL "
+                        "ที่ลงท้ายด้วย /exec"
+                    ),
+                )
+                return
+
+            source_key = (
+                dialog._source_key
+                or (
+                    "main_"
+                    + uuid.uuid4().hex[:12]
+                )
+            )
+
+            existing = (
+                dialog._source_rows.get(
+                    source_key,
+                    {}
+                )
+            )
+
+            display_order = int(
+                existing.get(
+                    "display_order",
+                    200
+                    + len(
+                        dialog._source_rows
+                    ),
+                )
+                or 200
+            )
+
+            status.setText(
+                "กำลังบันทึก..."
+            )
+            save_button.setEnabled(
+                False
+            )
+
+            request_id = self.cloud.call(
+                "upsert_monitor_source",
+                source_key,
+                name,
+                "structured",
+                url,
+                enabled_check.isChecked(),
+                notify_check.isChecked(),
+                display_order,
+            )
+
+            self._cloud_pending[
+                request_id
+            ] = (
+                "main_source_save",
+                dialog,
+            )
+
+        def delete_source():
+            source_key = (
+                dialog._source_key
+            )
+
+            if not source_key:
+                return
+
+            answer = QMessageBox.question(
+                dialog,
+                "Delete Main Notification Source",
+                (
+                    "ต้องการลบ Source นี้หรือไม่?\n\n"
+                    f"{name_input.text().strip()}"
+                ),
+            )
+
+            if (
+                answer
+                != QMessageBox.StandardButton.Yes
+            ):
+                return
+
+            status.setText(
+                "กำลังลบ..."
+            )
+
+            request_id = self.cloud.call(
+                "delete_monitor_source",
+                source_key,
+            )
+
+            self._cloud_pending[
+                request_id
+            ] = (
+                "main_source_delete",
+                dialog,
+            )
+
+        source_list.currentItemChanged.connect(
+            lambda _current, _previous:
+            select_source()
+        )
+        new_button.clicked.connect(
+            clear_form
+        )
+        reload_button.clicked.connect(
+            lambda:
+            self._load_main_notification_sources(
+                dialog
+            )
+        )
+        test_button.clicked.connect(
+            test_connection
+        )
+        save_button.clicked.connect(
+            save_source
+        )
+        delete_button.clicked.connect(
+            delete_source
+        )
+        close_button.clicked.connect(
+            dialog.close
+        )
+
+        delete_button.setEnabled(
+            False
+        )
+
+        self._load_main_notification_sources(
+            dialog
+        )
+
+        dialog.exec()
+
+    def _load_main_notification_sources(
+        self,
+        dialog,
+    ):
+        if (
+            dialog is None
+            or not dialog.isVisible()
+        ):
+            # During initial open exec() has not started yet, but the
+            # dialog object is still valid. Continue unless deleted.
+            pass
+
+        dialog._status.setText(
+            "กำลังโหลด Sources..."
+        )
+
+        request_id = self.cloud.call(
+            "list_monitor_sources"
+        )
+
+        self._cloud_pending[
+            request_id
+        ] = (
+            "main_sources_load",
+            dialog,
+        )
+
+    def _render_main_notification_sources(
+        self,
+        dialog,
+        rows,
+    ):
+        if dialog is None:
+            return
+
+        source_rows = {}
+
+        for row in rows or []:
+            if not isinstance(
+                row,
+                dict,
+            ):
+                continue
+
+            key = str(
+                row.get(
+                    "source_key",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            if not key.startswith(
+                "main_"
+            ):
+                continue
+
+            source_rows[
+                key
+            ] = row
+
+        dialog._source_rows = (
+            source_rows
+        )
+        dialog._source_list.clear()
+
+        for key, row in source_rows.items():
+            name = str(
+                row.get(
+                    "source_name",
+                    key,
+                )
+                or key
+            )
+
+            enabled = bool(
+                row.get(
+                    "enabled",
+                    True,
+                )
+            )
+            to_notify = bool(
+                row.get(
+                    "publish_to_notify",
+                    False,
+                )
+            )
+
+            marks = (
+                ("🟢" if enabled else "⚪")
+                + (" 🔔" if to_notify else "")
+            )
+
+            item = QListWidgetItem(
+                f"{marks} {name}"
+            )
+            item.setData(
+                Qt.ItemDataRole.UserRole,
+                key,
+            )
+            dialog._source_list.addItem(
+                item
+            )
+
+        dialog._status.setText(
+            (
+                f"โหลดแล้ว {len(source_rows)} Sources"
+                if source_rows
+                else "ยังไม่มี Main Notification Source"
+            )
+        )
+
+    # =========================================
+    # Central Main Notification Event Stream
+    # =========================================
+
+    def start_main_notification_event_stream(
+        self,
+    ):
+        saved = self.settings.value(
+            "main_notifications_last_event_id",
+            None,
+        )
+
+        if saved is None:
+            request_id = self.cloud.call(
+                "get_latest_main_notification_event_id"
+            )
+            self._cloud_pending[
+                request_id
+            ] = (
+                "main_event_cursor_init",
+                None,
+            )
+            return
+
+        try:
+            self._main_event_last_id = int(
+                saved
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            self._main_event_last_id = 0
+
+        self._main_event_cursor_ready = (
+            True
+        )
+
+        if not self.main_notification_timer.isActive():
+            self.main_notification_timer.start()
+
+        self.poll_main_notification_events()
+
+    def poll_main_notification_events(
+        self,
+    ):
+        if (
+            not self._main_event_cursor_ready
+            or self._main_event_poll_busy
+        ):
+            return
+
+        self._main_event_poll_busy = True
+
+        request_id = self.cloud.call(
+            "get_main_notification_events_after",
+            self._main_event_last_id,
+        )
+
+        self._cloud_pending[
+            request_id
+        ] = (
+            "main_events",
+            None,
+        )
+
+    def _process_main_notification_events(
+        self,
+        rows,
+    ):
+        for row in rows or []:
+            if not isinstance(
+                row,
+                dict,
+            ):
+                continue
+
+            try:
+                event_id = int(
+                    row.get(
+                        "id",
+                        0,
+                    )
+                    or 0
+                )
+            except (
+                TypeError,
+                ValueError,
+            ):
+                event_id = 0
+
+            title = str(
+                row.get(
+                    "title",
+                    "Main Notification",
+                )
+                or "Main Notification"
+            )
+
+            message = str(
+                row.get(
+                    "message",
+                    "",
+                )
+                or ""
+            )
+
+            notification_type = str(
+                row.get(
+                    "notification_type",
+                    "info",
+                )
+                or "info"
+            )
+
+            show_popup = True
+
+            created_at = str(
+                row.get(
+                    "created_at",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            if created_at:
+                try:
+                    parsed = datetime.fromisoformat(
+                        created_at.replace(
+                            "Z",
+                            "+00:00",
+                        )
+                    )
+                    show_popup = (
+                        parsed.astimezone().date()
+                        ==
+                        datetime.now().astimezone().date()
+                    )
+                except ValueError:
+                    show_popup = True
+
+            self.add_sale_notification(
+                title,
+                message,
+                notification_type,
+                show_toast=show_popup,
+            )
+
+            if (
+                event_id
+                > self._main_event_last_id
+            ):
+                self._main_event_last_id = (
+                    event_id
+                )
+
+        self.settings.setValue(
+            "main_notifications_last_event_id",
+            self._main_event_last_id,
+        )
+        self.settings.sync()
 
     def update_line_button(self):
 
