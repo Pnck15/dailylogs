@@ -1044,10 +1044,7 @@ async function processSa(
     state.initialized === true &&
     normalize(
       state.version,
-    ) === version &&
-    normalize(
-      state.today,
-    ) === today;
+    ) === version;
 
   const previous =
     initialized &&
