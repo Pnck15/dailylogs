@@ -886,6 +886,7 @@ class NotifyApp(QWidget):
             self.receiver = CentralNotifyReceiver(
                 self.settings,
                 self,
+                app_version=APP_VERSION,
             )
 
             self.receiver.event.connect(
@@ -902,6 +903,9 @@ class NotifyApp(QWidget):
             )
             self.receiver.login_success.connect(
                 self._receiver_login_success
+            )
+            self.receiver.session_revoked.connect(
+                self._receiver_session_revoked
             )
 
             if self.receiver.has_saved_credentials():
@@ -963,6 +967,20 @@ class NotifyApp(QWidget):
 
         self.status.setToolTip(
             str(message)
+        )
+
+    def _receiver_session_revoked(
+        self,
+        message,
+    ):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+        QMessageBox.warning(
+            self,
+            "DailyLogNotify Session",
+            str(message),
         )
 
     def _source_filter_configured(self):
@@ -1232,6 +1250,7 @@ class NotifyApp(QWidget):
                 and self.receiver.client is not None
             ):
                 self.receiver.resume()
+                self.receiver.send_heartbeat()
 
             if (
                 first_run
@@ -1375,6 +1394,28 @@ class NotifyApp(QWidget):
                         f"User: {email}"
                         if email
                         else "User: -"
+                    ),
+                    (
+                        "Device: "
+                        + str(
+                            getattr(
+                                self.receiver,
+                                "device_name",
+                                "",
+                            )
+                            or "-"
+                        )
+                    ),
+                    (
+                        "Device ID: "
+                        + str(
+                            getattr(
+                                self.receiver,
+                                "device_id",
+                                "",
+                            )
+                            or "-"
+                        )
                     ),
                     (
                         "Windows Startup: ✅ Enabled"
