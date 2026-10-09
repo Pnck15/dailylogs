@@ -3,7 +3,7 @@ import subprocess
 import sys
 
 import requests
-from PySide6.QtCore import QSettings, QTimer
+from PySide6.QtCore import QSettings, QTimer, Qt
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSystemTrayIcon,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -433,6 +434,195 @@ class SourceSelectionDialog(QDialog):
 
 
 
+class NotifyPopup(QDialog):
+    """Independent in-app notification popup.
+
+    This does not depend on Windows Notification settings.
+    The detail text is selectable/copyable and the popup remains
+    visible until the user closes it.
+    """
+
+    def __init__(
+        self,
+        title,
+        message,
+        parent=None,
+    ):
+        super().__init__(
+            parent,
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint,
+        )
+
+        self.setAttribute(
+            Qt.WidgetAttribute.WA_DeleteOnClose,
+            True,
+        )
+
+        self.setModal(False)
+        self.setMinimumWidth(430)
+        self.setMaximumWidth(520)
+
+        self.setStyleSheet(
+            """
+            QDialog {
+                background: #FFFFFF;
+                border: 1px solid #D1D5DB;
+                border-radius: 10px;
+            }
+            QLabel {
+                color: #111827;
+            }
+            QTextEdit {
+                background: #F9FAFB;
+                border: 1px solid #E5E7EB;
+                border-radius: 6px;
+                padding: 6px;
+                color: #111827;
+            }
+            QPushButton {
+                min-height: 24px;
+            }
+            """
+        )
+
+        root = QVBoxLayout(
+            self
+        )
+        root.setContentsMargins(
+            12,
+            10,
+            12,
+            10,
+        )
+        root.setSpacing(8)
+
+        header = QHBoxLayout()
+
+        title_label = QLabel(
+            f"🔔 {title}"
+        )
+        title_label.setWordWrap(
+            True
+        )
+        title_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+
+        title_font = (
+            title_label.font()
+        )
+        title_font.setBold(
+            True
+        )
+        title_label.setFont(
+            title_font
+        )
+
+        close_button = QPushButton(
+            "✕"
+        )
+        close_button.setFixedSize(
+            28,
+            28,
+        )
+        close_button.setToolTip(
+            "Close"
+        )
+        close_button.clicked.connect(
+            self.close
+        )
+
+        header.addWidget(
+            title_label,
+            1,
+        )
+        header.addWidget(
+            close_button,
+            0,
+        )
+        root.addLayout(
+            header
+        )
+
+        detail_label = QLabel(
+            "รายละเอียดแจ้ง:"
+        )
+        detail_font = (
+            detail_label.font()
+        )
+        detail_font.setBold(
+            True
+        )
+        detail_label.setFont(
+            detail_font
+        )
+        root.addWidget(
+            detail_label
+        )
+
+        self.message_box = QTextEdit()
+        self.message_box.setReadOnly(
+            True
+        )
+        self.message_box.setPlainText(
+            str(message or "")
+        )
+        self.message_box.setMinimumHeight(
+            130
+        )
+        self.message_box.setMaximumHeight(
+            280
+        )
+        self.message_box.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        root.addWidget(
+            self.message_box
+        )
+
+        footer = QHBoxLayout()
+
+        hint = QLabel(
+            "ลากเลือกข้อความแล้ว Ctrl+C เพื่อ Copy"
+        )
+        hint.setStyleSheet(
+            "color: #6B7280; font-size: 10px;"
+        )
+
+        copy_button = QPushButton(
+            "Copy All"
+        )
+        copy_button.clicked.connect(
+            self.copy_all
+        )
+
+        footer.addWidget(
+            hint
+        )
+        footer.addStretch()
+        footer.addWidget(
+            copy_button
+        )
+
+        root.addLayout(
+            footer
+        )
+
+        self.resize(
+            460,
+            270,
+        )
+
+    def copy_all(self):
+        QApplication.clipboard().setText(
+            self.message_box.toPlainText()
+        )
+
+
 class NotifyApp(QWidget):
     def __init__(self):
         super().__init__()
@@ -443,6 +633,7 @@ class NotifyApp(QWidget):
         )
         self.history = NotificationHistory()
         self.receiver = None
+        self._notify_popups = []
         self.source_options = [
             dict(option)
             for option in FALLBACK_SOURCE_OPTIONS
@@ -1033,14 +1224,102 @@ class NotifyApp(QWidget):
             message,
         )
 
-        # Only current-day events may create a Windows popup.
+        # Only current-day events create a popup, but the popup is
+        # owned by DailyLogNotify itself and therefore does not depend on
+        # Windows Notification being enabled.
         if show_popup:
-            self.tray.showMessage(
+            self._show_notify_popup(
                 title,
                 message,
-                QSystemTrayIcon.MessageIcon.Information,
-                10000,
             )
+
+    def _show_notify_popup(
+        self,
+        title,
+        message,
+    ):
+        popup = NotifyPopup(
+            title,
+            message,
+            None,
+        )
+
+        self._notify_popups.append(
+            popup
+        )
+
+        popup.finished.connect(
+            lambda _result=0, p=popup:
+            self._notify_popup_closed(
+                p
+            )
+        )
+
+        popup.show()
+        popup.raise_()
+
+        self._position_notify_popups()
+
+    def _notify_popup_closed(
+        self,
+        popup,
+    ):
+        self._notify_popups = [
+            item
+            for item in self._notify_popups
+            if item is not popup
+        ]
+
+        QTimer.singleShot(
+            0,
+            self._position_notify_popups,
+        )
+
+    def _position_notify_popups(
+        self,
+    ):
+        if not self._notify_popups:
+            return
+
+        screen = QApplication.primaryScreen()
+
+        if screen is None:
+            return
+
+        area = screen.availableGeometry()
+
+        margin = 16
+        spacing = 10
+        y = (
+            area.bottom()
+            - margin
+        )
+
+        # Newest popup stays closest to the lower-left corner.
+        for popup in reversed(
+            self._notify_popups
+        ):
+            if popup is None:
+                continue
+
+            popup.adjustSize()
+
+            height = popup.height()
+            x = (
+                area.left()
+                + margin
+            )
+            y = (
+                y
+                - height
+            )
+
+            popup.move(
+                x,
+                y,
+            )
+
+            y -= spacing
 
     def enable_startup(self):
         if not getattr(
