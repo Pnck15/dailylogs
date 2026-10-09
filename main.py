@@ -6548,7 +6548,7 @@ class DailyLog(QWidget):
                 + "\n".join(
                     changes
                 )
-                + "\n\nข้อมูลทั้งแถว\n"
+                + "\n\nรายละเอียดแจ้ง:\n"
                 + format_full_row(
                     new_values
                 )
@@ -7151,7 +7151,7 @@ class DailyLog(QWidget):
                 )
 
             message = (
-                "ข้อมูลทั้งแถว\n"
+                "รายละเอียดแจ้ง:\n"
                 + format_row(
                     values
                 )
