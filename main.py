@@ -55,6 +55,7 @@ APP_DISPLAY_NAME = "GAC日記"
 
 DEFAULT_ACCENT = "#2563EB"
 APP_VERSION = "1.2.0"
+DEVELOPER_CREDIT = "Developed by 王纯真"
 
 UPDATE_CHECK_DELAY_MS = 2500
 
@@ -578,7 +579,8 @@ class DailyLog(QWidget):
                         (
                             "คุณกำลังใช้ DailyLog "
                             "เวอร์ชันล่าสุด\n\n"
-                            f"Version: {APP_VERSION}"
+                            f"Version: {APP_VERSION}\n\n"
+                            f"{DEVELOPER_CREDIT}"
                         ),
                     )
 
@@ -628,7 +630,8 @@ class DailyLog(QWidget):
             layout.addWidget(
                 QLabel(
                     f"เวอร์ชันปัจจุบัน: {APP_VERSION}\n"
-                    f"เวอร์ชันใหม่: {latest}"
+                    f"เวอร์ชันใหม่: {latest}\n\n"
+                    f"{DEVELOPER_CREDIT}"
                 )
             )
 
@@ -752,7 +755,8 @@ class DailyLog(QWidget):
                     "Update",
                     (
                         "ตรวจสอบ Update ไม่สำเร็จ\n\n"
-                        f"{message}"
+                        f"{message}\n\n"
+                        f"{DEVELOPER_CREDIT}"
                     ),
                 )
 
