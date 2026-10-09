@@ -229,6 +229,7 @@ async function publishEvent(
     .upsert(
       {
         workspace_id: source.workspace_id,
+        source_key: source.source_key,
         source: source.source_name,
         title,
         message,
