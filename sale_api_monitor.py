@@ -871,6 +871,14 @@ class SaleAPIMonitor:
             changed = []
             deleted = []
 
+            payload_mode = str(
+                payload.get(
+                    "mode",
+                    "rows",
+                )
+                or "rows"
+            )
+
             scope = (
                 str(
                     payload.get(
@@ -880,22 +888,25 @@ class SaleAPIMonitor:
                     or ""
                 )
                 + "|"
-                + str(
-                    payload.get(
-                        "mode",
-                        "rows",
-                    )
-                    or "rows"
-                )
-                + "|"
-                + str(
-                    payload.get(
-                        "today",
-                        "",
-                    )
-                    or ""
-                )
+                + payload_mode
             )
+
+            # Legacy SA v5 returned only today's merged-D rows, so its
+            # snapshot still needs a new baseline when the date changes.
+            # SA v6 returns the whole current + next month tabs; keeping
+            # one continuous snapshot lets add/edit/delete work across
+            # day boundaries too.
+            if payload_mode == "merged_d_today_rows":
+                scope += (
+                    "|"
+                    + str(
+                        payload.get(
+                            "today",
+                            "",
+                        )
+                        or ""
+                    )
+                )
 
             previous = (
                 self._delivery_snapshot
