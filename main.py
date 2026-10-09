@@ -3659,6 +3659,107 @@ class DailyLog(QWidget):
 
             self.back_to_calendar()
 
+        elif kind == "main_sources_load":
+
+            dialog = payload
+
+            if (
+                dialog is not None
+                and dialog.isVisible()
+            ):
+                self._render_main_notification_sources(
+                    dialog,
+                    result or [],
+                )
+
+        elif kind == "main_source_save":
+
+            dialog = payload
+
+            if (
+                dialog is not None
+                and dialog.isVisible()
+            ):
+                dialog._status.setText(
+                    "✅ บันทึก Source แล้ว"
+                )
+
+                save_buttons = [
+                    button
+                    for button in dialog.findChildren(
+                        QPushButton
+                    )
+                    if button.text() == "Save"
+                ]
+
+                for button in save_buttons:
+                    button.setEnabled(
+                        True
+                    )
+
+                self._load_main_notification_sources(
+                    dialog
+                )
+
+        elif kind == "main_source_delete":
+
+            dialog = payload
+
+            if (
+                dialog is not None
+                and dialog.isVisible()
+            ):
+                dialog._source_key = ""
+                dialog._name_input.clear()
+                dialog._url_input.clear()
+                dialog._enabled_check.setChecked(
+                    True
+                )
+                dialog._notify_check.setChecked(
+                    False
+                )
+                dialog._status.setText(
+                    "✅ ลบ Source แล้ว"
+                )
+                self._load_main_notification_sources(
+                    dialog
+                )
+
+        elif kind == "main_event_cursor_init":
+
+            try:
+                self._main_event_last_id = int(
+                    result or 0
+                )
+            except (
+                TypeError,
+                ValueError,
+            ):
+                self._main_event_last_id = 0
+
+            self.settings.setValue(
+                "main_notifications_last_event_id",
+                self._main_event_last_id,
+            )
+            self.settings.sync()
+
+            self._main_event_cursor_ready = (
+                True
+            )
+
+            if not self.main_notification_timer.isActive():
+                self.main_notification_timer.start()
+
+            self.poll_main_notification_events()
+
+        elif kind == "main_events":
+
+            self._main_event_poll_busy = False
+
+            self._process_main_notification_events(
+                result or []
+            )
+
     def _on_cloud_error(
         self,
         request_id,
@@ -3760,6 +3861,49 @@ class DailyLog(QWidget):
                     "บันทึก Log ไม่สำเร็จ\n\n"
                     f"{message}"
                 ),
+            )
+
+        elif kind in {
+            "main_sources_load",
+            "main_source_save",
+            "main_source_delete",
+        }:
+
+            dialog = payload
+
+            if (
+                dialog is not None
+                and dialog.isVisible()
+            ):
+                dialog._status.setText(
+                    "❌ Central Source Error\n"
+                    f"{message}"
+                )
+
+                for button in dialog.findChildren(
+                    QPushButton
+                ):
+                    if button.text() == "Save":
+                        button.setEnabled(
+                            True
+                        )
+
+        elif kind == "main_event_cursor_init":
+
+            self._main_event_cursor_ready = (
+                True
+            )
+            self._main_event_last_id = 0
+
+            if not self.main_notification_timer.isActive():
+                self.main_notification_timer.start()
+
+        elif kind == "main_events":
+
+            self._main_event_poll_busy = False
+            print(
+                "[Main Notification Stream]",
+                message,
             )
 
     # =========================================
@@ -7036,6 +7180,7 @@ class DailyLog(QWidget):
             self.sale_sheet_timer_srinakarin,
             self.sale_sheet_timer_sa,
             self.sale_sheet_timer_main_noti,
+            self.main_notification_timer,
         ):
 
             timer.stop()
