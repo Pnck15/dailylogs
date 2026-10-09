@@ -226,6 +226,8 @@ class CloudDB:
         source_type: str,
         gas_url: str,
         enabled: bool = True,
+        publish_to_notify: bool = True,
+        display_order: int = 100,
     ):
         self._require_login()
 
@@ -241,6 +243,12 @@ class CloudDB:
             "source_type": str(source_type or "").strip(),
             "gas_url": str(gas_url or "").strip(),
             "enabled": bool(enabled),
+            "publish_to_notify": bool(
+                publish_to_notify
+            ),
+            "display_order": int(
+                display_order or 100
+            ),
             "updated_by": self.user.id,
         }
 
@@ -259,6 +267,143 @@ class CloudDB:
         )
 
         return response.data[0] if response.data else None
+
+    def list_monitor_sources(self):
+        self._require_login()
+
+        if str(self.role or "").lower() != "admin":
+            raise RuntimeError(
+                "เฉพาะ Admin เท่านั้นที่ดู Central Monitor Sources ได้"
+            )
+
+        response = (
+            self.client.table("monitor_sources")
+            .select(
+                "source_key,source_name,source_type,gas_url,"
+                "enabled,publish_to_notify,display_order,"
+                "created_at,updated_at"
+            )
+            .eq(
+                "workspace_id",
+                self.workspace_id,
+            )
+            .order(
+                "display_order",
+            )
+            .order(
+                "source_name",
+            )
+            .execute()
+        )
+
+        return response.data or []
+
+    def delete_monitor_source(
+        self,
+        source_key: str,
+    ):
+        self._require_login()
+
+        if str(self.role or "").lower() != "admin":
+            raise RuntimeError(
+                "เฉพาะ Admin เท่านั้นที่ลบ Central Monitor Source ได้"
+            )
+
+        key = str(
+            source_key or ""
+        ).strip()
+
+        if not key:
+            return []
+
+        response = (
+            self.client.table("monitor_sources")
+            .delete()
+            .eq(
+                "workspace_id",
+                self.workspace_id,
+            )
+            .eq(
+                "source_key",
+                key,
+            )
+            .execute()
+        )
+
+        return response.data or []
+
+    def get_latest_main_notification_event_id(
+        self,
+    ):
+        self._require_login()
+
+        response = (
+            self.client.table(
+                "notification_events"
+            )
+            .select("id")
+            .eq(
+                "workspace_id",
+                self.workspace_id,
+            )
+            .like(
+                "source_key",
+                "main_%",
+            )
+            .order(
+                "id",
+                desc=True,
+            )
+            .limit(1)
+            .execute()
+        )
+
+        if not response.data:
+            return 0
+
+        return int(
+            response.data[0].get(
+                "id",
+                0,
+            )
+            or 0
+        )
+
+    def get_main_notification_events_after(
+        self,
+        last_id: int,
+    ):
+        self._require_login()
+
+        response = (
+            self.client.table(
+                "notification_events"
+            )
+            .select(
+                "id,source_key,source,title,message,"
+                "notification_type,created_at"
+            )
+            .eq(
+                "workspace_id",
+                self.workspace_id,
+            )
+            .like(
+                "source_key",
+                "main_%",
+            )
+            .gt(
+                "id",
+                int(last_id or 0),
+            )
+            .order(
+                "id",
+                desc=False,
+            )
+            .limit(100)
+            .execute()
+        )
+
+        return response.data or []
 
     def disable_monitor_source(
         self,
