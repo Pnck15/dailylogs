@@ -89,7 +89,7 @@ class InstallerTests(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
-        self.target = Path(self.folder.name) / "DailyLogNotify.exe"
+        self.target = (Path(self.folder.name) / "DailyLogNotify.exe").resolve()
         self.target.write_bytes(b"MZold")
         self.wait = patch.object(updater, "wait_for_process").start()
         self.launch = patch.object(updater.subprocess, "Popen").start()
