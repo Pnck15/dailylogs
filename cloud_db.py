@@ -437,6 +437,59 @@ class CloudDB:
 
         return response.data
 
+    def list_notify_devices(self):
+        self._require_login()
+
+        if str(
+            self.role or ""
+        ).lower() != "admin":
+            raise RuntimeError(
+                "เฉพาะ Admin เท่านั้นที่ดูสถานะ DailyLogNotify ได้"
+            )
+
+        response = (
+            self.client.rpc(
+                "list_notify_devices"
+            ).execute()
+        )
+
+        return response.data or []
+
+    def revoke_notify_device_session(
+        self,
+        device_id: str,
+    ):
+        self._require_login()
+
+        if str(
+            self.role or ""
+        ).lower() != "admin":
+            raise RuntimeError(
+                "เฉพาะ Admin เท่านั้นที่ออก Session ของ DailyLogNotify ได้"
+            )
+
+        device_id = str(
+            device_id or ""
+        ).strip()
+
+        if not device_id:
+            raise ValueError(
+                "device_id ห้ามว่าง"
+            )
+
+        response = (
+            self.client.rpc(
+                "revoke_notify_device_session",
+                {
+                    "p_device_id": device_id,
+                },
+            ).execute()
+        )
+
+        return bool(
+            response.data
+        )
+
     def publish_notification_event(self, source: str, title: str, message: str, notification_type: str = "info"):
         self._require_login()
         payload = {
