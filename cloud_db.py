@@ -437,6 +437,59 @@ class CloudDB:
 
         return response.data
 
+    def list_notify_sessions(self):
+        self._require_login()
+
+        if str(
+            self.role or ""
+        ).lower() != "admin":
+            raise RuntimeError(
+                "เฉพาะ Admin เท่านั้นที่ดู DailyLogNotify Sessions ได้"
+            )
+
+        response = (
+            self.client.rpc(
+                "list_notify_sessions"
+            ).execute()
+        )
+
+        return response.data or []
+
+    def revoke_notify_session(
+        self,
+        session_id: str,
+    ):
+        self._require_login()
+
+        if str(
+            self.role or ""
+        ).lower() != "admin":
+            raise RuntimeError(
+                "เฉพาะ Admin เท่านั้นที่ออก DailyLogNotify Session ได้"
+            )
+
+        session_id = str(
+            session_id or ""
+        ).strip()
+
+        if not session_id:
+            raise ValueError(
+                "session_id ห้ามว่าง"
+            )
+
+        response = (
+            self.client.rpc(
+                "revoke_notify_session",
+                {
+                    "p_session_id": session_id,
+                },
+            ).execute()
+        )
+
+        return bool(
+            response.data
+        )
+
     def list_notify_devices(self):
         self._require_login()
 
