@@ -1,0 +1,70 @@
+name: Build and release DailyLogNotify
+on:
+  push:
+    branches: [feature/dailylog-notify]
+    paths:
+      - dailylog_notify.py
+      - notify_updates.py
+      - updater.py
+      - notify_receiver.py
+      - notify_history.py
+      - workers.py
+      - DailyLogNotify.spec
+      - updater.spec
+      - build_notify.ps1
+      - publish_notify_release.ps1
+      - notify_build_config.json
+      - requirements-notify-build.txt
+      - tests/test_notify_updates.py
+      - tests/windows_update_smoke.py
+      - .github/workflows/notify-release.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: dailylog-notify-release
+  cancel-in-progress: false
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test update failure recovery
+        run: python -m unittest discover -s tests -v
+      - name: Build into the existing release folder
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          if ($LASTEXITCODE -ne 0) { throw "Could not create Python 3.12 build environment." }
+          ./build_notify.ps1
+      - name: Smoke test the Windows binaries
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $app = Start-Process ./release/DailyLogNotify.exe -ArgumentList "--smoke-test" -Wait -PassThru
+          if ($app.ExitCode -ne 0) { throw "Notify binary smoke test failed: $($app.ExitCode)" }
+          ./.venv/Scripts/python.exe tests/windows_update_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw "Compiled updater smoke test failed." }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DailyLogNotify-Windows-${{ github.sha }}
+          path: release/*.exe
+          if-no-files-found: error
+      - name: Publish the versioned Notify release
+        shell: pwsh
+        run: |
+          $source = Get-Content dailylog_notify.py -Raw
+          $version = [regex]::Match($source, 'APP_VERSION\s*=\s*"([^"]+)"').Groups[1].Value
+          $tag = "notify-v$version"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; increase APP_VERSION to publish another build."
+            exit 0
+          }
+          ./publish_notify_release.ps1 -GitHubRepo $env:GITHUB_REPOSITORY

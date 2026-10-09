@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import time
 
 import requests
 from PySide6.QtCore import QSettings, QTimer, Qt
@@ -24,11 +25,11 @@ from PySide6.QtWidgets import (
 
 from notify_history import NotificationHistory
 from notify_receiver import CentralNotifyReceiver
-from update_checker import UpdateChecker
+from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.5.1"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
@@ -954,7 +955,7 @@ class NotifyApp(QWidget):
             self
         )
         self.update_timer.setInterval(
-            6 * 60 * 60 * 1000
+            15 * 60 * 1000
         )
         self.update_timer.timeout.connect(
             self.check_for_updates
@@ -1724,157 +1725,10 @@ class NotifyApp(QWidget):
         )
 
     def _fetch_update_info(self):
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "DailyLogNotify-Updater/1.5",
-            "Cache-Control": "no-cache",
-        }
-
-        response = requests.get(
-            NOTIFY_RELEASES_API,
-            timeout=(5, 12),
-            headers=headers,
-        )
-        response.raise_for_status()
-
-        releases = response.json()
-
-        if not isinstance(
-            releases,
-            list,
-        ):
-            return {
-                "available": False,
-            }
-
-        release = next(
-            (
-                item
-                for item in releases
-                if isinstance(
-                    item,
-                    dict,
-                )
-                and str(
-                    item.get(
-                        "tag_name",
-                        "",
-                    )
-                ).startswith(
-                    "notify-v"
-                )
-                and not item.get(
-                    "draft"
-                )
-            ),
-            None,
-        )
-
-        if not release:
-            return {
-                "available": False,
-            }
-
-        asset = next(
-            (
-                item
-                for item in release.get(
-                    "assets",
-                    [],
-                )
-                if isinstance(
-                    item,
-                    dict,
-                )
-                and item.get(
-                    "name"
-                )
-                == "notify-version.json"
-            ),
-            None,
-        )
-
-        if not asset:
-            return {
-                "available": False,
-            }
-
-        manifest_url = str(
-            asset.get(
-                "browser_download_url",
-                "",
-            )
-            or ""
-        ).strip()
-
-        if not manifest_url:
-            return {
-                "available": False,
-            }
-
-        manifest_response = requests.get(
-            manifest_url,
-            timeout=(5, 12),
-            headers={
-                "User-Agent":
-                    "DailyLogNotify-Updater/1.5",
-                "Cache-Control":
-                    "no-cache",
-            },
-        )
-        manifest_response.raise_for_status()
-
-        data = manifest_response.json()
-
-        latest = str(
-            data.get(
-                "version",
-                "",
-            )
-            or ""
-        ).strip()
-
-        if (
-            not latest
-            or UpdateChecker._version_tuple(
-                latest
-            )
-            <= UpdateChecker._version_tuple(
-                APP_VERSION
-            )
-        ):
-            return {
-                "available": False,
-                "latest": latest,
-            }
-
-        url = str(
-            data.get(
-                "download_url",
-                "",
-            )
-            or ""
-        ).strip()
-
-        sha = str(
-            data.get(
-                "sha256",
-                "",
-            )
-            or ""
-        ).strip()
-
-        if not url:
-            return {
-                "available": False,
-            }
-
-        return {
-            "available": True,
-            "latest": latest,
-            "download_url": url,
-            "sha256": sha,
-        }
+        data = fetch_update(APP_VERSION)
+        if getattr(sys, "frozen", False):
+            data = prepare_update(data, os.path.dirname(sys.executable))
+        return data
 
     def check_for_updates(
         self,
@@ -1883,6 +1737,9 @@ class NotifyApp(QWidget):
         """Check in the background and install Notify updates automatically."""
 
         if self._update_check_running:
+            return
+        last_attempt = float(self.settings.value("update/last_attempt", 0) or 0)
+        if not manual and time.time() - last_attempt < 15 * 60:
             return
 
         self._update_check_running = True
@@ -1961,10 +1818,7 @@ class NotifyApp(QWidget):
                 ),
                 sys.executable,
                 str(
-                    result.get(
-                        "download_url",
-                        "",
-                    )
+                    result.get("prepared_file") or result.get("download_url", "")
                 ),
                 str(
                     result.get(
@@ -1974,11 +1828,8 @@ class NotifyApp(QWidget):
                 ),
             ]
 
-            # Keep startup launches silent after updater restarts the app.
-            if "--startup" in sys.argv:
-                args.append(
-                    "--startup"
-                )
+            # Preserve the saved account/source choices and restart into the tray.
+            args.append("--startup")
 
             self.status.setText(
                 (
@@ -1988,9 +1839,9 @@ class NotifyApp(QWidget):
             )
 
             try:
-                subprocess.Popen(
-                    args
-                )
+                self.settings.setValue("update/last_attempt", time.time())
+                self.settings.sync()
+                subprocess.Popen(args, close_fds=True)
             except Exception as error:
                 self.status.setText(
                     "🔴 DailyLog Notify: เริ่ม Updater ไม่สำเร็จ"
@@ -2040,6 +1891,14 @@ class NotifyApp(QWidget):
 
 
 if __name__ == "__main__":
+    if "--smoke-test" in sys.argv:
+        from notify_receiver import load_notify_config
+        from supabase import create_client
+        create_client(*load_notify_config())
+        smoke_app = QApplication(sys.argv)
+        make_tray_icon()
+        raise SystemExit(0)
+
     app = QApplication(
         sys.argv
     )
@@ -2058,3 +1917,4 @@ if __name__ == "__main__":
     sys.exit(
         app.exec()
     )
+
