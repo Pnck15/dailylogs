@@ -29,7 +29,30 @@ class NotificationHistory:
 
     def recent(self, limit=200):
         with sqlite3.connect(self.path) as db:
-            return db.execute(
-                "SELECT created_at,source,title,message FROM notifications ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+            db.row_factory = sqlite3.Row
+
+            sql = (
+                "SELECT id, created_at, source, title, message "
+                "FROM notifications "
+                "ORDER BY id DESC"
+            )
+
+            if limit is None:
+                rows = db.execute(
+                    sql
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    sql + " LIMIT ?",
+                    (int(limit),),
+                ).fetchall()
+
+            return [
+                dict(row)
+                for row in rows
+            ]
+
+    def all(self):
+        return self.recent(
+            limit=None
+        )
