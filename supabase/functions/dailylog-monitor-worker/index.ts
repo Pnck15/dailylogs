@@ -835,7 +835,7 @@ async function processSale(
           + changes.join(
             "\n",
           )
-          + "\n\nข้อมูลทั้งแถว\n"
+          + "\n\nรายละเอียดแจ้ง:\n"
           + formatFullRow(
             row,
           )
@@ -960,7 +960,7 @@ async function processSale(
       `${source.source_key}|due|${today}|${identity}|${normalize(row.pay_day)}|${normalize(row.delivery_date)}`,
       `${source.source_name} - ${dueKind}`,
       (
-        "ข้อมูลทั้งแถว\n"
+        "รายละเอียดแจ้ง:\n"
         + formatFullRow(
           row,
         )
@@ -1113,7 +1113,7 @@ async function processSa(
           + changes.join(
             "\n",
           )
-          + "\n\nข้อมูลทั้งแถว\n"
+          + "\n\nรายละเอียดแจ้ง:\n"
           + formatFullRow(
             row,
           )
