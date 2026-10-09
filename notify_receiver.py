@@ -1,5 +1,9 @@
+import base64
+import json
 import os
+import platform
 import sys
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -9,6 +13,29 @@ from supabase import create_client
 
 POLL_INTERVAL_MS = 15000
 SOURCE_REFRESH_INTERVAL_MS = 5 * 60 * 1000
+DEVICE_HEARTBEAT_INTERVAL_MS = 60 * 1000
+
+
+def _session_id_from_access_token(access_token):
+    token = str(access_token or "").strip()
+
+    if not token:
+        return ""
+
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        decoded = base64.urlsafe_b64decode(
+            payload.encode("ascii")
+        )
+        data = json.loads(
+            decoded.decode("utf-8")
+        )
+        return str(
+            data.get("session_id") or ""
+        ).strip()
+    except Exception:
+        return ""
 
 
 def _read_env_file(path):
@@ -140,6 +167,9 @@ class _LoginJob(QRunnable):
                     "email": self.email,
                     "latest_id": latest_id,
                     "notify_sources": notify_sources,
+                    "session_id": _session_id_from_access_token(
+                        response.session.access_token
+                    ),
                 }
             )
         except Exception as exc:
@@ -163,6 +193,53 @@ class _SourceJob(QRunnable):
 
             self.signals.done.emit(
                 response.data or []
+            )
+        except Exception as exc:
+            self.signals.error.emit(
+                str(exc)
+            )
+
+
+class _HeartbeatJob(QRunnable):
+    def __init__(
+        self,
+        client,
+        device_id,
+        device_name,
+        app_version,
+        selected_sources,
+        startup_enabled,
+        updater_ready,
+    ):
+        super().__init__()
+        self.client = client
+        self.device_id = device_id
+        self.device_name = device_name
+        self.app_version = app_version
+        self.selected_sources = selected_sources
+        self.startup_enabled = startup_enabled
+        self.updater_ready = updater_ready
+        self.signals = _Signals()
+
+    @Slot()
+    def run(self):
+        try:
+            response = (
+                self.client.rpc(
+                    "register_notify_device",
+                    {
+                        "p_device_id": self.device_id,
+                        "p_device_name": self.device_name,
+                        "p_app_version": self.app_version,
+                        "p_selected_sources": self.selected_sources,
+                        "p_startup_enabled": self.startup_enabled,
+                        "p_updater_ready": self.updater_ready,
+                    },
+                ).execute()
+            )
+
+            self.signals.done.emit(
+                response.data or {}
             )
         except Exception as exc:
             self.signals.error.emit(
@@ -209,8 +286,14 @@ class CentralNotifyReceiver(QObject):
     status_changed = Signal(str)
     login_success = Signal(str)
     login_failed = Signal(str)
+    session_revoked = Signal(str)
 
-    def __init__(self, settings, parent=None):
+    def __init__(
+        self,
+        settings,
+        parent=None,
+        app_version="",
+    ):
         super().__init__(parent)
         self.settings = settings
         self.pool = QThreadPool.globalInstance()
@@ -219,8 +302,43 @@ class CentralNotifyReceiver(QObject):
         self.workspace_id = ""
         self.role = ""
         self.email = ""
+        self.session_id = ""
+        self.app_version = str(
+            app_version or ""
+        ).strip()
+        self.device_name = (
+            os.environ.get("COMPUTERNAME")
+            or platform.node()
+            or "Windows PC"
+        )
+
+        saved_device_id = str(
+            self.settings.value(
+                "device/id",
+                "",
+            )
+            or ""
+        ).strip()
+
+        try:
+            self.device_id = str(
+                uuid.UUID(
+                    saved_device_id
+                )
+            )
+        except Exception:
+            self.device_id = str(
+                uuid.uuid4()
+            )
+            self.settings.setValue(
+                "device/id",
+                self.device_id,
+            )
+            self.settings.sync()
+
         self.last_id = 0
         self._busy = False
+        self._heartbeat_busy = False
         self._login_busy = False
         self._paused = False
 
@@ -234,6 +352,16 @@ class CentralNotifyReceiver(QObject):
         )
         self.source_timer.timeout.connect(
             self.refresh_sources
+        )
+
+        self.heartbeat_timer = QTimer(
+            self
+        )
+        self.heartbeat_timer.setInterval(
+            DEVICE_HEARTBEAT_INTERVAL_MS
+        )
+        self.heartbeat_timer.timeout.connect(
+            self.send_heartbeat
         )
 
         self.url, self.key = load_notify_config()
@@ -295,6 +423,13 @@ class CentralNotifyReceiver(QObject):
         self.workspace_id = result["workspace_id"]
         self.role = result.get("role", "")
         self.email = result.get("email", "")
+        self.session_id = str(
+            result.get(
+                "session_id",
+                "",
+            )
+            or ""
+        ).strip()
 
         cursor_key = (
             f"central/{self.workspace_id}/last_event_id"
@@ -344,7 +479,11 @@ class CentralNotifyReceiver(QObject):
         if not self.source_timer.isActive():
             self.source_timer.start()
 
+        if not self.heartbeat_timer.isActive():
+            self.heartbeat_timer.start()
+
         self.refresh_sources()
+        self.send_heartbeat()
 
         self.status_changed.emit(
             f"🟢 Central Notification: {self.email}"
@@ -358,6 +497,8 @@ class CentralNotifyReceiver(QObject):
         self.workspace_id = ""
         self.timer.stop()
         self.source_timer.stop()
+        self.heartbeat_timer.stop()
+        self.session_id = ""
         self.status_changed.emit(
             "🔴 Central Notification: Login ไม่สำเร็จ"
         )
@@ -440,6 +581,177 @@ class CentralNotifyReceiver(QObject):
         print(
             "[Central Notify Sources]",
             message,
+        )
+
+    def _selected_source_keys_for_device(self):
+        raw = str(
+            self.settings.value(
+                "sources/selected",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if not raw:
+            return []
+
+        return [
+            item.strip()
+            for item in raw.split(",")
+            if item.strip()
+        ]
+
+    def _startup_enabled_for_device(self):
+        if not getattr(
+            sys,
+            "frozen",
+            False,
+        ):
+            return False
+
+        run = QSettings(
+            (
+                r"HKEY_CURRENT_USER\Software\Microsoft\Windows"
+                r"\CurrentVersion\Run"
+            ),
+            QSettings.Format.NativeFormat,
+        )
+
+        value = str(
+            run.value(
+                "DailyLogNotify",
+                "",
+            )
+            or ""
+        )
+
+        return (
+            os.path.normcase(
+                os.path.abspath(
+                    sys.executable
+                )
+            )
+            in os.path.normcase(
+                value
+            )
+        )
+
+    def _updater_ready_for_device(self):
+        if not getattr(
+            sys,
+            "frozen",
+            False,
+        ):
+            return False
+
+        return os.path.isfile(
+            os.path.join(
+                os.path.dirname(
+                    sys.executable
+                ),
+                "DailyLogUpdater.exe",
+            )
+        )
+
+    def send_heartbeat(self):
+        if (
+            self._heartbeat_busy
+            or self.client is None
+            or not self.workspace_id
+        ):
+            return
+
+        self._heartbeat_busy = True
+
+        job = _HeartbeatJob(
+            self.client,
+            self.device_id,
+            self.device_name,
+            self.app_version,
+            self._selected_source_keys_for_device(),
+            self._startup_enabled_for_device(),
+            self._updater_ready_for_device(),
+        )
+        job.signals.done.connect(
+            self._heartbeat_done
+        )
+        job.signals.error.connect(
+            self._heartbeat_error
+        )
+        self.pool.start(
+            job
+        )
+
+    def _heartbeat_done(
+        self,
+        result,
+    ):
+        self._heartbeat_busy = False
+
+        data = result
+
+        if (
+            isinstance(
+                data,
+                list,
+            )
+            and data
+        ):
+            data = data[0]
+
+        if not isinstance(
+            data,
+            dict,
+        ):
+            return
+
+        if data.get(
+            "active",
+            True,
+        ) is False:
+            self._handle_session_revoked()
+
+    def _heartbeat_error(
+        self,
+        message,
+    ):
+        self._heartbeat_busy = False
+        print(
+            "[Notify Device Heartbeat]",
+            message,
+        )
+
+    def _handle_session_revoked(self):
+        self.timer.stop()
+        self.source_timer.stop()
+        self.heartbeat_timer.stop()
+        self._busy = False
+        self._heartbeat_busy = False
+
+        self.client = None
+        self.workspace_id = ""
+        self.role = ""
+        self.email = ""
+        self.session_id = ""
+        self._paused = False
+
+        # Do not auto-login again after Admin explicitly removed
+        # this device session.
+        self.settings.remove(
+            "central/password"
+        )
+        self.settings.sync()
+
+        message = (
+            "Session ของเครื่องนี้ถูกออกจากระบบโดย Admin "
+            "กรุณา Login ใหม่หากต้องการเชื่อมต่ออีกครั้ง"
+        )
+
+        self.status_changed.emit(
+            "🔴 Central Notification: Session ถูกปิดโดย Admin"
+        )
+        self.session_revoked.emit(
+            message
         )
 
     def pause(self):
@@ -544,7 +856,9 @@ class CentralNotifyReceiver(QObject):
     def logout(self):
         self.timer.stop()
         self.source_timer.stop()
+        self.heartbeat_timer.stop()
         self._busy = False
+        self._heartbeat_busy = False
 
         if self.client is not None:
             try:
@@ -566,6 +880,7 @@ class CentralNotifyReceiver(QObject):
         self.workspace_id = ""
         self.role = ""
         self.email = ""
+        self.session_id = ""
         self._paused = False
 
         self.settings.remove("central/password")
