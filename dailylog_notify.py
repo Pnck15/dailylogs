@@ -27,7 +27,7 @@ from update_checker import UpdateChecker
 from workers import run_async
 
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
 DEFAULT_RECEIVER_EMAIL = "daily123@gmail.com"
@@ -37,7 +37,7 @@ NOTIFY_RELEASES_API = (
 )
 
 
-SOURCE_OPTIONS = [
+FALLBACK_SOURCE_OPTIONS = [
     {
         "key": "sale_sathorn",
         "label": "Sale Deli Sathorn",
@@ -271,12 +271,16 @@ class SourceSelectionDialog(QDialog):
     def __init__(
         self,
         settings,
+        source_options,
         first_run=False,
         parent=None,
     ):
         super().__init__(parent)
 
         self.settings = settings
+        self.source_options = list(
+            source_options or []
+        )
         self.first_run = first_run
         self.checkboxes = {}
 
@@ -321,7 +325,7 @@ class SourceSelectionDialog(QDialog):
                 if item.strip()
             }
 
-        for option in SOURCE_OPTIONS:
+        for option in self.source_options:
             checkbox = QCheckBox(
                 option["label"]
             )
@@ -338,14 +342,23 @@ class SourceSelectionDialog(QDialog):
                 checkbox
             )
 
-        future_note = QLabel(
-            "SA Srinakarin สามารถเลือกเตรียมไว้ได้ "
-            "และจะเริ่มรับอัตโนมัติเมื่อมี Source นี้ในระบบกลาง"
+        central_note = QLabel(
+            "รายการนี้มาจาก Central อัตโนมัติ "
+            "Admin สามารถเปิด/ปิด Source ที่อนุญาตให้ DailyLogNotify รับได้"
         )
-        future_note.setWordWrap(True)
+        central_note.setWordWrap(True)
         layout.addWidget(
-            future_note
+            central_note
         )
+
+        if not self.source_options:
+            empty = QLabel(
+                "ยังไม่มี Notification Source ที่ Admin เปิดให้รับ"
+            )
+            empty.setWordWrap(True)
+            layout.addWidget(
+                empty
+            )
 
         layout.addStretch()
 
@@ -430,6 +443,10 @@ class NotifyApp(QWidget):
         )
         self.history = NotificationHistory()
         self.receiver = None
+        self.source_options = [
+            dict(option)
+            for option in FALLBACK_SOURCE_OPTIONS
+        ]
 
         self.setWindowTitle(
             "DailyLog Notify"
@@ -620,6 +637,9 @@ class NotifyApp(QWidget):
             self.receiver.event.connect(
                 self.notify
             )
+            self.receiver.source_list_changed.connect(
+                self._source_list_changed
+            )
             self.receiver.status_changed.connect(
                 self.status.setText
             )
@@ -716,34 +736,180 @@ class NotifyApp(QWidget):
             if item.strip()
         }
 
+    def _available_source_keys(self):
+        return {
+            str(
+                option.get(
+                    "key",
+                    "",
+                )
+                or ""
+            ).strip()
+            for option in self.source_options
+            if str(
+                option.get(
+                    "key",
+                    "",
+                )
+                or ""
+            ).strip()
+        }
+
     def _source_allowed(
         self,
         source,
+        source_key="",
     ):
         if not self._source_filter_configured():
             return False
 
         selected = self._selected_source_keys()
+        available = self._available_source_keys()
+
+        key = str(
+            source_key or ""
+        ).strip()
+
+        if key:
+            return (
+                key in selected
+                and key in available
+            )
+
+        # Backward compatibility for older notification_events
+        # created before source_key was stored.
         source_text = str(
             source or ""
         ).strip()
 
-        for option in SOURCE_OPTIONS:
+        for option in self.source_options:
+            option_key = str(
+                option.get(
+                    "key",
+                    "",
+                )
+                or ""
+            ).strip()
+
             if (
-                option["key"] in selected
-                and source_text in option["aliases"]
+                option_key not in selected
+                or option_key not in available
             ):
+                continue
+
+            aliases = set(
+                option.get(
+                    "aliases",
+                    [],
+                )
+                or []
+            )
+            aliases.add(
+                str(
+                    option.get(
+                        "label",
+                        "",
+                    )
+                    or ""
+                ).strip()
+            )
+
+            if source_text in aliases:
                 return True
 
         return False
+
+    def _source_list_changed(
+        self,
+        options,
+    ):
+        normalized = []
+
+        for option in options or []:
+            if not isinstance(
+                option,
+                dict,
+            ):
+                continue
+
+            key = str(
+                option.get(
+                    "key",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            label = str(
+                option.get(
+                    "label",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            if not key or not label:
+                continue
+
+            normalized.append({
+                "key": key,
+                "label": label,
+                "source_type": str(
+                    option.get(
+                        "source_type",
+                        "",
+                    )
+                    or ""
+                ).strip(),
+                "display_order": int(
+                    option.get(
+                        "display_order",
+                        100,
+                    )
+                    or 100
+                ),
+                "aliases": {label},
+            })
+
+        if normalized:
+            self.source_options = normalized
+        else:
+            # Keep the last good catalog during a temporary Central
+            # source-list failure.
+            if not self.source_options:
+                self.source_options = [
+                    dict(option)
+                    for option in FALLBACK_SOURCE_OPTIONS
+                ]
+
+        self.update_sources_label()
 
     def update_sources_label(self):
         selected = self._selected_source_keys()
 
         labels = [
-            option["label"]
-            for option in SOURCE_OPTIONS
-            if option["key"] in selected
+            str(
+                option.get(
+                    "label",
+                    "",
+                )
+                or ""
+            ).strip()
+            for option in self.source_options
+            if str(
+                option.get(
+                    "key",
+                    "",
+                )
+                or ""
+            ).strip()
+            in selected
+        ]
+
+        labels = [
+            label
+            for label in labels
+            if label
         ]
 
         if labels:
@@ -766,8 +932,9 @@ class NotifyApp(QWidget):
             self.update_sources_label()
             return
 
-        # Pause before the receiver performs its first poll.
-        # The user must choose notification sources once.
+        # Pause before the first event poll. The source catalog has
+        # already been loaded during login, so the first-run choices
+        # always reflect what Admin currently allows.
         if self.receiver is not None:
             self.receiver.pause()
 
@@ -785,8 +952,15 @@ class NotifyApp(QWidget):
         self,
         first_run=False,
     ):
+        if (
+            self.receiver is not None
+            and self.receiver.client is not None
+        ):
+            self.receiver.refresh_sources()
+
         dialog = SourceSelectionDialog(
             self.settings,
+            self.source_options,
             first_run=first_run,
             parent=self,
         )
@@ -843,10 +1017,13 @@ class NotifyApp(QWidget):
         title,
         message,
         show_popup=True,
+        source_key="",
     ):
-        # This PC receives only the sources selected on first setup.
+        # This PC receives only sources selected locally AND currently
+        # published by Admin through Central.
         if not self._source_allowed(
-            source
+            source,
+            source_key,
         ):
             return
 
@@ -897,7 +1074,7 @@ class NotifyApp(QWidget):
     def _fetch_update_info(self):
         headers = {
             "Accept": "application/vnd.github+json",
-            "User-Agent": "DailyLogNotify-Updater/1.3",
+            "User-Agent": "DailyLogNotify-Updater/1.4",
             "Cache-Control": "no-cache",
         }
 
@@ -988,7 +1165,7 @@ class NotifyApp(QWidget):
             timeout=(5, 12),
             headers={
                 "User-Agent":
-                    "DailyLogNotify-Updater/1.3",
+                    "DailyLogNotify-Updater/1.4",
                 "Cache-Control":
                     "no-cache",
             },
