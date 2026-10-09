@@ -395,7 +395,7 @@ class DailyLog(QWidget):
         # =========================================
 
         self.sa_notify_button = QPushButton(
-            "SA Notify"
+            "⚪ SA Sathorn"
         )
 
         self.sa_notify_button.clicked.connect(
@@ -468,7 +468,8 @@ class DailyLog(QWidget):
 
         self.sale_alert_button.setFixedWidth(72)
         self.sale_alert_button_srinakarin.setFixedWidth(82)
-        self.sa_notify_button.setFixedWidth(62)
+        # Keep enough width for the status dot + "SA Sathorn".
+        self.sa_notify_button.setFixedWidth(86)
         self.line_status_button.setFixedWidth(66)
 
         header.addWidget(self.sale_alert_button)
