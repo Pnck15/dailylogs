@@ -2,6 +2,7 @@ import sys
 import os
 import shutil
 import json
+import uuid
 from datetime import datetime, date
 
 from PySide6.QtCore import (
@@ -53,7 +54,7 @@ APP_NAME = "DailyLog"
 APP_DISPLAY_NAME = "GAC日記"
 
 DEFAULT_ACCENT = "#2563EB"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 UPDATE_CHECK_DELAY_MS = 2500
 
@@ -249,6 +250,18 @@ class DailyLog(QWidget):
 
         self._cloud_request_generation = 0
 
+        self._main_event_last_id = 0
+        self._main_event_cursor_ready = False
+        self.main_notification_timer = QTimer(
+            self
+        )
+        self.main_notification_timer.setInterval(
+            15000
+        )
+        self.main_notification_timer.timeout.connect(
+            self.poll_main_notification_events
+        )
+
         self._search_timer = QTimer(self)
 
         self._search_timer.setSingleShot(True)
@@ -332,13 +345,13 @@ class DailyLog(QWidget):
             APP_DISPLAY_NAME
         )
 
-        # ปุ่ม MainNoti (แทนตำแหน่งเดิมของกล่อง Search)
+        # Legacy MainNoti button kept only for backward-compatible
+        # internal monitor helpers. Main Notification Sources now live in Menu.
         self.main_noti_button = QPushButton(
-            "MainNoti"
+            "MainNoti",
+            self,
         )
-        self.main_noti_button.clicked.connect(
-            lambda: self.configure_sale_branch("MainNoti")
-        )
+        self.main_noti_button.hide()
 
         self.line_status_button = QPushButton("⚪ LINE")
         self.line_status_button.clicked.connect(
@@ -447,7 +460,6 @@ class DailyLog(QWidget):
             self.sale_alert_button,
             self.sale_alert_button_srinakarin,
             self.sa_notify_button,
-            self.main_noti_button,
             self.line_status_button,
         ):
             button.setFixedHeight(24)
@@ -455,13 +467,11 @@ class DailyLog(QWidget):
         self.sale_alert_button.setFixedWidth(72)
         self.sale_alert_button_srinakarin.setFixedWidth(82)
         self.sa_notify_button.setFixedWidth(62)
-        self.main_noti_button.setFixedWidth(78)
         self.line_status_button.setFixedWidth(66)
 
         header.addWidget(self.sale_alert_button)
         header.addWidget(self.sale_alert_button_srinakarin)
         header.addWidget(self.sa_notify_button)
-        header.addWidget(self.main_noti_button)
         header.addWidget(self.line_status_button)
 
         header.addStretch()
@@ -532,6 +542,11 @@ class DailyLog(QWidget):
         QTimer.singleShot(
             3000,
             self.sync_saved_monitor_sources_to_cloud,
+        )
+
+        QTimer.singleShot(
+            3500,
+            self.start_main_notification_event_stream,
         )
 
         self.restore_saved_background()
@@ -1545,13 +1560,19 @@ class DailyLog(QWidget):
             ("Sathorn", "Sale Deli Sathorn GAS"),
             ("Srinakarin", "Sale Deli Srinakarin GAS"),
             ("SA", "SA Sathorn GAS"),
-            ("MainNoti", "MainNoti GAS"),
         ):
             action = notify_menu.addAction(label)
             action.triggered.connect(
                 lambda checked=False, b=branch:
                 self.configure_sale_branch(b)
             )
+
+        main_sources_action = notify_menu.addAction(
+            "📚 Main Notification Sources..."
+        )
+        main_sources_action.triggered.connect(
+            self.open_main_notification_sources
+        )
 
         notify_menu.addSeparator()
 
@@ -1572,7 +1593,6 @@ class DailyLog(QWidget):
             ("Sathorn", "Sale Deli Sathorn"),
             ("Srinakarin", "Sale Deli Srinakarin"),
             ("SA", "SA Sathorn"),
-            ("MainNoti", "MainNoti"),
         ):
             action = reconnect_menu.addAction(
                 f"Re-connect {label}"
@@ -4094,7 +4114,6 @@ class DailyLog(QWidget):
             "Sathorn",
             "Srinakarin",
             "SA",
-            "MainNoti",
         ):
             if (
                 self.sale_api_urls.get(
@@ -4205,7 +4224,6 @@ class DailyLog(QWidget):
             "Sathorn",
             "Srinakarin",
             "SA",
-            "MainNoti",
         ):
 
             url = (
@@ -4289,7 +4307,6 @@ class DailyLog(QWidget):
             "Sathorn",
             "Srinakarin",
             "SA",
-            "MainNoti",
         ):
 
             url = (
@@ -6285,8 +6302,6 @@ class DailyLog(QWidget):
 
             self.search_input.show()
 
-            self.main_noti_button.show()
-
             self.sale_alert_button.show()
 
             self.sale_alert_button_srinakarin.show()
@@ -6314,8 +6329,6 @@ class DailyLog(QWidget):
             self.pages.hide()
 
             self.search_input.hide()
-
-            self.main_noti_button.hide()
 
             self.sale_alert_button.hide()
 
