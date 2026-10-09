@@ -346,9 +346,12 @@ class CloudDB:
                 "workspace_id",
                 self.workspace_id,
             )
-            .like(
-                "source_key",
-                "main_%",
+            .or_(
+                (
+                    "source_key.like.main_%,"
+                    "and(source_key.eq.sa_sathorn,"
+                    "notification_type.eq.reminder)"
+                )
             )
             .order(
                 "id",
@@ -387,9 +390,12 @@ class CloudDB:
                 "workspace_id",
                 self.workspace_id,
             )
-            .like(
-                "source_key",
-                "main_%",
+            .or_(
+                (
+                    "source_key.like.main_%,"
+                    "and(source_key.eq.sa_sathorn,"
+                    "notification_type.eq.reminder)"
+                )
             )
             .gt(
                 "id",
