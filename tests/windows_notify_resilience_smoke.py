@@ -76,6 +76,13 @@ def run_receiver_tests():
         # Test direct recovery to a healthy state without real events.
         receiver._poll_done([])
         assert receiver._poll_failures == 0
+        # Auth and an event poll alone do not prove the PC was registered.
+        assert status[-1].startswith("🟡")
+        assert receiver.device_registration_state != "active"
+
+        receiver._heartbeat_done({"active": True})
+        assert receiver.device_registration_state == "active"
+        assert receiver.last_heartbeat_at
         assert status[-1].startswith("🟢")
 
         # Invalid or revoked access is not silently replaced by a new
