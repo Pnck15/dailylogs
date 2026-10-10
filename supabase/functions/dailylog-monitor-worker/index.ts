@@ -766,11 +766,20 @@ async function processSale(
       payload.version,
     );
 
+  const mode =
+    normalize(
+      payload.mode,
+    );
+
   const initialized =
     state.initialized === true &&
     normalize(
       state.version,
-    ) === version;
+    ) === version &&
+    (
+      mode === "all_month_rows_v6"
+      || normalize(state.today) === today
+    );
 
   const previous =
     initialized &&
@@ -1057,8 +1066,8 @@ async function processSa(
           Record<string, AnyRow>
       : {};
 
-  // The first scan of a GAS version becomes the baseline. Keep the same
-  // baseline across days so edits in 10.2026 / 11.2026 remain detectable.
+  // v6 returns the full month tabs, so its baseline stays valid across days.
+  // Legacy v5 returns only today's merged-D rows, so its baseline resets daily.
   if (initialized) {
     const reconciled =
       reconcileRows(
@@ -1184,7 +1193,7 @@ async function processSa(
     version,
     today,
     rows: current,
-    mode: "all_month_rows_v6",
+    mode,
   };
 }
 
