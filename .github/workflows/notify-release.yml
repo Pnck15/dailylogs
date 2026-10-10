@@ -17,6 +17,7 @@ on:
       - requirements-notify-build.txt
       - tests/test_notify_updates.py
       - tests/test_sa_popup_display.py
+      - tests/test_notify_history_sources.py
       - tests/windows_notify_popup_smoke.py
       - tests/windows_update_smoke.py
       - tests/verify_notify_release.py
