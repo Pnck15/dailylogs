@@ -273,6 +273,37 @@ function rowSignature(row: AnyRow) {
   );
 }
 
+// A merged date in Column D is physically present only on its first
+// row. For SA every row in that merged group inherits that date, so we
+// explicitly include it in change detection and the deduplication signature.
+function saEffectiveDate(row: AnyRow) {
+  return normalize(
+    row.appointment_date ??
+    row.group_date ??
+    "",
+  );
+}
+
+function saRowSignature(row: AnyRow) {
+  return JSON.stringify({
+    cells: rowSignature(row),
+    appointment_date: saEffectiveDate(row),
+  });
+}
+
+function diffSaFullRow(oldRow: AnyRow, newRow: AnyRow) {
+  const changes = diffFullRow(oldRow, newRow);
+  const before = saEffectiveDate(oldRow);
+  const after = saEffectiveDate(newRow);
+
+  if (before !== after) {
+    changes.push(
+      `D - วันที่นัดหมาย (Merged D): ${before || "-"} → ${after || "-"}`,
+    );
+  }
+  return changes;
+}
+
 function rowMap(row: AnyRow) {
   const result = new Map<string, AnyRow>();
 
@@ -1045,13 +1076,19 @@ async function processSa(
       payload.mode,
     );
 
+  // The two existing v6 GAS feeds use different mode names. Both
+  // provide complete monthly data and MUST retain snapshots across days.
+  const fullMonthMode =
+    mode === "all_month_rows_v6" ||
+    mode === "month_tabs_full_rows_with_merged_schedule";
+
   const initialized =
     state.initialized === true &&
     normalize(
       state.version,
     ) === version &&
     (
-      mode === "all_month_rows_v6"
+      fullMonthMode
       || normalize(state.today) === today
     );
 
@@ -1094,7 +1131,7 @@ async function processSa(
         ];
 
       const changes =
-        diffFullRow(
+        diffSaFullRow(
           old,
           row,
         );
@@ -1113,7 +1150,7 @@ async function processSa(
 
       await publishEvent(
         source,
-        `${source.source_key}|edit|${today}|${identity}|${rowSignature(row)}`,
+        `${source.source_key}|edit|${today}|${identity}|${saRowSignature(row)}`,
         `${source.source_name} - มีการแก้ไขข้อมูล`,
         (
           "ข้อมูลที่เปลี่ยน\n"
@@ -1146,7 +1183,7 @@ async function processSa(
 
       await publishEvent(
         source,
-        `${source.source_key}|new|${today}|${identity}|${rowSignature(row)}`,
+        `${source.source_key}|new|${today}|${identity}|${saRowSignature(row)}`,
         `${source.source_name} - เพิ่มข้อมูล`,
         (
           "ข้อมูลที่เพิ่ม\n"
@@ -1175,7 +1212,7 @@ async function processSa(
 
       await publishEvent(
         source,
-        `${source.source_key}|delete|${today}|${identity}|${rowSignature(old)}`,
+        `${source.source_key}|delete|${today}|${identity}|${saRowSignature(old)}`,
         `${source.source_name} - ลบข้อมูล`,
         (
           "ข้อมูลที่ถูกลบ\n"
