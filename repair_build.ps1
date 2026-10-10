@@ -156,7 +156,7 @@ try {
         # PyInstaller version (6.13.0 on Python 3.14).
         $oldPyInstallerPin = '(?i)\bpyinstaller\s*==\s*6\.(?:[0-9]|1[0-4])(?:\.\d+)?\b'
         $oldNotifyPySidePin = '(?i)\bPySide6\s*==\s*6\.10\.2\b'
-        $backupRoot = Join-Path $PSScriptRoot (".build_repair_backups\" + (Get-Date -Format "yyyyMMdd_HHmmss"))
+        $backupRoot = Join-Path $PSScriptRoot (".build_repair_backups\" + (Get-Date -Format "yyyyMMdd_HHmmss_fff"))
         $changed = 0
         foreach ($file in $targets) {
             $scriptFile = $file.Extension -in @(".ps1", ".cmd", ".bat")
@@ -220,8 +220,10 @@ try {
             )
             if (-not ($scriptFile -or $dependencyFile -or $file.Extension -eq ".spec")) { continue }
             $content = [System.IO.File]::ReadAllText($file.FullName)
-            $bad = [regex]::IsMatch($content, $legacyPin) -or
-                   [regex]::IsMatch($content, $oldPyInstallerPin)
+            $bad = (
+                [regex]::IsMatch($content, $legacyPin) -or
+                [regex]::IsMatch($content, $oldPyInstallerPin)
+            )
             if ($dependencyFile) {
                 $bad = $bad -or [regex]::IsMatch($content, $oldNotifyPySidePin)
             }
