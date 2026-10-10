@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from pathlib import Path
@@ -21,10 +22,42 @@ class CloudDB:
         self.url = os.getenv("SUPABASE_URL", "").strip()
         self.key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
 
+        # Production releases bundle only the public Supabase client config.
+        # This is safe to ship in a desktop client; RLS/Auth still enforce access.
+        if not self.url or not self.key:
+            bundle_dir = Path(
+                getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)
+            )
+            config_candidates = (
+                bundle_dir / "notify_build_config.json",
+                app_dir / "notify_build_config.json",
+                Path(__file__).resolve().parent / "notify_build_config.json",
+            )
+
+            for config_path in config_candidates:
+                if not config_path.exists():
+                    continue
+                try:
+                    config = json.loads(
+                        config_path.read_text(encoding="utf-8")
+                    )
+                except Exception:
+                    continue
+
+                self.url = self.url or str(
+                    config.get("SUPABASE_URL", "")
+                ).strip()
+                self.key = self.key or str(
+                    config.get("SUPABASE_PUBLISHABLE_KEY", "")
+                ).strip()
+
+                if self.url and self.key:
+                    break
+
         if not self.url:
-            raise ValueError("ไม่พบ SUPABASE_URL ในไฟล์ .env")
+            raise ValueError("ไม่พบ SUPABASE_URL")
         if not self.key:
-            raise ValueError("ไม่พบ SUPABASE_PUBLISHABLE_KEY ในไฟล์ .env")
+            raise ValueError("ไม่พบ SUPABASE_PUBLISHABLE_KEY")
 
         self.client = create_client(self.url, self.key)
         self.user = None
