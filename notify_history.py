@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from contextlib import closing
 from datetime import datetime
 
 def app_data_dir():
@@ -11,7 +12,7 @@ def app_data_dir():
 class NotificationHistory:
     def __init__(self):
         self.path = os.path.join(app_data_dir(), "notification_history.db")
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             db.execute("""CREATE TABLE IF NOT EXISTS notifications(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at TEXT NOT NULL,
@@ -31,7 +32,7 @@ class NotificationHistory:
                 )
 
     def add(self, source, title, message, source_key=""):
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             db.execute(
                 "INSERT INTO notifications("
                 "created_at,source,title,message,source_key"
@@ -46,7 +47,7 @@ class NotificationHistory:
             )
 
     def recent(self, limit=200):
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             db.row_factory = sqlite3.Row
 
             sql = (
