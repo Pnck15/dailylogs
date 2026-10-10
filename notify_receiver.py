@@ -356,6 +356,9 @@ class CentralNotifyReceiver(QObject):
         # one client. Serialize network jobs for this receiver instance.
         self.pool = QThreadPool(self)
         self.pool.setMaxThreadCount(1)
+        # Keep QRunnables and their _Signals alive until all queued Qt
+        # signal handlers have finished; auto-delete used to race the GUI.
+        self._active_jobs = set()
 
         self.client = None
         self.workspace_id = ""
@@ -433,6 +436,24 @@ class CentralNotifyReceiver(QObject):
 
         self.url, self.key = load_notify_config()
 
+    def _start_job(self, job):
+        # QThreadPool auto-delete could destroy job.signals just after
+        # done.emit() in the worker but BEFORE Qt delivered it to the GUI.
+        # This left signed-in sessions without _login_done/heartbeat.
+        job.setAutoDelete(False)
+        self._active_jobs.add(job)
+
+        def release(_result):
+            self._active_jobs.discard(job)
+
+        job.signals.done.connect(release)
+        job.signals.error.connect(release)
+        try:
+            self.pool.start(job)
+        except Exception:
+            self._active_jobs.discard(job)
+            raise
+
     def has_saved_credentials(self):
         email = str(
             self.settings.value("central/email", "") or ""
@@ -490,7 +511,7 @@ class CentralNotifyReceiver(QObject):
             )
         )
         job.signals.error.connect(self._login_error)
-        self.pool.start(job)
+        self._start_job(job)
         return True
 
     def _login_done(self, result, password, remember):
@@ -640,7 +661,7 @@ class CentralNotifyReceiver(QObject):
         job.signals.error.connect(
             self._sources_error
         )
-        self.pool.start(job)
+        self._start_job(job)
 
     def _sources_done(
         self,
@@ -801,9 +822,7 @@ class CentralNotifyReceiver(QObject):
         job.signals.error.connect(
             self._heartbeat_error
         )
-        self.pool.start(
-            job
-        )
+        self._start_job(job)
 
     def _heartbeat_done(
         self,
@@ -919,7 +938,7 @@ class CentralNotifyReceiver(QObject):
         )
         job.signals.done.connect(self._poll_done)
         job.signals.error.connect(self._poll_error)
-        self.pool.start(job)
+        self._start_job(job)
 
     def _poll_done(self, rows):
         self._busy = False
