@@ -6,7 +6,7 @@ import sys
 import time
 
 import requests
-from PySide6.QtCore import QSettings, QTimer, Qt
+from PySide6.QtCore import QLockFile, QSettings, QTimer, Qt
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from notify_history import NotificationHistory
+from notify_history import NotificationHistory, app_data_dir
 from notify_receiver import CentralNotifyReceiver
 from notify_updates import fetch_update, prepare_update
 from workers import run_async
@@ -95,31 +95,43 @@ def claim_single_notify_instance(startup=False, instance_name=None):
         ).hexdigest()[:20]
         instance_name = "MiniDailyLogNotify-" + suffix
 
-    server = QLocalServer()
-    if server.listen(instance_name):
-        return server
+    # QLocalServer alone is NOT an exclusive Windows lock: the Windows
+    # named-pipe API can allow more than one listener using the same name.
+    # QLockFile provides the atomic per-user, cross-process ownership.
+    lock_hash = hashlib.sha256(
+        instance_name.encode("utf-8", errors="replace")
+    ).hexdigest()[:24]
+    lock_path = os.path.join(app_data_dir(), lock_hash + ".lock")
+    owner_lock = QLockFile(lock_path)
+    owner_lock.setStaleLockTime(0)
 
-    # A second invocation must not sign in or run a second poll loop.
-    probe = QLocalSocket()
-    probe.connectToServer(instance_name)
-    if probe.waitForConnected(1200):
+    if not owner_lock.tryLock(0):
         if not startup:
-            probe.write(b"activate")
-            probe.flush()
-            probe.waitForBytesWritten(800)
-        probe.disconnectFromServer()
+            # Bring forward the already-running tray instance when the user
+            # double-clicks the EXE. Never open a competing receiver.
+            probe = QLocalSocket()
+            probe.connectToServer(instance_name)
+            if probe.waitForConnected(1000):
+                probe.write(b"activate")
+                probe.flush()
+                probe.waitForBytesWritten(400)
+                probe.disconnectFromServer()
         return None
 
-    # A stale local socket may remain after an unclean shutdown.
-    # This never removes any user data, sessions or SQLite files.
-    QLocalServer.removeServer(instance_name)
-    if server.listen(instance_name):
-        return server
+    server = QLocalServer()
+    if not server.listen(instance_name):
+        # A leftover IPC endpoint is not an active receiver because WE hold
+        # the exclusive QLockFile. Cleaning this socket name is safe.
+        QLocalServer.removeServer(instance_name)
+        if not server.listen(instance_name):
+            owner_lock.unlock()
+            raise RuntimeError(
+                "Cannot create DailyLogNotify local IPC endpoint"
+            )
 
-    # Fail closed rather than silently running two receivers for one account.
-    raise RuntimeError(
-        "DailyLogNotify instance lock is busy. Check the existing tray process."
-    )
+    # Keep the lock object alive as long as the server/process is running.
+    server._notify_owner_lock = owner_lock
+    return server
 
 
 def make_tray_icon():
@@ -2059,6 +2071,9 @@ if __name__ == "__main__":
             window.activateWindow()
 
     notify_instance_server.newConnection.connect(show_existing_window)
+    app.aboutToQuit.connect(
+        notify_instance_server._notify_owner_lock.unlock
+    )
 
     if "--startup" not in sys.argv:
         window.show()
