@@ -43,6 +43,36 @@ local scripts or app configuration.
 Windows installations. Installing a new version on other PCs requires a
 successful GitHub Release with matching `version.json` and binaries.
 
+## The specific DailyLogNotify.exe error
+
+If the Windows log reports `D:\mini_daily_log\build_notify.ps1:9` with
+`No matching distribution found for PySide6==6.8.3`, then the *local*
+notifier build is still installing an incompatible legacy dependency.
+
+**Do not rerun `publish_all_release.ps1` directly.** Pull the latest
+repair script from GitHub and invoke it instead:
+
+```powershell
+cd D:\mini_daily_log
+git pull --ff-only origin main
+powershell -NoProfile -ExecutionPolicy Bypass -File .\repair_build.ps1 -BuildOnly
+```
+
+The repair script now scans project build/requirements files in subdirectories
+(excluding virtual environments, generated outputs, and backups). It saves
+originals under `.build_repair_backups`, replaces incompatible PySide6 exact
+pins, and confirms that `release\DailyLogNotify.exe` was freshly built.
+It also checks the Python version of `.venv`, not the global interpreter.
+
+If `git pull` cannot run because an old, untracked `repair_build.ps1`
+already exists, **back up that local copy** and then pull again. Do not
+discard the local `build_notify.ps1` or `publish_all_release.ps1`:
+they are currently only available on your build PC.
+
+No source-only GitHub commit can directly edit files inside `D:\mini_daily_log`
+until you synchronize the local checkout. No release has been published by
+these fixes.
+
 ## Diagnostics
 
 Confirm the active venv, not the global Python:
