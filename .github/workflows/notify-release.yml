@@ -21,6 +21,7 @@ on:
       - tests/windows_notify_popup_smoke.py
       - tests/windows_notify_resilience_smoke.py
       - tests/windows_notify_tray_login_smoke.py
+      - tests/windows_notify_sources_smoke.py
       - tests/windows_notify_heartbeat_smoke.py
       - tests/windows_update_smoke.py
       - tests/verify_notify_release.py
@@ -74,6 +75,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Notify login and startup resilience smoke test failed." }
           ./.venv/Scripts/python.exe tests/windows_notify_tray_login_smoke.py
           if ($LASTEXITCODE -ne 0) { throw "Notify main-tray/Login signal lifecycle smoke test failed." }
+          ./.venv/Scripts/python.exe tests/windows_notify_sources_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw "Notify dynamic source catalog smoke test failed." }
           ./.venv/Scripts/python.exe tests/windows_notify_heartbeat_smoke.py
           if ($LASTEXITCODE -ne 0) { throw "Notify Windows first heartbeat after Auth smoke test failed." }
       - uses: actions/upload-artifact@v4
