@@ -15,6 +15,37 @@ POLL_INTERVAL_MS = 15000
 SOURCE_REFRESH_INTERVAL_MS = 5 * 60 * 1000
 DEVICE_HEARTBEAT_INTERVAL_MS = 60 * 1000
 
+# When Windows starts before networking is ready, retry automatically.
+# Back off on sustained outages to avoid hammering Supabase Auth.
+LOGIN_RETRY_INITIAL_MS = 8 * 1000
+LOGIN_RETRY_MAX_MS = 5 * 60 * 1000
+
+# Credentials and authorization failures need deliberate user intervention;
+# retrying them can lock the account or silently defeat admin session control.
+_NON_RETRYABLE_LOGIN_MARKERS = (
+    "invalid login credentials",
+    "email not confirmed",
+    "email_not_confirmed",
+    "invalid_grant",
+    "workspace member",
+    "dailylog workspace",
+    "not authorized",
+    "permission denied",
+    "access denied",
+    "บัญชีนี้ยังไม่ได้",
+)
+_AUTH_POLL_ERROR_MARKERS = (
+    "jwt expired",
+    "invalid jwt",
+    "invalid token",
+    "token has expired",
+    "not authenticated",
+    "session not found",
+    "401 unauthorized",
+    "pgrst301",
+)
+
+
 
 def _session_id_from_access_token(access_token):
     token = str(access_token or "").strip()
@@ -341,6 +372,14 @@ class CentralNotifyReceiver(QObject):
         self._heartbeat_busy = False
         self._login_busy = False
         self._paused = False
+        self._login_was_automatic = False
+        self._session_revoked = False
+        self._login_retry_attempt = 0
+        self._poll_failures = 0
+
+        self.login_retry_timer = QTimer(self)
+        self.login_retry_timer.setSingleShot(True)
+        self.login_retry_timer.timeout.connect(self.login_saved)
 
         self.timer = QTimer(self)
         self.timer.setInterval(POLL_INTERVAL_MS)
@@ -385,12 +424,19 @@ class CentralNotifyReceiver(QObject):
         if not email or not password:
             self.login_failed.emit("ยังไม่ได้ตั้งค่าบัญชีรับ Notification")
             return
-        self.login(email, password, remember=True)
+        if self._session_revoked:
+            return
+        self.login(email, password, remember=True, automatic=True)
 
-    def login(self, email, password, remember=True):
+    def login(self, email, password, remember=True, automatic=False):
         if self._login_busy:
             return
 
+        # A manual login can recover a previously admin-revoked session,
+        # but automatic background retries must never undo such a revoke.
+        if self._session_revoked and automatic:
+            return
+        self.login_retry_timer.stop()
         email = str(email or "").strip()
         password = str(password or "")
 
@@ -399,7 +445,8 @@ class CentralNotifyReceiver(QObject):
             return
 
         self._login_busy = True
-        self.status_changed.emit("กำลังเชื่อมต่อ Central Notification...")
+        self._login_was_automatic = bool(automatic)
+        self.status_changed.emit("🟡 Central Notification: กำลัง Login...")
 
         job = _LoginJob(
             self.url,
@@ -419,6 +466,11 @@ class CentralNotifyReceiver(QObject):
 
     def _login_done(self, result, password, remember):
         self._login_busy = False
+        self._login_was_automatic = False
+        self._session_revoked = False
+        self.login_retry_timer.stop()
+        self._login_retry_attempt = 0
+        self._poll_failures = 0
         self.client = result["client"]
         self.workspace_id = result["workspace_id"]
         self.role = result.get("role", "")
@@ -491,7 +543,38 @@ class CentralNotifyReceiver(QObject):
         self.login_success.emit(self.email)
         self.poll()
 
+    @staticmethod
+    def _login_error_requires_manual_action(message):
+        text = str(message or "").casefold()
+        return any(marker in text for marker in _NON_RETRYABLE_LOGIN_MARKERS)
+
+    def _schedule_saved_login_retry(self, reason=""):
+        if (
+            self._session_revoked
+            or self._login_busy
+            or self.client is not None
+            or not self.has_saved_credentials()
+            or self.login_retry_timer.isActive()
+        ):
+            return False
+
+        delay_ms = min(
+            LOGIN_RETRY_INITIAL_MS * (2 ** min(self._login_retry_attempt, 6)),
+            LOGIN_RETRY_MAX_MS,
+        )
+        self._login_retry_attempt = min(self._login_retry_attempt + 1, 7)
+        seconds = max(1, (delay_ms + 999) // 1000)
+        self.status_changed.emit(
+            f"🟡 Central Notification: เชื่อมต่อสะดุด — ลองใหม่ใน {seconds} วินาที"
+        )
+        # Never print credentials or raw authentication errors to shared logs.
+        print("[Notify Auto Reconnect]", "retry scheduled", seconds, "seconds")
+        self.login_retry_timer.start(delay_ms)
+        return True
+
     def _login_error(self, message):
+        automatic = self._login_was_automatic
+        self._login_was_automatic = False
         self._login_busy = False
         self.client = None
         self.workspace_id = ""
@@ -499,10 +582,21 @@ class CentralNotifyReceiver(QObject):
         self.source_timer.stop()
         self.heartbeat_timer.stop()
         self.session_id = ""
+
+        # Only the login initiated from locally remembered credentials
+        # gets an unattended retry; invalid credentials or revoked access
+        # should never be retried indefinitely.
+        if (
+            automatic
+            and not self._login_error_requires_manual_action(message)
+            and self._schedule_saved_login_retry(message)
+        ):
+            return
+
         self.status_changed.emit(
             "🔴 Central Notification: Login ไม่สำเร็จ"
         )
-        self.login_failed.emit(message)
+        self.login_failed.emit(str(message))
 
     def refresh_sources(self):
         if self.client is None:
@@ -722,6 +816,8 @@ class CentralNotifyReceiver(QObject):
         )
 
     def _handle_session_revoked(self):
+        self._session_revoked = True
+        self.login_retry_timer.stop()
         self.timer.stop()
         self.source_timer.stop()
         self.heartbeat_timer.stop()
@@ -791,6 +887,7 @@ class CentralNotifyReceiver(QObject):
 
     def _poll_done(self, rows):
         self._busy = False
+        self._poll_failures = 0
 
         for row in rows:
             try:
@@ -848,12 +945,41 @@ class CentralNotifyReceiver(QObject):
 
     def _poll_error(self, message):
         self._busy = False
-        self.status_changed.emit(
-            "🔴 Central Notification: เชื่อมต่อไม่ได้"
-        )
-        print("[Central Notify]", message)
+        self._poll_failures += 1
+
+        error_text = str(message or "").casefold()
+        if any(marker in error_text for marker in _AUTH_POLL_ERROR_MARKERS):
+            # Do not automatically sign in again with a password here:
+            # a 401 may be a session explicitly revoked by Admin.
+            # The saved event cursor is retained for manual recovery.
+            self.timer.stop()
+            self.source_timer.stop()
+            self.heartbeat_timer.stop()
+            self.status_changed.emit(
+                "🔴 Central Notification: Session ต้อง Login ใหม่"
+            )
+            self.login_failed.emit(
+                "Session ไม่สามารถใช้งานได้ กรุณาตรวจสิทธิ์และ Login ใหม่"
+            )
+            return
+
+        # A brief Wi-Fi switch or transient timeout is recoverable by
+        # the existing 15-second polling timer; do not mark the device
+        # as permanently disconnected after a single failed poll.
+        if self._poll_failures < 3:
+            self.status_changed.emit(
+                "🟡 Central Notification: เครือข่ายสะดุด — ลองใหม่อัตโนมัติ"
+            )
+        else:
+            self.status_changed.emit(
+                "🔴 Central Notification: เครือข่ายไม่พร้อม — กำลังลองใหม่"
+            )
+        print("[Central Notify]", "poll failed", self._poll_failures)
 
     def logout(self):
+        self.login_retry_timer.stop()
+        self._login_retry_attempt = 0
+        self._session_revoked = False
         self.timer.stop()
         self.source_timer.stop()
         self.heartbeat_timer.stop()
