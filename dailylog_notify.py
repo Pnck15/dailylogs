@@ -30,7 +30,7 @@ from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.4"
+APP_VERSION = "1.5.5"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
@@ -103,10 +103,13 @@ def make_tray_icon():
 
 
 class HistoryDialog(QDialog):
-    def __init__(self, history, parent=None):
+    def __init__(self, history, source_allowed=None, parent=None):
         super().__init__(parent)
 
         self.history = history
+        # Live predicate: changing Notification Sources immediately updates
+        # the visible history without deleting historical SQLite records.
+        self.source_allowed = source_allowed
 
         self.setWindowTitle(
             "DailyLogNotify - ประวัติแจ้งเตือนทั้งหมด"
@@ -128,6 +131,12 @@ class HistoryDialog(QDialog):
         self.list_widget.clear()
 
         for item in self.history.all():
+            if callable(self.source_allowed) and not self.source_allowed(
+                item.get("source", ""),
+                item.get("source_key", ""),
+            ):
+                continue
+
             created_at = item.get("created_at", "")
             source = item.get("source", "")
             title = item.get("title", "")
@@ -456,7 +465,7 @@ class NotifyPopup(QDialog):
 
     This popup does not depend on Windows Notification settings.
     Text can be selected/copied, the user can close it with X,
-    and each popup closes automatically after 3 minutes.
+    and each popup closes automatically after 20 seconds.
     """
 
     def __init__(
@@ -573,8 +582,10 @@ class NotifyPopup(QDialog):
         close_button.setToolTip(
             "Close"
         )
+        # QDialog.reject emits finished() as well as closing the window,
+        # so the stacked popup list is updated as soon as X is clicked.
         close_button.clicked.connect(
-            self.close
+            self.dismiss
         )
 
         header.addWidget(
@@ -629,7 +640,7 @@ class NotifyPopup(QDialog):
         footer = QHBoxLayout()
 
         hint = QLabel(
-            "ปิดอัตโนมัติใน 3 นาที"
+            "ปิดอัตโนมัติใน 20 วินาที"
         )
         hint.setStyleSheet(
             "color: #6B7280; font-size: 10px;"
@@ -679,12 +690,18 @@ class NotifyPopup(QDialog):
             True
         )
         self._auto_close_timer.setInterval(
-            3 * 60 * 1000
+            20 * 1000
         )
         self._auto_close_timer.timeout.connect(
-            self.close
+            self.dismiss
         )
         self._auto_close_timer.start()
+
+    def dismiss(self):
+        """Close on X or timeout, signalling finished for popup cleanup."""
+        if self._auto_close_timer.isActive():
+            self._auto_close_timer.stop()
+        self.reject()
 
     def open_history(self):
         if callable(
@@ -1593,7 +1610,8 @@ class NotifyApp(QWidget):
     def open_history(self):
         HistoryDialog(
             self.history,
-            self,
+            source_allowed=self._source_allowed,
+            parent=self,
         ).exec()
 
     def notify(
@@ -1625,6 +1643,7 @@ class NotifyApp(QWidget):
             source,
             title,
             message,
+            source_key=source_key,
         )
 
         # Only current-day events create a popup, but the popup is
@@ -1642,7 +1661,7 @@ class NotifyApp(QWidget):
             (
                 "ทดสอบ Popup ของ DailyLogNotify\n"
                 "หน้าต่างนี้ไม่ใช้ Windows Notification\n"
-                "ปิดอัตโนมัติใน 3 นาที"
+                "ปิดอัตโนมัติใน 20 วินาที"
             ),
         )
 
