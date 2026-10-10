@@ -107,6 +107,51 @@ separately before committing or pulling again. Local-only `build_notify.ps1`,
 `build_all_release.ps1`, and `publish_all_release.ps1` remain untouched.
 Do not publish a Release until the build passes and the application version
 has been increased.
+## Current October 10 notifier failure: `pyinstaller==6.13.0`
+
+The main EXE and updater already build on Python 3.14.7 with
+`PySide6 6.12.0` and `PyInstaller 6.22.3`. Only the local notifier
+`requirements-notify-build.txt` still pins an unsupported version:
+`pyinstaller==6.13.0`.
+
+The safer repair updates the *local* notifier build requirements with
+a backup before editing. It also changes `PySide6==6.10.2` in dependency
+files to `PySide6>=6.10.1,<7` to avoid an unnecessary package downgrade,
+and changes the old PyInstaller pin to `pyinstaller>=6.20,<7`.
+
+**Preferred: rebuild only the failing notifier.** From the Windows PC:
+
+```powershell
+cd D:\mini_daily_log
+
+# Download latest tracked repair script without deleting local-only files.
+git fetch origin main
+
+# Preserve your previous local copy, if any.
+New-Item -ItemType Directory -Force .\.build_repair_backups | Out-Null
+if (Test-Path .\repair_build.ps1) {
+    Copy-Item .\repair_build.ps1 .\.build_repair_backups\repair_build.before_notify_fix.ps1 -Force
+}
+
+# Update this one tracked repair script only.
+git restore --source=origin/main --worktree -- repair_build.ps1
+
+# Does not build DailyLog.exe or DailyLogUpdater.exe.
+powershell -NoProfile -ExecutionPolicy Bypass -File .\repair_build.ps1 -NotifyOnly
+```
+
+`-NotifyOnly` backs up existing `release\DailyLogNotify.exe` and
+`dist\DailyLogNotify.exe` (when present) before running the local
+`build_notify.ps1`; verifies that a fresh notifier file was produced;
+and does **not** publish a GitHub Release. The original local requirements
+file is saved under `.build_repair_backups\<timestamp>\` before editing.
+
+**Data safety:** This repair does not access Supabase, databases,
+`settings.ini`, or any Google Sheets. It does not delete project files,
+delete executables, force-reset Git, or publish existing user applications.
+Existing files can still be affected by the local `build_notify.ps1`,
+which is not versioned in GitHub; this wrapper backs up affected EXEs.
+
 ## Diagnostics
 
 Confirm the active venv, not the global Python:
