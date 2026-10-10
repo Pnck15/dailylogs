@@ -27,13 +27,18 @@ function fakeSheet(name) {
   };
   const shown = name === "10.2026"
     ? [
-      row("09.00", "10/10/2569", "Sample One"),
+      row("09.00", "10.10.69", "Sample One"),
       row("09.30", "", "Sample Two"),
       row("10:00", "11/10/2569", "Sample Three"),
     ]
     : [row("08:15", "01/11/2569", "Sample Four")];
 
   const actualD = shown.map((r) => [r[2]]);
+  // Google Sheets can store short Thai year "69" as an underlying AD 2069
+  // Date even though the visible date means BE 2569 = AD 2026.
+  if (name === "10.2026") {
+    actualD[0] = [new Date("2069-10-10T00:00:00.000Z")];
+  }
   const merges = name === "10.2026" ? [{
     getRow: () => 3,
     getLastRow: () => 4,
@@ -111,6 +116,7 @@ const happy = harness(false);
 const ping = happy.run("ping");
 assert.equal(ping.ok, true);
 assert.equal(ping.action, "ping");
+assert.equal(ping.version, "sa-sathorn-all-month-v6.2");
 assert.equal(happy.opened, 0, "ping must never scan the spreadsheet");
 
 const feed = happy.run();
