@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QColorDialog,
     QFileDialog,
     QCheckBox,
+    QComboBox,
 )
 from PySide6.QtGui import (
     QColor,
@@ -48,6 +49,8 @@ from sale_api_monitor import SaleAPIMonitor
 from sheet_monitor import NotificationPresenter
 from update_checker import UpdateChecker
 from notify_channels import NotificationChannels
+from dailylog_finance import WithholdingCalculator
+from dailylog_forms import RedPlateForm, serialize_red_plate, parse_red_plate
 
 
 APP_ORGANIZATION = "MiniDailyLog"
@@ -55,7 +58,7 @@ APP_NAME = "DailyLog"
 APP_DISPLAY_NAME = "GAC日記"
 
 DEFAULT_ACCENT = "#2563EB"
-APP_VERSION = "1.2.3"
+APP_VERSION = "1.2.4"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 
 UPDATE_CHECK_DELAY_MS = 2500
@@ -1567,6 +1570,15 @@ class DailyLog(QWidget):
 
         menu.addSeparator()
 
+        calculator_action = menu.addAction(
+            "🧮 เครื่องคิดเลขหัก ณ ที่จ่าย 3% / ส่วนต่างยอดลูกค้า"
+        )
+        calculator_action.triggered.connect(
+            self.open_withholding_calculator
+        )
+
+        menu.addSeparator()
+
         notify_menu = menu.addMenu(
             "🔔 Notification System Settings"
         )
@@ -1668,6 +1680,10 @@ class DailyLog(QWidget):
                 self.menu_button.rect().bottomLeft()
             )
         )
+
+    def open_withholding_calculator(self):
+        dialog = WithholdingCalculator(self)
+        dialog.exec()
 
     # =========================================
     # DailyLogNotify Devices / Sessions
@@ -5056,19 +5072,23 @@ class DailyLog(QWidget):
             title_input
         )
 
-        layout.addWidget(
-            QLabel("Description")
-        )
-
+        description_label = QLabel("Description")
+        layout.addWidget(description_label)
         description_input = QTextEdit()
+        description_input.setPlainText(log[4] or "")
+        layout.addWidget(description_input)
 
-        description_input.setPlainText(
-            log[4] or ""
-        )
-
-        layout.addWidget(
-            description_input
-        )
+        # Existing structured forms remain editable as named fields.
+        # Ordinary logs retain their original free-text editor.
+        red_plate_data = parse_red_plate(log[4] or "")
+        red_plate_editor = None
+        if red_plate_data is not None:
+            red_plate_editor = RedPlateForm(dialog)
+            red_plate_editor.set_values(red_plate_data)
+            description_label.hide()
+            description_input.hide()
+            layout.addWidget(red_plate_editor)
+            dialog.resize(520, 555)
 
         button_layout = QHBoxLayout()
 
@@ -5112,11 +5132,20 @@ class DailyLog(QWidget):
                 title_input.text().strip()
             )
 
-            new_description = (
-                description_input
-                .toPlainText()
-                .strip()
-            )
+            if red_plate_editor is not None:
+                try:
+                    new_description = serialize_red_plate(
+                        red_plate_editor.values()
+                    )
+                except ValueError as error:
+                    QMessageBox.warning(
+                        dialog, "แบบฟอร์มป้ายแดง", str(error)
+                    )
+                    return
+            else:
+                new_description = (
+                    description_input.toPlainText().strip()
+                )
 
             if not new_title:
 
@@ -5209,107 +5238,83 @@ class DailyLog(QWidget):
     # =========================================
 
     def create_add_page(self):
-
         page = QWidget()
-
-        layout = QVBoxLayout()
-
-        layout.setContentsMargins(
-            10,
-            5,
-            10,
-            5,
-        )
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(10, 5, 10, 5)
+        layout.setSpacing(5)
 
         self.add_date_label = QLabel()
+        self.add_date_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.add_date_label)
 
-        self.add_date_label.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
+        title_bar = QHBoxLayout()
+        title_bar.addWidget(QLabel("Title"))
+        self.log_form_selector = QComboBox()
+        self.log_form_selector.addItem("ทั่วไป", "general")
+        self.log_form_selector.addItem("แบบฟอร์มป้ายแดง", "red_plate")
+        self.log_form_selector.setToolTip(
+            "เปลี่ยนรูปแบบช่องกรอก โดยยังบันทึกเป็น Daily Log เดิม"
         )
-
-        title_label = QLabel(
-            "Title"
-        )
+        title_bar.addStretch()
+        title_bar.addWidget(QLabel("รูปแบบ:"))
+        title_bar.addWidget(self.log_form_selector)
+        layout.addLayout(title_bar)
 
         self.title_input = QLineEdit()
+        self.title_input.setPlaceholderText("เช่น ตรวจสอบเอกสารลูกค้า")
+        layout.addWidget(self.title_input)
 
-        self.title_input.setPlaceholderText(
-            "เช่น ตรวจสอบเอกสารลูกค้า"
-        )
-
-        description_label = QLabel(
-            "Description"
-        )
-
+        self.log_add_stack = QStackedWidget()
+        normal_page = QWidget()
+        normal_layout = QVBoxLayout(normal_page)
+        normal_layout.setContentsMargins(0, 0, 0, 0)
+        normal_layout.addWidget(QLabel("Description"))
         self.description_input = QTextEdit()
+        self.description_input.setPlaceholderText("รายละเอียดงาน...")
+        self.description_input.setMinimumHeight(100)
+        normal_layout.addWidget(self.description_input)
+        self.log_add_stack.addWidget(normal_page)
 
-        self.description_input.setPlaceholderText(
-            "รายละเอียดงาน..."
-        )
-
-        self.description_input.setMinimumHeight(
-            130
-        )
-
-        back_button = QPushButton(
-            "Back"
-        )
-
-        back_button.clicked.connect(
-            self.back_to_calendar
-        )
-
-        save_button = QPushButton(
-            "Save"
-        )
-
-        save_button.clicked.connect(
-            self.save_log
-        )
+        self.red_plate_form = RedPlateForm()
+        self.log_add_stack.addWidget(self.red_plate_form)
+        layout.addWidget(self.log_add_stack, 1)
 
         button_layout = QHBoxLayout()
-
         button_layout.addStretch()
+        back_button = QPushButton("Back")
+        back_button.clicked.connect(self.back_to_calendar)
+        save_button = QPushButton("Save")
+        save_button.clicked.connect(self.save_log)
+        button_layout.addWidget(back_button)
+        button_layout.addWidget(save_button)
+        layout.addLayout(button_layout)
 
-        button_layout.addWidget(
-            back_button
+        self.log_form_selector.currentIndexChanged.connect(
+            self._add_form_changed
         )
-
-        button_layout.addWidget(
-            save_button
-        )
-
-        layout.addWidget(
-            self.add_date_label
-        )
-
-        layout.addWidget(
-            title_label
-        )
-
-        layout.addWidget(
-            self.title_input
-        )
-
-        layout.addWidget(
-            description_label
-        )
-
-        layout.addWidget(
-            self.description_input
-        )
-
-        layout.addStretch()
-
-        layout.addLayout(
-            button_layout
-        )
-
-        page.setLayout(
-            layout
-        )
-
         return page
+
+    def _add_form_changed(self, _index=0):
+        is_red = self.log_form_selector.currentData() == "red_plate"
+        self.log_add_stack.setCurrentIndex(1 if is_red else 0)
+        if is_red and not self.title_input.text().strip():
+            self.title_input.setText("รับป้ายแดง")
+        if self.pages.currentWidget() is self.add_page:
+            self._resize_add_form()
+
+    def _resize_add_form(self):
+        if self.is_collapsed:
+            return
+        is_red = (
+            self.pages.currentWidget() is self.add_page
+            and self.log_form_selector.currentData() == "red_plate"
+        )
+        target = 550 if is_red else self.expanded_height
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            target = min(target, max(self.expanded_height, screen.availableGeometry().height() - 40))
+        self.setFixedHeight(target)
+        self.move_to_bottom_right()
 
     def open_add_page(self):
 
@@ -5324,18 +5329,21 @@ class DailyLog(QWidget):
         )
 
         self.title_input.clear()
-
         self.description_input.clear()
+        self.red_plate_form.reset(self.selected_date)
+        self.log_form_selector.setCurrentIndex(0)
 
         self.pages.setCurrentWidget(
             self.add_page
         )
+        self._resize_add_form()
 
     def back_to_calendar(self):
 
         self.pages.setCurrentWidget(
             self.calendar_page
         )
+        self._resize_add_form()
 
         if self.search_input.text().strip():
 
@@ -5357,11 +5365,21 @@ class DailyLog(QWidget):
             self.title_input.text().strip()
         )
 
-        description = (
-            self.description_input
-            .toPlainText()
-            .strip()
-        )
+        if self.log_form_selector.currentData() == "red_plate":
+            try:
+                values = self.red_plate_form.values()
+                description = serialize_red_plate(values)
+            except ValueError as error:
+                QMessageBox.warning(self, "แบบฟอร์มป้ายแดง", str(error))
+                return
+            if not title or title == "รับป้ายแดง":
+                title = "รับป้ายแดง - " + values["customer"]
+        else:
+            description = (
+                self.description_input
+                .toPlainText()
+                .strip()
+            )
 
         if not title:
 
