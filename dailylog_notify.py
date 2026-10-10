@@ -469,8 +469,8 @@ class NotifyPopup(QDialog):
             history_callback
         )
 
-        self.setMinimumWidth(360)
-        self.setMaximumWidth(430)
+        self.setMinimumWidth(315)
+        self.setMaximumWidth(375)
 
         self.setStyleSheet(
             """
@@ -499,12 +499,12 @@ class NotifyPopup(QDialog):
             self
         )
         root.setContentsMargins(
-            12,
-            10,
-            12,
-            10,
+            9,
+            8,
+            9,
+            8,
         )
-        root.setSpacing(8)
+        root.setSpacing(6)
 
         header = QHBoxLayout()
 
@@ -579,10 +579,10 @@ class NotifyPopup(QDialog):
             str(message or "")
         )
         self.message_box.setMinimumHeight(
-            95
+            75
         )
         self.message_box.setMaximumHeight(
-            190
+            150
         )
         self.message_box.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
