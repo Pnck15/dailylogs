@@ -772,6 +772,21 @@ class SaleAPIMonitor:
                     )
                 )
 
+            # A merged D date is inherited by every appointment row,
+            # although only the top-left physical D cell has a value.
+            # Include it in the signature to detect date changes that
+            # would otherwise be invisible in row_data.
+            if str(values.get("sheet", "") or "").strip():
+                normalized.append((
+                    "D-INHERITED-DATE",
+                    "วันที่นัดหมาย Merged D",
+                    str(
+                        values.get("appointment_date")
+                        or values.get("group_date")
+                        or ""
+                    ).strip(),
+                ))
+
             return tuple(
                 normalized
             )
