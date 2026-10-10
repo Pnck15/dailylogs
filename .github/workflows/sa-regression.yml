@@ -8,8 +8,10 @@ on:
       - sale_api_monitor.py
       - gas/sa_sathorn_v6.gs
       - supabase/functions/dailylog-monitor-worker/index.ts
+      - supabase/functions/dailylog-sa-reminder-worker/index.ts
       - tests/test_sa_monitor.py
       - tests/test_sa_gas_v6.cjs
+      - tests/test_sa_edge_dates.cjs
       - .github/workflows/sa-regression.yml
   workflow_dispatch:
 
@@ -31,7 +33,10 @@ jobs:
           node-version: '20'
       - name: GAS two-month and merged-D contract (offline)
         run: node tests/test_sa_gas_v6.cjs
-      - name: Compile Central monitor worker TypeScript
+      - name: Compile Central and reminder workers
         run: |
           npm install --no-save --no-package-lock esbuild@0.24.2
           ./node_modules/.bin/esbuild supabase/functions/dailylog-monitor-worker/index.ts --bundle --platform=neutral --external:jsr:* --outfile=/tmp/sa-monitor-worker-check.js
+          ./node_modules/.bin/esbuild supabase/functions/dailylog-sa-reminder-worker/index.ts --bundle --platform=neutral --external:jsr:* --outfile=/tmp/sa-reminder-worker-check.js
+      - name: Test BE69 date normalization across workers
+        run: node tests/test_sa_edge_dates.cjs
