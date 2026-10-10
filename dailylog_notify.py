@@ -1185,6 +1185,13 @@ class NotifyApp(QWidget):
             if not key or not label:
                 continue
 
+            # Preserve legacy source labels in the old history database.
+            # The selected source key is authoritative for new events.
+            aliases = {label}
+            for fallback in FALLBACK_SOURCE_OPTIONS:
+                if fallback.get("key") == key:
+                    aliases.update(fallback.get("aliases", set()))
+
             normalized.append({
                 "key": key,
                 "label": label,
@@ -1202,7 +1209,7 @@ class NotifyApp(QWidget):
                     )
                     or 100
                 ),
-                "aliases": {label},
+                "aliases": aliases,
             })
 
         if normalized:
