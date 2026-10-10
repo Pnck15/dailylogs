@@ -47,11 +47,16 @@ function getSaRows_() {
     const dateRange = sheet.getRange(DATA_START_ROW, 4, count, 1);
     const rawDates = dateRange.getValues();
     const mergedDates = {};
+    const mergedMeta = {};
     dateRange.getMergedRanges().forEach(function(range) {
       const first = Math.max(range.getRow(), DATA_START_ROW);
       const last = Math.min(range.getLastRow(), lastRow);
       const groupDate = formatSaDate_(range.getCell(1, 1).getValue());
-      for (let row = first; row <= last; row++) mergedDates[row] = groupDate;
+      const mergedRange = range.getA1Notation();
+      for (let row = first; row <= last; row++) {
+        mergedDates[row] = groupDate;
+        mergedMeta[row] = mergedRange;
+      }
     });
     displays.forEach(function(values, index) {
       const rowNumber = DATA_START_ROW + index;
@@ -63,12 +68,18 @@ function getSaRows_() {
           value: String(value == null ? "" : value).trim()
         };
       });
+      const groupDate = mergedDates[rowNumber] || formatSaDate_(rawDates[index][0]);
       result.push({
         sheet: tab,
         row: rowNumber,
-        group_date: mergedDates[rowNumber] || formatSaDate_(rawDates[index][0]),
-        appointment_date: mergedDates[rowNumber] || formatSaDate_(rawDates[index][0]),
+        group_date: groupDate,
+        appointment_date: groupDate,
+        in_merged_date_group: Boolean(mergedMeta[rowNumber]),
+        merged_range: mergedMeta[rowNumber] || "",
+        appointment_time: String(values[0] || "").trim(),
+        sequence: String(values[1] || "").trim(),
         customer: String(values[3] || "").trim(),
+        plate: String(values[4] || "").trim(),
         model: String(values[6] || "").trim(),
         row_data: rowData
       });
