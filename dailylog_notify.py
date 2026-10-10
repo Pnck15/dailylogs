@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSystemTrayIcon,
     QTextEdit,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -32,7 +33,7 @@ from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.8"
+APP_VERSION = "1.5.9"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
@@ -365,169 +366,116 @@ class LoginDialog(QDialog):
 
 
 class SourceSelectionDialog(QDialog):
-    def __init__(
-        self,
-        settings,
-        source_options,
-        first_run=False,
-        parent=None,
-    ):
+    """Live, scrollable list of sources published by Central."""
+    def __init__(self, settings, source_options, first_run=False, parent=None):
         super().__init__(parent)
-
         self.settings = settings
-        self.source_options = list(
-            source_options or []
-        )
+        self.source_options = []
         self.first_run = first_run
         self.checkboxes = {}
-
-        self.setWindowTitle(
-            "DailyLog Notify - Notification Sources"
-        )
-        self.resize(
-            430,
-            330,
-        )
+        self.setWindowTitle("DailyLog Notify - Notification Sources")
+        self.resize(470, 440)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
-
-        title = QLabel(
-            "เลือกแหล่งข้อมูลที่เครื่องนี้ต้องการรับแจ้งเตือน"
-        )
+        title = QLabel("เลือกแหล่งข้อมูลที่เครื่องนี้ต้องการรับแจ้งเตือน")
         title.setWordWrap(True)
         layout.addWidget(title)
-
         note = QLabel(
-            "ตั้งค่าครั้งแรกเพียงครั้งเดียว "
-            "จากนั้น DailyLogNotify จะจำรายการนี้และทำงานอัตโนมัติเมื่อเปิด Windows"
+            "รายการจาก Supabase Central อัปเดตอัตโนมัติ "
+            "หรือกด Refresh Sources เพื่อโหลดลิงก์ใหม่จาก DailyLog"
         )
         note.setWordWrap(True)
         layout.addWidget(note)
 
-        saved = set()
+        raw = str(settings.value("sources/selected", "") or "").strip()
+        self._saved_keys = {
+            key.strip() for key in raw.split(",") if key.strip()
+        }
 
-        raw = str(
-            settings.value(
-                "sources/selected",
-                "",
-            )
-            or ""
-        ).strip()
+        self.source_area = QScrollArea()
+        self.source_area.setWidgetResizable(True)
+        self.source_container = QWidget()
+        self.source_layout = QVBoxLayout(self.source_container)
+        self.source_area.setWidget(self.source_container)
+        layout.addWidget(self.source_area, 1)
 
-        if raw:
-            saved = {
-                item.strip()
-                for item in raw.split(",")
-                if item.strip()
-            }
-
-        for option in self.source_options:
-            checkbox = QCheckBox(
-                option["label"]
-            )
-            checkbox.setChecked(
-                option["key"] in saved
-            )
-            checkbox.stateChanged.connect(
-                self._update_save_button
-            )
-            self.checkboxes[
-                option["key"]
-            ] = checkbox
-            layout.addWidget(
-                checkbox
-            )
-
-        central_note = QLabel(
-            "รายการนี้มาจาก Central อัตโนมัติ "
-            "Admin สามารถเปิด/ปิด Source ที่อนุญาตให้ DailyLogNotify รับได้"
-        )
-        central_note.setWordWrap(True)
-        layout.addWidget(
-            central_note
-        )
-
-        if not self.source_options:
-            empty = QLabel(
-                "ยังไม่มี Notification Source ที่ Admin เปิดให้รับ"
-            )
-            empty.setWordWrap(True)
-            layout.addWidget(
-                empty
-            )
-
-        layout.addStretch()
+        self.status = QLabel("เลือก Source แล้วกด Save")
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
 
         buttons = QHBoxLayout()
+        self.refresh_button = QPushButton("🔄 Refresh Sources")
+        cancel = QPushButton("Cancel")
+        self.save_button = QPushButton("Save")
+        buttons.addWidget(self.refresh_button)
         buttons.addStretch()
+        buttons.addWidget(cancel)
+        buttons.addWidget(self.save_button)
+        layout.addLayout(buttons)
 
-        cancel = QPushButton(
-            "Cancel"
-        )
-        self.save_button = QPushButton(
-            "Save"
-        )
+        cancel.clicked.connect(self.reject)
+        self.save_button.clicked.connect(self._save)
+        self.update_options(source_options)
 
-        buttons.addWidget(
-            cancel
+    def update_options(self, options):
+        # Preserve unsaved checkbox changes during asynchronous refresh,
+        # preserving saved selection on first construction.
+        chosen = (
+            set(self.selected_keys()) if self.checkboxes
+            else set(self._saved_keys)
         )
-        buttons.addWidget(
-            self.save_button
-        )
-        layout.addLayout(
-            buttons
-        )
+        self.source_options = [
+            item for item in (options or [])
+            if isinstance(item, dict)
+            and str(item.get("key", "")).strip()
+            and str(item.get("label", "")).strip()
+        ]
+        while self.source_layout.count():
+            item = self.source_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.checkboxes.clear()
 
-        cancel.clicked.connect(
-            self.reject
-        )
-        self.save_button.clicked.connect(
-            self._save
-        )
+        for source in self.source_options:
+            key = str(source["key"]).strip()
+            checkbox = QCheckBox(str(source["label"]))
+            checkbox.setChecked(key in chosen)
+            checkbox.toggled.connect(self._update_save_button)
+            self.checkboxes[key] = checkbox
+            self.source_layout.addWidget(checkbox)
 
+        if not self.checkboxes:
+            self.source_layout.addWidget(
+                QLabel("Central ยังไม่เปิด Source ให้รับแจ้งเตือน")
+            )
+        self.source_layout.addStretch()
+        self.status.setText(
+            f"โหลดรายการที่รับได้ {len(self.source_options)} Sources"
+        )
         self._update_save_button()
 
     def selected_keys(self):
         return [
-            key
-            for key, checkbox
-            in self.checkboxes.items()
+            key for key, checkbox in self.checkboxes.items()
             if checkbox.isChecked()
         ]
 
-    def _update_save_button(self):
-        # At least one source must be selected.
-        self.save_button.setEnabled(
-            bool(
-                self.selected_keys()
-            )
-        )
+    def _update_save_button(self, *_):
+        self.save_button.setEnabled(bool(self.selected_keys()))
 
     def _save(self):
         selected = self.selected_keys()
-
         if not selected:
             QMessageBox.warning(
-                self,
-                "Notification Sources",
-                "กรุณาเลือกอย่างน้อย 1 แหล่งข้อมูล",
+                self, "Notification Sources",
+                "กรุณาเลือกอย่างน้อย 1 แหล่งข้อมูล"
             )
             return
-
-        self.settings.setValue(
-            "sources/selected",
-            ",".join(
-                selected
-            ),
-        )
-        self.settings.setValue(
-            "sources/configured",
-            True,
-        )
+        self.settings.setValue("sources/selected", ",".join(selected))
+        self.settings.setValue("sources/configured", True)
         self.settings.sync()
         self.accept()
-
 
 
 class NotifyPopup(QDialog):
@@ -1386,7 +1334,19 @@ class NotifyApp(QWidget):
             parent=self,
         )
 
-        result = dialog.exec()
+        if self.receiver is not None:
+            # Push Central source updates into the OPEN dialog; employees
+            # do not need to restart DailyLogNotify to select a new link.
+            self.receiver.source_list_changed.connect(dialog.update_options)
+            dialog.refresh_button.clicked.connect(self.receiver.refresh_sources)
+        try:
+            result = dialog.exec()
+        finally:
+            if self.receiver is not None:
+                try:
+                    self.receiver.source_list_changed.disconnect(dialog.update_options)
+                except (RuntimeError, TypeError):
+                    pass
 
         if (
             result
