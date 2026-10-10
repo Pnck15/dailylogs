@@ -405,6 +405,9 @@ class CentralNotifyReceiver(QObject):
         self._paused = False
         self._login_was_automatic = False
         self._session_revoked = False
+        self.device_registration_state = "not_connected"
+        self.last_heartbeat_at = ""
+        self.last_heartbeat_error = ""
         self._login_retry_attempt = 0
         self._poll_failures = 0
 
@@ -517,6 +520,8 @@ class CentralNotifyReceiver(QObject):
     def _login_done(self, result, password, remember):
         self._login_busy = False
         self._login_was_automatic = False
+        self.device_registration_state = "pending"
+        self.last_heartbeat_error = ""
         self._session_revoked = False
         self.login_retry_timer.stop()
         self._login_retry_attempt = 0
@@ -632,6 +637,8 @@ class CentralNotifyReceiver(QObject):
         self.source_timer.stop()
         self.heartbeat_timer.stop()
         self.session_id = ""
+        self.device_registration_state = "login_failed"
+        self.last_heartbeat_error = str(message or "")[:250]
 
         # Only the login initiated from locally remembered credentials
         # gets an unattended retry; invalid credentials or revoked access
@@ -850,6 +857,16 @@ class CentralNotifyReceiver(QObject):
         if data.get(
             "active",
             True,
+        ) is not False:
+            self.device_registration_state = "active"
+            self.last_heartbeat_at = datetime.now().astimezone().isoformat(
+                timespec="seconds"
+            )
+            self.last_heartbeat_error = ""
+
+        if data.get(
+            "active",
+            True,
         ) is False:
             # The server currently returns active=false when the JWT's
             # session_id is absent from auth.sessions; this is NOT proof
@@ -865,13 +882,18 @@ class CentralNotifyReceiver(QObject):
         message,
     ):
         self._heartbeat_busy = False
-        print(
-            "[Notify Device Heartbeat]",
-            message,
+        self.device_registration_state = "retrying"
+        # Keep a bounded diagnostic message; never log credentials or JWTs.
+        self.last_heartbeat_error = str(message or "")[:200]
+        self.status_changed.emit(
+            "🟡 Central Notification: Login แล้ว แต่ลงทะเบียนเครื่องยังไม่สำเร็จ"
         )
+        print("[Notify Device Heartbeat] registration failed")
 
     def _handle_session_revoked(self, reason=None):
         self._session_revoked = True
+        self.device_registration_state = "rejected"
+        self.last_heartbeat_error = str(reason or "")[:200]
         self.login_retry_timer.stop()
         self.timer.stop()
         self.source_timer.stop()
@@ -1032,6 +1054,8 @@ class CentralNotifyReceiver(QObject):
         print("[Central Notify]", "poll failed", self._poll_failures)
 
     def logout(self):
+        self.device_registration_state = "not_connected"
+        self.last_heartbeat_error = ""
         self.login_retry_timer.stop()
         self._login_retry_attempt = 0
         self._session_revoked = False
