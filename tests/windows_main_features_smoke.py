@@ -153,7 +153,11 @@ def test_main_add_and_edit(app):
     assert owner.cloud.updated
     assert parse_red_plate(owner.cloud.updated[-1][2])["sc_name"] == "SC Srinakarin"
     edit_dialog.close()
-    owner.close()
+    # This intentionally partial QWidget only initializes Add/Edit dependencies;
+    # don't invoke DailyLog.closeEvent, which belongs to the full app and
+    # requires running monitor timers. There is no network/login in this test.
+    owner.hide()
+    owner.deleteLater()
 
 
 if __name__ == "__main__":
