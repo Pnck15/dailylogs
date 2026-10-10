@@ -1105,6 +1105,11 @@ class NotifyApp(QWidget):
         self.status.setToolTip(
             str(message)
         )
+        # A successful password token request is NOT the same as the
+        # workspace + device being connected. Show actual failure stage.
+        self.status.setText(
+            "🔴 Central Notification: " + str(message or "")[:170]
+        )
 
     def _receiver_session_revoked(
         self,
@@ -1519,6 +1524,29 @@ class NotifyApp(QWidget):
                 )
             )
 
+        registration_state = str(
+            getattr(
+                self.receiver,
+                "device_registration_state",
+                "not_connected",
+            )
+            or "not_connected"
+        )
+        registration_label = {
+            "active": "✅ Active (Heartbeat confirmed)",
+            "pending": "🟡 Waiting for first heartbeat",
+            "retrying": "🟡 Heartbeat failed — retrying",
+            "rejected": "❌ Session not accepted by Central",
+            "login_failed": "❌ Login has not completed",
+            "not_connected": "❌ Not connected",
+        }.get(registration_state, "⚠️ Unknown status")
+        last_heartbeat = str(
+            getattr(self.receiver, "last_heartbeat_at", "") or "-"
+        )
+        heartbeat_error = str(
+            getattr(self.receiver, "last_heartbeat_error", "") or ""
+        )[:200]
+
         status_box = QTextEdit()
         status_box.setReadOnly(
             True
@@ -1538,6 +1566,13 @@ class NotifyApp(QWidget):
                         f"User: {email}"
                         if email
                         else "User: -"
+                    ),
+                    "Device Registration: " + registration_label,
+                    "Last Heartbeat: " + last_heartbeat,
+                    (
+                        "Last Connection Error: " + heartbeat_error
+                        if heartbeat_error
+                        else "Last Connection Error: -"
                     ),
                     (
                         "Device: "
