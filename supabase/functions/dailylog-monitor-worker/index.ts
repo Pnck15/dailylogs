@@ -284,6 +284,29 @@ function saEffectiveDate(row: AnyRow) {
   );
 }
 
+// v6.1 GAS parsed Thai "10.10.69" as 2069-10-10. On monthly
+// tab 10.2026 this +43 year offset unambiguously identifies BE 2569.
+// Normalize BOTH current and previous snapshots without touching any
+// physical cells so the repair does not generate false edit events.
+function normalizeSaRowDate(row: AnyRow): AnyRow {
+  const tab = normalize(row.sheet).match(/^\d{1,2}\.(\d{4})$/);
+  const date = saEffectiveDate(row);
+  const match = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!tab || !match) return row;
+
+  const year = Number(tab[1]);
+  const parsedYear = Number(match[1]);
+  if (year < 2000 || year > 2099 || parsedYear !== year + 43) {
+    return row;
+  }
+  const corrected = `${year}-${match[2]}-${match[3]}`;
+  return {
+    ...row,
+    appointment_date: corrected,
+    group_date: corrected,
+  };
+}
+
 function saRowSignature(row: AnyRow) {
   return JSON.stringify({
     cells: rowSignature(row),
@@ -1033,7 +1056,9 @@ async function processSa(
     }
 
     const row =
-      item as AnyRow;
+      normalizeSaRowDate(
+        item as AnyRow,
+      );
 
     const sheet =
       normalize(
@@ -1092,7 +1117,7 @@ async function processSa(
       || normalize(state.today) === today
     );
 
-  const previous =
+  const previousRaw =
     initialized &&
     state.rows &&
     typeof state.rows === "object" &&
@@ -1102,6 +1127,11 @@ async function processSa(
       ? state.rows as
           Record<string, AnyRow>
       : {};
+
+  const previous: Record<string, AnyRow> = {};
+  for (const [key, oldRow] of Object.entries(previousRaw)) {
+    previous[key] = normalizeSaRowDate(oldRow);
+  }
 
   // v6 returns the full month tabs, so its baseline stays valid across days.
   // Legacy v5 returns only today's merged-D rows, so its baseline resets daily.
