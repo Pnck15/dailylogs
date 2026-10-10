@@ -121,8 +121,10 @@ try {
         throw "Missing .venv\Scripts\python.exe. Create the project venv first."
     }
 
-    # Repair the specific tracked script from the reviewed GitHub version.
-    Restore-BuildReleaseFromGitHub
+    # Notifier-only builds must not restore/modify the main build script.
+    if (-not $NotifyOnly) {
+        Restore-BuildReleaseFromGitHub
+    }
 
     $version = (& $python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))").Trim()
     if ($LASTEXITCODE -ne 0) { throw "Cannot query Python version." }
@@ -148,6 +150,19 @@ try {
             foreach ($child in @(Get-ChildItem -LiteralPath $folder -Directory -ErrorAction Stop)) {
                 if ($child.Name -in $skipDirs) { continue }
                 $pending.Push($child.FullName)
+            }
+        }
+
+        if ($NotifyOnly) {
+            # Narrow the repair to the two local inputs used by build_notify.
+            # Neither the main app source nor other build scripts are altered.
+            $targets = @()
+            foreach ($name in @("requirements-notify-build.txt", "build_notify.ps1")) {
+                $path = Join-Path $PSScriptRoot $name
+                if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                    throw "Missing local notifier build file: $name"
+                }
+                $targets += Get-Item -LiteralPath $path
             }
         }
 
