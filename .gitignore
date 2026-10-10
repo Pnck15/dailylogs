@@ -30,3 +30,6 @@ Thumbs.db
 # Local archives / backups
 *.zip
 *.rar
+
+# Backups created by local Python 3.14 build repair
+.build_repair_backups/
