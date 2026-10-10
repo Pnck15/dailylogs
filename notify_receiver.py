@@ -402,6 +402,7 @@ class CentralNotifyReceiver(QObject):
         self._busy = False
         self._heartbeat_busy = False
         self._login_busy = False
+        self._login_context = None
         self._paused = False
         self._login_was_automatic = False
         self._session_revoked = False
@@ -497,6 +498,7 @@ class CentralNotifyReceiver(QObject):
             return False
 
         self._login_busy = True
+        self._login_context = (password, bool(remember))
         self._login_was_automatic = bool(automatic)
         self.status_changed.emit("🟡 Central Notification: กำลัง Login...")
 
@@ -506,16 +508,28 @@ class CentralNotifyReceiver(QObject):
             email,
             password,
         )
-        job.signals.done.connect(
-            lambda result: self._login_done(
-                result,
-                password,
-                remember,
-            )
-        )
+        # A bound QObject slot guarantees state/timers are updated on
+        # the Qt GUI thread, not from a Python lambda in the worker.
+        job.signals.done.connect(self._on_login_job_done)
         job.signals.error.connect(self._login_error)
         self._start_job(job)
         return True
+
+    @Slot(object)
+    def _on_login_job_done(self, result):
+        context = self._login_context
+        self._login_context = None
+        if context is None:
+            return
+        password, remember = context
+        try:
+            self._login_done(result, password, remember)
+        except Exception as error:
+            # Do not strand a signed-in client silently before heartbeat.
+            self._login_error(
+                "Notify setup after Auth: "
+                f"{type(error).__name__}: {str(error)[:160]}"
+            )
 
     def _login_done(self, result, password, remember):
         self._login_busy = False
@@ -635,7 +649,9 @@ class CentralNotifyReceiver(QObject):
         self.login_retry_timer.start(delay_ms)
         return True
 
+    @Slot(str)
     def _login_error(self, message):
+        self._login_context = None
         automatic = self._login_was_automatic
         self._login_was_automatic = False
         self._login_busy = False
@@ -678,6 +694,7 @@ class CentralNotifyReceiver(QObject):
         )
         self._start_job(job)
 
+    @Slot(object)
     def _sources_done(
         self,
         rows,
@@ -733,6 +750,7 @@ class CentralNotifyReceiver(QObject):
             normalized
         )
 
+    @Slot(str)
     def _sources_error(
         self,
         message,
@@ -839,6 +857,7 @@ class CentralNotifyReceiver(QObject):
         )
         self._start_job(job)
 
+    @Slot(object)
     def _heartbeat_done(
         self,
         result,
@@ -885,6 +904,7 @@ class CentralNotifyReceiver(QObject):
                 "กรุณา Login ใหม่และตรวจสิทธิ์หากเกิดซ้ำ"
             )
 
+    @Slot(str)
     def _heartbeat_error(
         self,
         message,
@@ -970,6 +990,7 @@ class CentralNotifyReceiver(QObject):
         job.signals.error.connect(self._poll_error)
         self._start_job(job)
 
+    @Slot(object)
     def _poll_done(self, rows):
         self._busy = False
         self._poll_failures = 0
@@ -1028,6 +1049,7 @@ class CentralNotifyReceiver(QObject):
             f"🟢 Central Notification: {self.email}"
         )
 
+    @Slot(str)
     def _poll_error(self, message):
         self._busy = False
         self._poll_failures += 1
