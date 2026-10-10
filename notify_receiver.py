@@ -132,7 +132,6 @@ class _LoginJob(QRunnable):
         self.password = password
         self.signals = _Signals()
 
-    @Slot()
     @staticmethod
     def _retry_authenticated_query(task):
         # Reuse the signed-in client/session, never send a second password
@@ -147,6 +146,7 @@ class _LoginJob(QRunnable):
                     time.sleep(0.4 * (attempt + 1))
         raise last_error
 
+    @Slot()
     def run(self):
         stage = "Supabase Authentication"
         try:
