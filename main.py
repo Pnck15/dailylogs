@@ -58,7 +58,7 @@ APP_NAME = "DailyLog"
 APP_DISPLAY_NAME = "GAC日記"
 
 DEFAULT_ACCENT = "#2563EB"
-APP_VERSION = "1.2.4"
+APP_VERSION = "1.2.5"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 
 UPDATE_CHECK_DELAY_MS = 2500
@@ -5300,6 +5300,10 @@ class DailyLog(QWidget):
         self.log_add_stack.setCurrentIndex(1 if is_red else 0)
         if is_red and not self.title_input.text().strip():
             self.title_input.setText("รับป้ายแดง")
+        elif not is_red and self.title_input.text().strip() == "รับป้ายแดง":
+            # Do not carry the template's generated default title into a
+            # general log; preserve any title the employee customized.
+            self.title_input.clear()
         if self.pages.currentWidget() is self.add_page:
             self._resize_add_form()
 
@@ -8002,6 +8006,8 @@ class DailyLog(QWidget):
             )
 
             self.is_collapsed = False
+            # Restoring a red-plate form must restore its larger input area.
+            self._resize_add_form()
 
         else:
 
