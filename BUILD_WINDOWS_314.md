@@ -140,7 +140,9 @@ git restore --source=origin/main --worktree -- repair_build.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\repair_build.ps1 -NotifyOnly
 ```
 
-`-NotifyOnly` backs up existing `release\DailyLogNotify.exe` and
+`-NotifyOnly` limits dependency edits to `requirements-notify-build.txt`
+and `build_notify.ps1` (not the main application build scripts).
+It backs up existing `release\DailyLogNotify.exe` and
 `dist\DailyLogNotify.exe` (when present) before running the local
 `build_notify.ps1`; verifies that a fresh notifier file was produced;
 and does **not** publish a GitHub Release. The original local requirements
