@@ -116,6 +116,11 @@ function formatFullRow(row: AnyRow) {
   const lines: string[] = [];
 
   for (const item of rowData(row)) {
+    // Sequence Column C remains available for dedupe/identity, but must
+    // not appear in SA Sathorn's user-visible reminder text.
+    if (normalize(item.column).toUpperCase() === "C") {
+      continue;
+    }
     const value = normalize(item.value);
 
     if (!value) {
@@ -388,11 +393,6 @@ async function processSource(
     const message = (
       `เวลานัดหมาย 预约时间: ${appointmentTime}\n`
       + `วันที่ 日期: ${appointmentDate}\n`
-      + (
-        mergedRange
-          ? `Merged D: ${mergedRange}\n`
-          : ""
-      )
       + "\nรายละเอียดแจ้ง:\n"
       + formatFullRow(row)
     );
