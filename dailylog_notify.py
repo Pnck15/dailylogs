@@ -30,7 +30,7 @@ from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.5"
+APP_VERSION = "1.5.6"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
@@ -1783,15 +1783,29 @@ class NotifyApp(QWidget):
             QSettings.Format.NativeFormat,
         )
 
-        run.setValue(
-            "DailyLogNotify",
-            f'"{sys.executable}" --startup',
-        )
-        run.sync()
+        expected = f'"{sys.executable}" --startup'
+        try:
+            # Avoid modifying Registry on every launch if the correct
+            # startup command was already installed for this Windows user.
+            current = str(run.value("DailyLogNotify", "") or "")
+            if current != expected:
+                run.setValue("DailyLogNotify", expected)
+                run.sync()
 
-        self.startup_label.setText(
-            "✅ Start with Windows"
-        )
+            registered = str(run.value("DailyLogNotify", "") or "")
+            if (
+                run.status() != QSettings.Status.NoError
+                or registered != expected
+            ):
+                raise OSError("Windows Run registry value was not saved")
+
+            self.startup_label.setText("✅ Start with Windows")
+        except Exception as error:
+            self.startup_label.setText(
+                "⚠️ Start with Windows: ตั้งค่าไม่สำเร็จ"
+            )
+            self.startup_label.setToolTip(str(error))
+            print("[Notify Startup] Registry setup failed")
 
     def _fetch_update_info(self):
         data = fetch_update(APP_VERSION)
