@@ -13,7 +13,7 @@ from supabase import create_client
 
 
 POLL_INTERVAL_MS = 15000
-SOURCE_REFRESH_INTERVAL_MS = 5 * 60 * 1000
+SOURCE_REFRESH_INTERVAL_MS = 60 * 1000
 DEVICE_HEARTBEAT_INTERVAL_MS = 60 * 1000
 
 # When Windows starts before networking is ready, retry automatically.
@@ -401,6 +401,7 @@ class CentralNotifyReceiver(QObject):
         self.last_id = 0
         self._busy = False
         self._heartbeat_busy = False
+        self._source_busy = False
         self._login_busy = False
         self._login_context = None
         self._paused = False
@@ -680,8 +681,9 @@ class CentralNotifyReceiver(QObject):
         self.login_failed.emit(str(message))
 
     def refresh_sources(self):
-        if self.client is None:
+        if self.client is None or self._source_busy:
             return
+        self._source_busy = True
 
         job = _SourceJob(
             self.client
@@ -699,6 +701,7 @@ class CentralNotifyReceiver(QObject):
         self,
         rows,
     ):
+        self._source_busy = False
         normalized = []
 
         for item in rows or []:
@@ -755,6 +758,7 @@ class CentralNotifyReceiver(QObject):
         self,
         message,
     ):
+        self._source_busy = False
         print(
             "[Central Notify Sources]",
             message,
