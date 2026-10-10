@@ -19,6 +19,7 @@ on:
       - tests/test_sa_popup_display.py
       - tests/test_notify_history_sources.py
       - tests/windows_notify_popup_smoke.py
+      - tests/windows_notify_resilience_smoke.py
       - tests/windows_update_smoke.py
       - tests/verify_notify_release.py
       - .github/workflows/notify-release.yml
@@ -67,6 +68,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Compiled updater smoke test failed." }
           ./.venv/Scripts/python.exe tests/windows_notify_popup_smoke.py
           if ($LASTEXITCODE -ne 0) { throw "NotifyPopup UI smoke test failed." }
+          ./.venv/Scripts/python.exe tests/windows_notify_resilience_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw "Notify login and startup resilience smoke test failed." }
       - uses: actions/upload-artifact@v4
         with:
           name: DailyLogNotify-Windows-${{ github.sha }}
