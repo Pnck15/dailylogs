@@ -10,7 +10,7 @@
  * Keep only one doGet() entrypoint in the deployed Apps Script project.
  */
 const SA_SPREADSHEET_ID = "1sgOwVDEe1kSgnc21bP4h8_42IPAAJFWVC0GUNVUVxyc";
-const SA_API_VERSION = "sa-sathorn-all-month-v6.1";
+const SA_API_VERSION = "sa-sathorn-all-month-v6.2";
 const SA_TIMEZONE = "Asia/Bangkok";
 const SA_HEADER_ROW = 2;
 const SA_DATA_START_ROW = 3;
@@ -28,17 +28,10 @@ const SA_THAI_MONTHS = {
 };
 
 function saDateKey_(actual, display) {
-  if (Object.prototype.toString.call(actual) === "[object Date]" &&
-      !isNaN(actual.getTime())) {
-    return Utilities.formatDate(actual, SA_TIMEZONE, "yyyy-MM-dd");
-  }
-
-  const text = String(display || actual || "").trim();
-  if (!text) return "";
-
   function valid(year, month, day) {
     if (year > 2400) year -= 543;
-    if (year < 100) year += 2000;
+    // Thai short year 69 means BE 2569 (AD 2026).
+    if (year < 100) year = year >= 43 ? year + 1957 : year + 2000;
     if (year < 1900 || month < 1 || month > 12 || day < 1 || day > 31) return "";
     const dt = new Date(Date.UTC(year, month - 1, day));
     if (dt.getUTCFullYear() !== year ||
@@ -47,7 +40,23 @@ function saDateKey_(actual, display) {
     return [year, String(month).padStart(2, "0"), String(day).padStart(2, "0")].join("-");
   }
 
-  const match = text.match(/(\d{1,4})[\/.\-](\d{1,2})[\/.\-](\d{1,4})/);
+  // Google Sheets sometimes converts 10.10.69 into an underlying AD 2069
+  // Date. Trust the visible two-digit Thai year rather than that Date.
+  const shown = String(display == null ? "" : display).trim();
+  const short = shown.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2})$/);
+  if (short) {
+    return valid(Number(short[3]), Number(short[2]), Number(short[1]));
+  }
+
+  if (Object.prototype.toString.call(actual) === "[object Date]" &&
+      !isNaN(actual.getTime())) {
+    return Utilities.formatDate(actual, SA_TIMEZONE, "yyyy-MM-dd");
+  }
+
+  const text = shown || String(actual == null ? "" : actual).trim();
+  if (!text) return "";
+
+  const match = text.match(/(\d{1,4})[\/.-](\d{1,2})[\/.-](\d{1,4})/);
   if (match) {
     const a = Number(match[1]), b = Number(match[2]), c = Number(match[3]);
     return match[1].length === 4 ? valid(a, b, c) : valid(c, b, a);
