@@ -85,7 +85,7 @@ try {
     $isPython314 = ([int]$parts[0] -eq 3 -and [int]$parts[1] -ge 14)
 
     if ($isPython314) {
-        Write-Host "Checking local build scripts for incompatible PySide6 pins..."
+        Write-Host "Checking local build scripts for incompatible Python 3.14 pins..."
         # The local notifier build can read a different requirements file.
         # Recursively find build/dependency files, without traversing .venv
         # or any generated release files.
@@ -106,6 +106,10 @@ try {
         }
 
         $legacyPin = '(?i)\bPySide6\s*==\s*6\.(?:[0-9]\.\d+(?:\.\d+)?|10\.0)\b'
+        # Local requirements-notify-build.txt may also pin an unsupported
+        # PyInstaller version (6.13.0 on Python 3.14).
+        $oldPyInstallerPin = '(?i)\bpyinstaller\s*==\s*6\.(?:[0-9]|1[0-4])(?:\.\d+)?\b'
+        $oldNotifyPySidePin = '(?i)\bPySide6\s*==\s*6\.10\.2\b'
         $backupRoot = Join-Path $PSScriptRoot (".build_repair_backups\" + (Get-Date -Format "yyyyMMdd_HHmmss"))
         $changed = 0
         foreach ($file in $targets) {
@@ -122,7 +126,17 @@ try {
             if ([regex]::IsMatch($old, '(?m)^<{7}(?: .*)?$')) {
                 throw "Unresolved Git conflict in $($file.FullName). Resolve this file before building."
             }
-            $new = [regex]::Replace($old, $legacyPin, "PySide6==6.10.2")
+            if ($dependencyFile) {
+                # Preserve already-installed compatible versions; avoid downgrades.
+                $new = [regex]::Replace($old, $legacyPin, "PySide6>=6.10.1,<7")
+                $new = [regex]::Replace($new, $oldNotifyPySidePin, "PySide6>=6.10.1,<7")
+                $new = [regex]::Replace($new, $oldPyInstallerPin, "pyinstaller>=6.20,<7")
+            } else {
+                # An unquoted version range may be invalid in PowerShell
+                # commands, so use exact Python-3.14-compatible pins there.
+                $new = [regex]::Replace($old, $legacyPin, "PySide6==6.10.2")
+                $new = [regex]::Replace($new, $oldPyInstallerPin, "pyinstaller==6.22.3")
+            }
             if ($old -ceq $new) { continue }
 
             $relative = $file.FullName.Substring($PSScriptRoot.Length).TrimStart('\', '/')
@@ -146,7 +160,7 @@ try {
         if ($changed -gt 0) {
             Write-Host "Updated $changed local file(s). Backups: $backupRoot"
         } else {
-            Write-Host "No incompatible PySide6 pin found in local build files."
+            Write-Host "No incompatible PySide6/PyInstaller pins found in local build files."
         }
 
         # Detect any remaining incompatible pins *before* invoking pip/build.
@@ -160,19 +174,24 @@ try {
             )
             if (-not ($scriptFile -or $dependencyFile -or $file.Extension -eq ".spec")) { continue }
             $content = [System.IO.File]::ReadAllText($file.FullName)
-            if ([regex]::IsMatch($content, $legacyPin)) {
+            $bad = [regex]::IsMatch($content, $legacyPin) -or
+                   [regex]::IsMatch($content, $oldPyInstallerPin)
+            if ($dependencyFile) {
+                $bad = $bad -or [regex]::IsMatch($content, $oldNotifyPySidePin)
+            }
+            if ($bad) {
                 $remaining += $file.FullName
             }
         }
         if ($remaining.Count -gt 0) {
-            throw "Incompatible PySide6 pins still found: $($remaining -join ', ')"
+            throw "Incompatible build dependency pins still found: $($remaining -join ', ')"
         }
     } else {
         Write-Host "Python is below 3.14; no local PySide6 pins changed."
     }
 
     Write-Host "Installing compatible build dependencies..."
-    & $python -m pip install --disable-pip-version-check --upgrade -r "requirements-build.txt"
+    & $python -m pip install --disable-pip-version-check -r "requirements-build.txt"
     if ($LASTEXITCODE -ne 0) { throw "Build dependency installation failed." }
 
     & $python -c "import sys, PySide6, PyInstaller; print(sys.version.split()[0], PySide6.__version__, PyInstaller.__version__)"
