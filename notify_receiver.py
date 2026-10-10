@@ -3,6 +3,7 @@ import json
 import os
 import platform
 import sys
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -132,7 +133,22 @@ class _LoginJob(QRunnable):
         self.signals = _Signals()
 
     @Slot()
+    @staticmethod
+    def _retry_authenticated_query(task):
+        # Reuse the signed-in client/session, never send a second password
+        # login merely because a workspace or cursor request timed out.
+        last_error = None
+        for attempt in range(3):
+            try:
+                return task()
+            except Exception as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(0.4 * (attempt + 1))
+        raise last_error
+
     def run(self):
+        stage = "Supabase Authentication"
         try:
             client = create_client(self.url, self.key)
             response = client.auth.sign_in_with_password(
@@ -142,12 +158,15 @@ class _LoginJob(QRunnable):
             if not response.user or not response.session:
                 raise RuntimeError("Login ไม่สำเร็จ: ไม่พบ user/session")
 
-            membership = (
-                client.table("workspace_members")
-                .select("workspace_id, role")
-                .eq("user_id", response.user.id)
-                .limit(1)
-                .execute()
+            stage = "Workspace membership"
+            membership = self._retry_authenticated_query(
+                lambda: (
+                    client.table("workspace_members")
+                    .select("workspace_id, role")
+                    .eq("user_id", response.user.id)
+                    .limit(1)
+                    .execute()
+                )
             )
 
             if not membership.data:
@@ -158,13 +177,16 @@ class _LoginJob(QRunnable):
             workspace_id = str(membership.data[0]["workspace_id"])
             role = str(membership.data[0].get("role") or "")
 
-            latest = (
-                client.table("notification_events")
-                .select("id")
-                .eq("workspace_id", workspace_id)
-                .order("id", desc=True)
-                .limit(1)
-                .execute()
+            stage = "Notification event cursor"
+            latest = self._retry_authenticated_query(
+                lambda: (
+                    client.table("notification_events")
+                    .select("id")
+                    .eq("workspace_id", workspace_id)
+                    .order("id", desc=True)
+                    .limit(1)
+                    .execute()
+                )
             )
 
             latest_id = 0
@@ -204,7 +226,9 @@ class _LoginJob(QRunnable):
                 }
             )
         except Exception as exc:
-            self.signals.error.emit(str(exc))
+            # The stage identifies whether password auth actually failed
+            # or a subsequent network/RLS query failed after sign-in.
+            self.signals.error.emit(f"{stage}: {type(exc).__name__}: {exc}")
 
 
 class _SourceJob(QRunnable):
@@ -327,7 +351,11 @@ class CentralNotifyReceiver(QObject):
     ):
         super().__init__(parent)
         self.settings = settings
-        self.pool = QThreadPool.globalInstance()
+        # Supabase Auth refresh-token rotation is not safe across
+        # simultaneous polling, source and heartbeat requests sharing
+        # one client. Serialize network jobs for this receiver instance.
+        self.pool = QThreadPool(self)
+        self.pool.setMaxThreadCount(1)
 
         self.client = None
         self.workspace_id = ""
@@ -430,19 +458,19 @@ class CentralNotifyReceiver(QObject):
 
     def login(self, email, password, remember=True, automatic=False):
         if self._login_busy:
-            return
+            return False
 
         # A manual login can recover a previously admin-revoked session,
         # but automatic background retries must never undo such a revoke.
         if self._session_revoked and automatic:
-            return
+            return False
         self.login_retry_timer.stop()
         email = str(email or "").strip()
         password = str(password or "")
 
         if not email or not password:
             self.login_failed.emit("กรุณากรอก Email และ Password")
-            return
+            return False
 
         self._login_busy = True
         self._login_was_automatic = bool(automatic)
@@ -463,6 +491,7 @@ class CentralNotifyReceiver(QObject):
         )
         job.signals.error.connect(self._login_error)
         self.pool.start(job)
+        return True
 
     def _login_done(self, result, password, remember):
         self._login_busy = False
@@ -803,7 +832,14 @@ class CentralNotifyReceiver(QObject):
             "active",
             True,
         ) is False:
-            self._handle_session_revoked()
+            # The server currently returns active=false when the JWT's
+            # session_id is absent from auth.sessions; this is NOT proof
+            # that an Admin explicitly revoked a device. Do not mislabel it.
+            self._handle_session_revoked(
+                "Central ไม่ยืนยัน Session ปัจจุบัน "
+                "(อาจหมดอายุ ถูกเพิกถอน หรือมีปัญหาการซิงก์) "
+                "กรุณา Login ใหม่และตรวจสิทธิ์หากเกิดซ้ำ"
+            )
 
     def _heartbeat_error(
         self,
@@ -815,7 +851,7 @@ class CentralNotifyReceiver(QObject):
             message,
         )
 
-    def _handle_session_revoked(self):
+    def _handle_session_revoked(self, reason=None):
         self._session_revoked = True
         self.login_retry_timer.stop()
         self.timer.stop()
@@ -838,13 +874,13 @@ class CentralNotifyReceiver(QObject):
         )
         self.settings.sync()
 
-        message = (
-            "Session ของเครื่องนี้ถูกออกจากระบบโดย Admin "
-            "กรุณา Login ใหม่หากต้องการเชื่อมต่ออีกครั้ง"
-        )
+        message = str(reason or (
+            "Central ปิดการใช้งาน Session นี้ "
+            "กรุณา Login ใหม่หรือให้ผู้ดูแลตรวจสอบสิทธิ์"
+        ))
 
         self.status_changed.emit(
-            "🔴 Central Notification: Session ถูกปิดโดย Admin"
+            "🔴 Central Notification: Session ต้องตรวจสอบอีกครั้ง"
         )
         self.session_revoked.emit(
             message
