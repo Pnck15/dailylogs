@@ -766,20 +766,11 @@ async function processSale(
       payload.version,
     );
 
-  const mode =
-    normalize(
-      payload.mode,
-    );
-
   const initialized =
     state.initialized === true &&
     normalize(
       state.version,
-    ) === version &&
-    (
-      mode === "all_month_rows_v6"
-      || normalize(state.today) === today
-    );
+    ) === version;
 
   const previous =
     initialized &&
@@ -1049,11 +1040,20 @@ async function processSa(
     ||
     bangkokTodayKey();
 
+  const mode =
+    normalize(
+      payload.mode,
+    );
+
   const initialized =
     state.initialized === true &&
     normalize(
       state.version,
-    ) === version;
+    ) === version &&
+    (
+      mode === "all_month_rows_v6"
+      || normalize(state.today) === today
+    );
 
   const previous =
     initialized &&
