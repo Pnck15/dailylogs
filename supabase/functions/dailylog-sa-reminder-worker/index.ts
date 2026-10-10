@@ -164,7 +164,9 @@ function dateKeyFromText(value: unknown): string | null {
   } else {
     year = c > 2400 ? c - 543 : c;
     if (year < 100) {
-      year += 2000;
+      // In Thai service calendars, '69' means BE 2569 (AD 2026),
+      // while '26' can be an ordinary AD two-digit year.
+      year = year >= 43 ? year + 1957 : year + 2000;
     }
     month = b;
     day = a;
@@ -183,6 +185,33 @@ function dateKeyFromText(value: unknown): string | null {
     + `${String(month).padStart(2, "0")}-`
     + `${String(day).padStart(2, "0")}`
   );
+}
+
+// SA feeds created before the Thai-short-year fix encoded '10.10.69'
+// as 2069-10-10. If the month tab itself is 10.2026, the intended
+// appointment is 2026-10-10. Correct only this exact +43 year pattern,
+// leaving regular ISO dates and other calendar years untouched.
+function appointmentDateForSaRow(row: AnyRow): string | null {
+  const date = dateKeyFromText(
+    row.appointment_date ??
+    row.group_date ??
+    row.date ??
+    rowDataColumn(row, "D"),
+  );
+  if (!date) return null;
+
+  const tabMatch = normalize(row.sheet).match(/^\d{1,2}\.(\d{4})$/);
+  if (!tabMatch) return date;
+  const tabYear = Number(tabMatch[1]);
+  const dateYear = Number(date.slice(0, 4));
+  if (
+    tabYear >= 2000 &&
+    tabYear <= 2099 &&
+    dateYear === tabYear + 43
+  ) {
+    return `${tabYear}${date.slice(4)}`;
+  }
+  return date;
 }
 
 function parseAppointmentMinutes(value: unknown): number | null {
@@ -314,13 +343,7 @@ async function processSource(
       continue;
     }
 
-    const appointmentDate =
-      dateKeyFromText(
-        row.appointment_date ??
-        row.group_date ??
-        row.date ??
-        rowDataColumn(row, "D"),
-      );
+    const appointmentDate = appointmentDateForSaRow(row);
 
     if (
       !appointmentDate ||
