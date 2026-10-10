@@ -19,12 +19,30 @@ class NotificationHistory:
                 title TEXT NOT NULL,
                 message TEXT NOT NULL
             )""")
+            # Additive migration: existing history remains untouched.
+            columns = {
+                item[1]
+                for item in db.execute("PRAGMA table_info(notifications)")
+            }
+            if "source_key" not in columns:
+                db.execute(
+                    "ALTER TABLE notifications "
+                    "ADD COLUMN source_key TEXT NOT NULL DEFAULT ''"
+                )
 
-    def add(self, source, title, message):
+    def add(self, source, title, message, source_key=""):
         with sqlite3.connect(self.path) as db:
             db.execute(
-                "INSERT INTO notifications(created_at,source,title,message) VALUES(?,?,?,?)",
-                (datetime.now().isoformat(timespec="seconds"), source, title, message),
+                "INSERT INTO notifications("
+                "created_at,source,title,message,source_key"
+                ") VALUES(?,?,?,?,?)",
+                (
+                    datetime.now().isoformat(timespec="seconds"),
+                    source,
+                    title,
+                    message,
+                    str(source_key or "").strip(),
+                ),
             )
 
     def recent(self, limit=200):
@@ -32,7 +50,7 @@ class NotificationHistory:
             db.row_factory = sqlite3.Row
 
             sql = (
-                "SELECT id, created_at, source, title, message "
+                "SELECT id, created_at, source, title, message, source_key "
                 "FROM notifications "
                 "ORDER BY id DESC"
             )
