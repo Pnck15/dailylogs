@@ -2349,11 +2349,11 @@ class DailyLog(QWidget):
         )
 
         notify_check = QCheckBox(
-            "Show this Source in DailyLogNotify"
+            "Show this Source in DailyLogNotify (ให้เครื่องพนักงานติ๊กเลือกได้)"
         )
-        notify_check.setChecked(
-            False
-        )
+        # New GAS monitors are published to Notify by default; the Admin
+        # can opt out for sources intended for the main app only.
+        notify_check.setChecked(True)
 
         right.addWidget(
             enabled_check
@@ -2363,8 +2363,9 @@ class DailyLog(QWidget):
         )
 
         explain = QLabel(
-            "ถ้าไม่ติ๊ก DailyLogNotify: Event ยังเข้า DailyLog.exe "
-            "ผ่าน Central แต่จะไม่ปรากฏเป็นตัวเลือกในเครื่องพนักงาน"
+            "เมื่อกด Save แล้ว Central จะเผยแพร่ Source นี้เป็นตัวเลือกใน "
+            "DailyLogNotify ของทุกเครื่องที่มีสิทธิ์ (Refresh Sources ได้ทันที)\n"
+            "ถ้าปิดตัวเลือกนี้ Event ยังเข้า DailyLog.exe แต่ Notify จะไม่แสดง"
         )
         explain.setWordWrap(
             True
@@ -2448,7 +2449,7 @@ class DailyLog(QWidget):
                 True
             )
             notify_check.setChecked(
-                False
+                True
             )
             delete_button.setEnabled(
                 False
