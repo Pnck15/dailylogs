@@ -42,6 +42,7 @@ from PySide6.QtGui import (
 )
 
 from cloud_worker import CloudService
+from cloud_db import CloudDB
 from workers import run_async
 from sale_api_monitor import SaleAPIMonitor
 from sheet_monitor import NotificationPresenter
@@ -7935,6 +7936,13 @@ class DailyLog(QWidget):
 # =============================================
 
 if __name__ == "__main__":
+
+    if "--smoke-test" in sys.argv:
+        db = CloudDB()
+        if not db.url or not db.key:
+            raise RuntimeError("Supabase public client config is unavailable")
+        print(f"DailyLog {APP_VERSION} smoke test OK")
+        sys.exit(0)
 
     app = QApplication(
         sys.argv
