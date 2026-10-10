@@ -573,12 +573,20 @@ class CentralNotifyReceiver(QObject):
 
         self.settings.sync()
 
-        self._sources_done(
-            result.get(
-                "notify_sources",
-                [],
+        try:
+            self._sources_done(
+                result.get(
+                    "notify_sources",
+                    [],
+                )
             )
-        )
+        except (ValueError, TypeError, KeyError) as error:
+            # Never lose an authenticated session or skip registration
+            # because a source-catalog entry has unexpected data.
+            print(
+                "[Notify Sources] source catalog unavailable",
+                type(error).__name__,
+            )
 
         if not self.timer.isActive():
             self.timer.start()
