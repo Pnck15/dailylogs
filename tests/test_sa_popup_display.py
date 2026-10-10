@@ -51,11 +51,26 @@ class SaMessageCleanerTests(unittest.TestCase):
         self.assertIn("message = clean_sa_notification_message(message)", SOURCE)
         self.assertIn("if (\n            str(source_key or \"\").strip().lower()", SOURCE)
 
-    def test_popup_closes_in_three_minutes(self):
-        self.assertIn("3 * 60 * 1000", SOURCE)
-        self.assertIn("ปิดอัตโนมัติใน 3 นาที", SOURCE)
+    def test_popup_closes_in_twenty_seconds(self):
+        self.assertIn("20 * 1000", SOURCE)
+        self.assertIn("ปิดอัตโนมัติใน 20 วินาที", SOURCE)
         self.assertNotIn("เลือกข้อความแล้ว Ctrl+C ได้", SOURCE)
         self.assertNotIn("ปิดอัตโนมัติใน 10 นาที", SOURCE)
+        self.assertNotIn("ปิดอัตโนมัติใน 3 นาที", SOURCE)
+
+
+    def test_x_is_connected_to_explicit_dismiss(self):
+        self.assertIn(
+            "close_button.clicked.connect(\n            self.dismiss",
+            SOURCE,
+        )
+        self.assertIn("self._auto_close_timer.stop()", SOURCE)
+        self.assertIn("self.reject()", SOURCE)
+
+    def test_history_ui_filters_source_without_deleting_rows(self):
+        self.assertIn("source_allowed=self._source_allowed", SOURCE)
+        self.assertIn("if callable(self.source_allowed) and not", SOURCE)
+        self.assertIn("source_key=source_key", SOURCE)
 
     def test_x_is_red_and_copy_remains(self):
         self.assertIn('close_button.setObjectName("notifyPopupCloseButton")', SOURCE)
