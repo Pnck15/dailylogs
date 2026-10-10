@@ -109,6 +109,7 @@ def run_single_instance_tests():
         assert server.hasPendingConnections() or server.waitForNewConnection(500)
     finally:
         server.close()
+        server._notify_owner_lock.unlock()
         QLocalServer.removeServer(name)
 
 
