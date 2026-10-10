@@ -28,11 +28,11 @@ function loadFunctions(relativePath, names) {
 
 const monitor = loadFunctions(
   "supabase/functions/dailylog-monitor-worker/index.ts",
-  ["normalizeSaRowDate", "diffSaFullRow", "saRowSignature"]
+  ["normalizeSaRowDate", "diffSaFullRow", "saRowSignature", "formatSaFullRow", "displaySaChanges"]
 );
 const reminder = loadFunctions(
   "supabase/functions/dailylog-sa-reminder-worker/index.ts",
-  ["appointmentDateForSaRow", "dateKeyFromText", "parseAppointmentMinutes"]
+  ["appointmentDateForSaRow", "dateKeyFromText", "parseAppointmentMinutes", "formatFullRow"]
 );
 
 const example = {
@@ -91,4 +91,41 @@ assert.equal(
   "2030-10-10",
   "unrelated dates must remain unchanged"
 );
+// SA metadata is still used internally, but not shown in notification text.
+const displayRow = {
+  ...example,
+  row_data: [
+    {column: "B", header: "เวลานัดหมาย 预约时间", value: "13:30"},
+    {column: "C", header: "ลำดับ 序号", value: "7"},
+    {column: "D", header: "วันที่ 日期", value: ""},
+    {column: "E", header: "ลูกค้า", value: "ตัวอย่าง"},
+  ]
+};
+for (const fullMessage of [
+  monitor.formatSaFullRow(displayRow),
+  reminder.formatFullRow(displayRow)
+]) {
+  assert.ok(fullMessage.includes("E - ลูกค้า: ตัวอย่าง"));
+  assert.ok(fullMessage.includes("B - เวลานัดหมาย 预约时间: 13:30"));
+  assert.ok(!fullMessage.includes("C - ลำดับ"),
+    "user must not see technical sequence C field");
+}
+const internalChanges = [
+  "C - ลำดับ 序号: 6 → 7",
+  "E - ลูกค้า: ชื่อเดิม → ตัวอย่าง"
+];
+assert.equal(
+  monitor.displaySaChanges(internalChanges),
+  "E - ลูกค้า: ชื่อเดิม → ตัวอย่าง"
+);
+assert.equal(
+  monitor.displaySaChanges(["C - ลำดับ 序号: 6 → 7"]),
+  "ข้อมูลภายในรายการมีการเปลี่ยนแปลง",
+  "C-only edits must still publish a notification without disclosing C"
+);
+assert.ok(
+  !monitor.formatSaFullRow(displayRow).includes("Merged D:"),
+  "merged D range must never be user-visible"
+);
+
 console.log("PASS: SA BE69/AD2026 reminder schedule date and safe snapshot normalization.");
