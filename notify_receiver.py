@@ -1084,6 +1084,11 @@ class CentralNotifyReceiver(QObject):
         print("[Central Notify]", "poll failed", self._poll_failures)
 
     def logout(self):
+        # An in-flight login result must not silently reconnect a session
+        # after the user requested an explicit logout.
+        self._login_context = None
+        self._login_busy = False
+        self._login_was_automatic = False
         self.device_registration_state = "not_connected"
         self.last_heartbeat_error = ""
         self.login_retry_timer.stop()
