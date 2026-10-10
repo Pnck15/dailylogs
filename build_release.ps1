@@ -20,9 +20,11 @@ if ($GitHubRepo.Trim()) {
     Write-Host "Update manifest: $manifestUrl"
 }
 
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m PyInstaller --clean --noconfirm main.spec
-.\.venv\Scripts\python.exe -m PyInstaller --clean --noconfirm updater.spec
+.\.venv\Scripts\python.exe -m pip install -r requirements-main-build.txt
+foreach ($spec in @("main.spec", "updater.spec")) {
+    & .\.venv\Scripts\python.exe -m PyInstaller --clean --noconfirm $spec
+    if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed: $spec" }
+}
 
 New-Item -ItemType Directory -Force -Path "release" | Out-Null
 Copy-Item "dist\DailyLog.exe" "release\DailyLog.exe" -Force

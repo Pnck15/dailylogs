@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('update_config.json', '.'), ('update_manifest.json', '.')],
+    datas=[('update_config.json', '.'), ('update_manifest.json', '.'), ('notify_build_config.json', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

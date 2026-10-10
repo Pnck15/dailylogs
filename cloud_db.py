@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from pathlib import Path
@@ -21,10 +22,42 @@ class CloudDB:
         self.url = os.getenv("SUPABASE_URL", "").strip()
         self.key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
 
+        # Production releases bundle only the public Supabase client config.
+        # This is safe to ship in a desktop client; RLS/Auth still enforce access.
+        if not self.url or not self.key:
+            bundle_dir = Path(
+                getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)
+            )
+            config_candidates = (
+                bundle_dir / "notify_build_config.json",
+                app_dir / "notify_build_config.json",
+                Path(__file__).resolve().parent / "notify_build_config.json",
+            )
+
+            for config_path in config_candidates:
+                if not config_path.exists():
+                    continue
+                try:
+                    config = json.loads(
+                        config_path.read_text(encoding="utf-8")
+                    )
+                except Exception:
+                    continue
+
+                self.url = self.url or str(
+                    config.get("SUPABASE_URL", "")
+                ).strip()
+                self.key = self.key or str(
+                    config.get("SUPABASE_PUBLISHABLE_KEY", "")
+                ).strip()
+
+                if self.url and self.key:
+                    break
+
         if not self.url:
-            raise ValueError("ไม่พบ SUPABASE_URL ในไฟล์ .env")
+            raise ValueError("ไม่พบ SUPABASE_URL")
         if not self.key:
-            raise ValueError("ไม่พบ SUPABASE_PUBLISHABLE_KEY ในไฟล์ .env")
+            raise ValueError("ไม่พบ SUPABASE_PUBLISHABLE_KEY")
 
         self.client = create_client(self.url, self.key)
         self.user = None
@@ -217,6 +250,353 @@ class CloudDB:
                     "ให้รันไฟล์ add_log_author_columns.sql ก่อน"
                 ) from error
             raise
+        return response.data[0] if response.data else None
+
+    def upsert_monitor_source(
+        self,
+        source_key: str,
+        source_name: str,
+        source_type: str,
+        gas_url: str,
+        enabled: bool = True,
+        publish_to_notify: bool = True,
+        display_order: int = 100,
+    ):
+        self._require_login()
+
+        if str(self.role or "").lower() != "admin":
+            raise RuntimeError(
+                "เฉพาะ Admin เท่านั้นที่ตั้งค่า Central Monitor ได้"
+            )
+
+        payload = {
+            "workspace_id": self.workspace_id,
+            "source_key": str(source_key or "").strip(),
+            "source_name": str(source_name or "").strip(),
+            "source_type": str(source_type or "").strip(),
+            "gas_url": str(gas_url or "").strip(),
+            "enabled": bool(enabled),
+            "publish_to_notify": bool(
+                publish_to_notify
+            ),
+            "display_order": int(
+                display_order or 100
+            ),
+            "updated_by": self.user.id,
+        }
+
+        if not payload["source_key"] or not payload["gas_url"]:
+            raise ValueError(
+                "source_key และ gas_url ห้ามว่าง"
+            )
+
+        response = (
+            self.client.table("monitor_sources")
+            .upsert(
+                payload,
+                on_conflict="workspace_id,source_key",
+            )
+            .execute()
+        )
+
+        return response.data[0] if response.data else None
+
+    def list_monitor_sources(self):
+        self._require_login()
+
+        if str(self.role or "").lower() != "admin":
+            raise RuntimeError(
+                "เฉพาะ Admin เท่านั้นที่ดู Central Monitor Sources ได้"
+            )
+
+        response = (
+            self.client.table("monitor_sources")
+            .select(
+                "source_key,source_name,source_type,gas_url,"
+                "enabled,publish_to_notify,display_order,"
+                "created_at,updated_at"
+            )
+            .eq(
+                "workspace_id",
+                self.workspace_id,
+            )
+            .order(
+                "display_order",
+            )
+            .order(
+                "source_name",
+            )
+            .execute()
+        )
+
+        return response.data or []
+
+    def delete_monitor_source(
+        self,
+        source_key: str,
+    ):
+        self._require_login()
+
+        if str(self.role or "").lower() != "admin":
+            raise RuntimeError(
+                "เฉพาะ Admin เท่านั้นที่ลบ Central Monitor Source ได้"
+            )
+
+        key = str(
+            source_key or ""
+        ).strip()
+
+        if not key:
+            return []
+
+        response = (
+            self.client.table("monitor_sources")
+            .delete()
+            .eq(
+                "workspace_id",
+                self.workspace_id,
+            )
+            .eq(
+                "source_key",
+                key,
+            )
+            .execute()
+        )
+
+        return response.data or []
+
+    def get_latest_main_notification_event_id(
+        self,
+    ):
+        self._require_login()
+
+        response = (
+            self.client.table(
+                "notification_events"
+            )
+            .select("id")
+            .eq(
+                "workspace_id",
+                self.workspace_id,
+            )
+            .or_(
+                (
+                    "source_key.like.main_%,"
+                    "and(source_key.eq.sa_sathorn,"
+                    "notification_type.eq.reminder)"
+                )
+            )
+            .order(
+                "id",
+                desc=True,
+            )
+            .limit(1)
+            .execute()
+        )
+
+        if not response.data:
+            return 0
+
+        return int(
+            response.data[0].get(
+                "id",
+                0,
+            )
+            or 0
+        )
+
+    def get_main_notification_events_after(
+        self,
+        last_id: int,
+    ):
+        self._require_login()
+
+        response = (
+            self.client.table(
+                "notification_events"
+            )
+            .select(
+                "id,source_key,source,title,message,"
+                "notification_type,created_at"
+            )
+            .eq(
+                "workspace_id",
+                self.workspace_id,
+            )
+            .or_(
+                (
+                    "source_key.like.main_%,"
+                    "and(source_key.eq.sa_sathorn,"
+                    "notification_type.eq.reminder)"
+                )
+            )
+            .gt(
+                "id",
+                int(last_id or 0),
+            )
+            .order(
+                "id",
+                desc=False,
+            )
+            .limit(100)
+            .execute()
+        )
+
+        return response.data or []
+
+    def disable_monitor_source(
+        self,
+        source_key: str,
+    ):
+        self._require_login()
+
+        if str(self.role or "").lower() != "admin":
+            raise RuntimeError(
+                "เฉพาะ Admin เท่านั้นที่ตั้งค่า Central Monitor ได้"
+            )
+
+        response = (
+            self.client.table("monitor_sources")
+            .update(
+                {
+                    "enabled": False,
+                    "updated_by": self.user.id,
+                }
+            )
+            .eq(
+                "workspace_id",
+                self.workspace_id,
+            )
+            .eq(
+                "source_key",
+                str(source_key or "").strip(),
+            )
+            .execute()
+        )
+
+        return response.data
+
+    def list_notify_sessions(self):
+        self._require_login()
+
+        if str(
+            self.role or ""
+        ).lower() != "admin":
+            raise RuntimeError(
+                "เฉพาะ Admin เท่านั้นที่ดู DailyLogNotify Sessions ได้"
+            )
+
+        response = (
+            self.client.rpc(
+                "list_notify_sessions"
+            ).execute()
+        )
+
+        return response.data or []
+
+    def revoke_notify_session(
+        self,
+        session_id: str,
+    ):
+        self._require_login()
+
+        if str(
+            self.role or ""
+        ).lower() != "admin":
+            raise RuntimeError(
+                "เฉพาะ Admin เท่านั้นที่ออก DailyLogNotify Session ได้"
+            )
+
+        session_id = str(
+            session_id or ""
+        ).strip()
+
+        if not session_id:
+            raise ValueError(
+                "session_id ห้ามว่าง"
+            )
+
+        response = (
+            self.client.rpc(
+                "revoke_notify_session",
+                {
+                    "p_session_id": session_id,
+                },
+            ).execute()
+        )
+
+        return bool(
+            response.data
+        )
+
+    def list_notify_devices(self):
+        self._require_login()
+
+        if str(
+            self.role or ""
+        ).lower() != "admin":
+            raise RuntimeError(
+                "เฉพาะ Admin เท่านั้นที่ดูสถานะ DailyLogNotify ได้"
+            )
+
+        response = (
+            self.client.rpc(
+                "list_notify_devices"
+            ).execute()
+        )
+
+        return response.data or []
+
+    def revoke_notify_device_session(
+        self,
+        device_id: str,
+    ):
+        self._require_login()
+
+        if str(
+            self.role or ""
+        ).lower() != "admin":
+            raise RuntimeError(
+                "เฉพาะ Admin เท่านั้นที่ออก Session ของ DailyLogNotify ได้"
+            )
+
+        device_id = str(
+            device_id or ""
+        ).strip()
+
+        if not device_id:
+            raise ValueError(
+                "device_id ห้ามว่าง"
+            )
+
+        response = (
+            self.client.rpc(
+                "revoke_notify_device_session",
+                {
+                    "p_device_id": device_id,
+                },
+            ).execute()
+        )
+
+        return bool(
+            response.data
+        )
+
+    def publish_notification_event(self, source: str, title: str, message: str, notification_type: str = "info"):
+        self._require_login()
+        payload = {
+            "workspace_id": self.workspace_id,
+            "source": str(source or "").strip(),
+            "title": str(title or "").strip(),
+            "message": str(message or ""),
+            "notification_type": str(notification_type or "info"),
+            "created_by": self.user.id,
+        }
+        response = (
+            self.client.table("notification_events")
+            .insert(payload)
+            .execute()
+        )
         return response.data[0] if response.data else None
 
     def update_log(self, log_id: int, title: str, description: str):

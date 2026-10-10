@@ -37,7 +37,16 @@ def run_async(owner, fn, on_finished, on_error=None, *args, **kwargs):
                 owner._workers.remove(worker)
 
     worker.signals.finished.connect(finished)
-    if on_error:
-        worker.signals.error.connect(on_error)
+
+    def failed(message):
+        try:
+            if on_error:
+                on_error(message)
+        finally:
+            if worker in owner._workers:
+                owner._workers.remove(worker)
+
+    worker.signals.error.connect(failed)
+
     QThreadPool.globalInstance().start(worker)
     return worker

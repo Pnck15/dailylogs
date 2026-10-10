@@ -35,9 +35,17 @@ if (-not $match.Success) {
 
 $version = $match.Groups[1].Value
 $tag = "v$version"
+$commit = (git rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not determine source commit."
+}
 
 $hash = (
     Get-FileHash "release\DailyLog.exe" -Algorithm SHA256
+).Hash.ToLowerInvariant()
+
+$updaterHash = (
+    Get-FileHash "release\DailyLogUpdater.exe" -Algorithm SHA256
 ).Hash.ToLowerInvariant()
 
 $downloadUrl = "https://github.com/$GitHubRepo/releases/download/$tag/DailyLog.exe"
@@ -46,6 +54,9 @@ $manifest = [ordered]@{
     version = $version
     download_url = $downloadUrl
     sha256 = $hash
+    updater_download_url = "https://github.com/$GitHubRepo/releases/download/$tag/DailyLogUpdater.exe"
+    updater_sha256 = $updaterHash
+    source_commit = $commit
     published_at = (
         Get-Date
     ).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -68,9 +79,13 @@ Write-Host "Repo    : $GitHubRepo"
 Write-Host "Tag     : $tag"
 Write-Host ""
 
-$existing = gh release view $tag --repo $GitHubRepo 2>$null
+$oldPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+gh release view $tag --repo $GitHubRepo *> $null
+$exists = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = $oldPreference
 
-if ($LASTEXITCODE -eq 0) {
+if ($exists) {
     throw "Release $tag already exists on GitHub. Increase APP_VERSION in main.py before publishing again."
 }
 
@@ -79,8 +94,9 @@ gh release create $tag `
     "release\DailyLogUpdater.exe" `
     "version.json" `
     --repo $GitHubRepo `
+    --target $commit `
     --title "DailyLog $version" `
-    --notes "DailyLog $version - automatic update release"
+    --notes "DailyLog $version - production release with automatic updates, SA Sathorn status display, notification source management and admin device/session controls."
 
 if ($LASTEXITCODE -ne 0) {
     throw "GitHub Release creation failed."

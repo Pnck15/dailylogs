@@ -2,7 +2,8 @@ import sys
 import os
 import shutil
 import json
-from datetime import datetime
+import uuid
+from datetime import datetime, date
 
 from PySide6.QtCore import (
     QTimer,
@@ -41,9 +42,12 @@ from PySide6.QtGui import (
 )
 
 from cloud_worker import CloudService
+from cloud_db import CloudDB
 from workers import run_async
 from sale_api_monitor import SaleAPIMonitor
+from sheet_monitor import NotificationPresenter
 from update_checker import UpdateChecker
+from notify_channels import NotificationChannels
 
 
 APP_ORGANIZATION = "MiniDailyLog"
@@ -51,7 +55,8 @@ APP_NAME = "DailyLog"
 APP_DISPLAY_NAME = "GAC日記"
 
 DEFAULT_ACCENT = "#2563EB"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.2.1"
+DEVELOPER_CREDIT = "Developed by 王纯真"
 
 UPDATE_CHECK_DELAY_MS = 2500
 
@@ -105,9 +110,37 @@ class DailyLog(QWidget):
             "MainNoti": False,
         }
 
+        self.sale_errors = {
+            "Sathorn": False,
+            "Srinakarin": False,
+            "SA": False,
+            "MainNoti": False,
+        }
+
+        self.sale_last_error = {
+            "Sathorn": "",
+            "Srinakarin": "",
+            "SA": "",
+            "MainNoti": "",
+        }
+
+        self.sale_last_elapsed = {
+            "Sathorn": 0.0,
+            "Srinakarin": 0.0,
+            "SA": 0.0,
+            "MainNoti": 0.0,
+        }
+
         self.sale_notifications = []
 
         self.sale_due_notified = set()
+
+        # Admin-only notification integrations (GAS / LINE)
+        self.notification_channels = NotificationChannels()
+        self.line_status = "idle"
+
+        # Presentation only. This object never calls GAS.
+        self.notification_presenter = NotificationPresenter(self)
 
         # =========================================
         # Settings
@@ -219,6 +252,19 @@ class DailyLog(QWidget):
 
         self._cloud_request_generation = 0
 
+        self._main_event_last_id = 0
+        self._main_event_cursor_ready = False
+        self._main_event_poll_busy = False
+        self.main_notification_timer = QTimer(
+            self
+        )
+        self.main_notification_timer.setInterval(
+            15000
+        )
+        self.main_notification_timer.timeout.connect(
+            self.poll_main_notification_events
+        )
+
         self._search_timer = QTimer(self)
 
         self._search_timer.setSingleShot(True)
@@ -241,6 +287,19 @@ class DailyLog(QWidget):
             "SA": False,
             "MainNoti": False,
         }
+
+        self._sale_retry_waiting = {
+            "Sathorn": False,
+            "Srinakarin": False,
+            "SA": False,
+            "MainNoti": False,
+        }
+
+        # Heavy GAS scans are serialized across all sources.
+        # Pings may run in parallel, but only one action=changes call
+        # is allowed at a time to avoid hammering Google Sheets/GAS.
+        self._gas_scan_active = None
+        self._gas_scan_queue = []
 
         # =========================================
         # Database / Cloud Login
@@ -289,12 +348,17 @@ class DailyLog(QWidget):
             APP_DISPLAY_NAME
         )
 
-        # ปุ่ม MainNoti (แทนตำแหน่งเดิมของกล่อง Search)
+        # Legacy MainNoti button kept only for backward-compatible
+        # internal monitor helpers. Main Notification Sources now live in Menu.
         self.main_noti_button = QPushButton(
-            "MainNoti"
+            "MainNoti",
+            self,
         )
-        self.main_noti_button.clicked.connect(
-            lambda: self.configure_sale_branch("MainNoti")
+        self.main_noti_button.hide()
+
+        self.line_status_button = QPushButton("⚪ LINE")
+        self.line_status_button.clicked.connect(
+            self.configure_line_notifications
         )
 
         # =========================================
@@ -332,7 +396,7 @@ class DailyLog(QWidget):
         # =========================================
 
         self.sa_notify_button = QPushButton(
-            "SA Notify"
+            "⚪ SA Sathorn"
         )
 
         self.sa_notify_button.clicked.connect(
@@ -393,21 +457,26 @@ class DailyLog(QWidget):
             self.title
         )
 
-        header.addWidget(
-            self.main_noti_button
-        )
+        # Compact monitor status buttons.
+        # Click still opens the Admin GAS configuration dialog.
+        for button in (
+            self.sale_alert_button,
+            self.sale_alert_button_srinakarin,
+            self.sa_notify_button,
+            self.line_status_button,
+        ):
+            button.setFixedHeight(24)
 
-        header.addWidget(
-            self.sale_alert_button
-        )
+        self.sale_alert_button.setFixedWidth(72)
+        self.sale_alert_button_srinakarin.setFixedWidth(82)
+        # Keep enough width for the status dot + "SA Sathorn".
+        self.sa_notify_button.setFixedWidth(86)
+        self.line_status_button.setFixedWidth(66)
 
-        header.addWidget(
-            self.sale_alert_button_srinakarin
-        )
-
-        header.addWidget(
-            self.sa_notify_button
-        )
+        header.addWidget(self.sale_alert_button)
+        header.addWidget(self.sale_alert_button_srinakarin)
+        header.addWidget(self.sa_notify_button)
+        header.addWidget(self.line_status_button)
 
         header.addStretch()
 
@@ -471,6 +540,18 @@ class DailyLog(QWidget):
         # =========================================
 
         self.start_saved_sale_monitors()
+        self.update_line_button()
+
+        # Sync saved GAS endpoints to Supabase Central Worker.
+        QTimer.singleShot(
+            3000,
+            self.sync_saved_monitor_sources_to_cloud,
+        )
+
+        QTimer.singleShot(
+            3500,
+            self.start_main_notification_event_stream,
+        )
 
         self.restore_saved_background()
 
@@ -500,7 +581,8 @@ class DailyLog(QWidget):
                         (
                             "คุณกำลังใช้ DailyLog "
                             "เวอร์ชันล่าสุด\n\n"
-                            f"Version: {APP_VERSION}"
+                            f"Version: {APP_VERSION}\n\n"
+                            f"{DEVELOPER_CREDIT}"
                         ),
                     )
 
@@ -550,7 +632,8 @@ class DailyLog(QWidget):
             layout.addWidget(
                 QLabel(
                     f"เวอร์ชันปัจจุบัน: {APP_VERSION}\n"
-                    f"เวอร์ชันใหม่: {latest}"
+                    f"เวอร์ชันใหม่: {latest}\n\n"
+                    f"{DEVELOPER_CREDIT}"
                 )
             )
 
@@ -674,7 +757,8 @@ class DailyLog(QWidget):
                     "Update",
                     (
                         "ตรวจสอบ Update ไม่สำเร็จ\n\n"
-                        f"{message}"
+                        f"{message}\n\n"
+                        f"{DEVELOPER_CREDIT}"
                     ),
                 )
 
@@ -1475,6 +1559,74 @@ class DailyLog(QWidget):
 
         menu.addSeparator()
 
+        notify_menu = menu.addMenu(
+            "🔔 Notification System Settings"
+        )
+
+        for branch, label in (
+            ("Sathorn", "Sale Deli Sathorn GAS"),
+            ("Srinakarin", "Sale Deli Srinakarin GAS"),
+            ("SA", "SA Sathorn GAS"),
+        ):
+            action = notify_menu.addAction(label)
+            action.triggered.connect(
+                lambda checked=False, b=branch:
+                self.configure_sale_branch(b)
+            )
+
+        main_sources_action = notify_menu.addAction(
+            "📚 Main Notification Sources..."
+        )
+        main_sources_action.triggered.connect(
+            self.open_main_notification_sources
+        )
+
+        devices_action = notify_menu.addAction(
+            "🖥 DailyLogNotify Devices / Sessions..."
+        )
+        devices_action.triggered.connect(
+            self.open_notify_devices_sessions
+        )
+
+        notify_menu.addSeparator()
+
+        reconnect_menu = notify_menu.addMenu(
+            "🔄 Re-connect GAS"
+        )
+
+        reconnect_all_action = reconnect_menu.addAction(
+            "Re-connect all GAS"
+        )
+        reconnect_all_action.triggered.connect(
+            self.reconnect_all_sale_monitors
+        )
+
+        reconnect_menu.addSeparator()
+
+        for branch, label in (
+            ("Sathorn", "Sale Deli Sathorn"),
+            ("Srinakarin", "Sale Deli Srinakarin"),
+            ("SA", "SA Sathorn"),
+        ):
+            action = reconnect_menu.addAction(
+                f"Re-connect {label}"
+            )
+            action.triggered.connect(
+                lambda checked=False, b=branch:
+                self.reconnect_sale_monitor(b)
+            )
+
+        notify_menu.addSeparator()
+
+        line_action = notify_menu.addAction(
+            "LINE Messaging API"
+        )
+        line_action.triggered.connect(
+            self.configure_line_notifications
+        )
+
+        menu.addSeparator()
+
         update_action = menu.addAction(
             "🔄 Check for Program Update"
         )
@@ -1508,6 +1660,1491 @@ class DailyLog(QWidget):
                 self.menu_button.rect().bottomLeft()
             )
         )
+
+    # =========================================
+    # DailyLogNotify Devices / Sessions
+    # =========================================
+
+    def open_notify_devices_sessions(
+        self,
+    ):
+        dialog = QDialog(
+            self
+        )
+        dialog.setWindowTitle(
+            "DailyLogNotify Devices / Sessions"
+        )
+        dialog.resize(
+            820,
+            560,
+        )
+
+        layout = QVBoxLayout(
+            dialog
+        )
+
+        info = QLabel(
+            "ตรวจสอบเครื่องที่ Login DailyLogNotify และออก Session รายเครื่อง\n"
+            "เครื่องที่ยังเป็นเวอร์ชันเก่าจะขึ้น Unknown/Legacy จนกว่าจะอัปเดตและส่ง Heartbeat"
+        )
+        info.setWordWrap(
+            True
+        )
+        layout.addWidget(
+            info
+        )
+
+        session_list = QListWidget()
+        layout.addWidget(
+            session_list,
+            2,
+        )
+
+        details = QTextEdit()
+        details.setReadOnly(
+            True
+        )
+        details.setMinimumHeight(
+            180
+        )
+        details.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        layout.addWidget(
+            details,
+            1,
+        )
+
+        status = QLabel(
+            ""
+        )
+        status.setWordWrap(
+            True
+        )
+        layout.addWidget(
+            status
+        )
+
+        buttons = QHBoxLayout()
+
+        refresh_button = QPushButton(
+            "Refresh"
+        )
+        logout_button = QPushButton(
+            "Logout Selected Session"
+        )
+        close_button = QPushButton(
+            "Close"
+        )
+
+        logout_button.setEnabled(
+            False
+        )
+
+        buttons.addWidget(
+            refresh_button
+        )
+        buttons.addWidget(
+            logout_button
+        )
+        buttons.addStretch()
+        buttons.addWidget(
+            close_button
+        )
+
+        layout.addLayout(
+            buttons
+        )
+
+        dialog._session_list = (
+            session_list
+        )
+        dialog._details = (
+            details
+        )
+        dialog._status = (
+            status
+        )
+        dialog._logout_button = (
+            logout_button
+        )
+        dialog._session_rows = {}
+
+        def selected_changed():
+            item = (
+                session_list.currentItem()
+            )
+
+            if item is None:
+                logout_button.setEnabled(
+                    False
+                )
+                details.clear()
+                return
+
+            session_id = str(
+                item.data(
+                    Qt.ItemDataRole.UserRole
+                )
+                or ""
+            ).strip()
+
+            row = (
+                dialog._session_rows.get(
+                    session_id,
+                    {}
+                )
+            )
+
+            if not row:
+                logout_button.setEnabled(
+                    False
+                )
+                details.clear()
+                return
+
+            registered = bool(
+                row.get(
+                    "device_registered",
+                    False,
+                )
+            )
+            online = bool(
+                row.get(
+                    "online",
+                    False,
+                )
+            )
+
+            sources = row.get(
+                "selected_sources",
+                [],
+            )
+
+            if isinstance(
+                sources,
+                str,
+            ):
+                try:
+                    sources = json.loads(
+                        sources
+                    )
+                except Exception:
+                    sources = [
+                        sources
+                    ]
+
+            if not isinstance(
+                sources,
+                list,
+            ):
+                sources = []
+
+            source_text = (
+                ", ".join(
+                    str(item)
+                    for item in sources
+                    if str(
+                        item
+                    ).strip()
+                )
+                or "-"
+            )
+
+            detail_lines = [
+                (
+                    "Status: 🟢 Online"
+                    if online
+                    else (
+                        "Status: ⚪ Registered / Offline"
+                        if registered
+                        else "Status: ⚪ Legacy session / ยังไม่มี Device Heartbeat"
+                    )
+                ),
+                (
+                    "User: "
+                    + str(
+                        row.get(
+                            "user_email",
+                            "",
+                        )
+                        or "-"
+                    )
+                ),
+                (
+                    "Device: "
+                    + str(
+                        row.get(
+                            "device_name",
+                            "",
+                        )
+                        or "Unknown"
+                    )
+                ),
+                (
+                    "App Version: "
+                    + str(
+                        row.get(
+                            "app_version",
+                            "",
+                        )
+                        or "Unknown"
+                    )
+                ),
+                (
+                    "Device ID: "
+                    + str(
+                        row.get(
+                            "device_id",
+                            "",
+                        )
+                        or "-"
+                    )
+                ),
+                (
+                    "Session ID: "
+                    + session_id
+                ),
+                (
+                    "Session Created: "
+                    + str(
+                        row.get(
+                            "session_created_at",
+                            "",
+                        )
+                        or "-"
+                    )
+                ),
+                (
+                    "Session Updated: "
+                    + str(
+                        row.get(
+                            "session_updated_at",
+                            "",
+                        )
+                        or "-"
+                    )
+                ),
+                (
+                    "Last Heartbeat: "
+                    + str(
+                        row.get(
+                            "last_seen_at",
+                            "",
+                        )
+                        or "-"
+                    )
+                ),
+                (
+                    "Windows Startup: "
+                    + (
+                        "✅"
+                        if row.get(
+                            "startup_enabled",
+                            False,
+                        )
+                        else "⚪"
+                    )
+                ),
+                (
+                    "Updater Ready: "
+                    + (
+                        "✅"
+                        if row.get(
+                            "updater_ready",
+                            False,
+                        )
+                        else "⚪"
+                    )
+                ),
+                (
+                    "Sources: "
+                    + source_text
+                ),
+            ]
+
+            details.setPlainText(
+                "\n".join(
+                    detail_lines
+                )
+            )
+
+            logout_button.setEnabled(
+                True
+            )
+
+        def logout_selected():
+            item = (
+                session_list.currentItem()
+            )
+
+            if item is None:
+                return
+
+            session_id = str(
+                item.data(
+                    Qt.ItemDataRole.UserRole
+                )
+                or ""
+            ).strip()
+
+            row = (
+                dialog._session_rows.get(
+                    session_id,
+                    {}
+                )
+            )
+
+            if not session_id:
+                return
+
+            device_name = str(
+                row.get(
+                    "device_name",
+                    "",
+                )
+                or "Unknown device"
+            )
+            user_email = str(
+                row.get(
+                    "user_email",
+                    "",
+                )
+                or ""
+            )
+
+            answer = QMessageBox.question(
+                dialog,
+                "Logout DailyLogNotify Session",
+                (
+                    "ต้องการออก Session นี้หรือไม่?\n\n"
+                    f"Device: {device_name}\n"
+                    f"User: {user_email}\n"
+                    f"Session: {session_id[:12]}..."
+                ),
+            )
+
+            if (
+                answer
+                != QMessageBox.StandardButton.Yes
+            ):
+                return
+
+            logout_button.setEnabled(
+                False
+            )
+            status.setText(
+                "กำลังออก Session..."
+            )
+
+            request_id = self.cloud.call(
+                "revoke_notify_session",
+                session_id,
+            )
+
+            self._cloud_pending[
+                request_id
+            ] = (
+                "notify_session_revoke",
+                dialog,
+            )
+
+        session_list.currentItemChanged.connect(
+            lambda _current, _previous:
+            selected_changed()
+        )
+        refresh_button.clicked.connect(
+            lambda:
+            self._load_notify_sessions(
+                dialog
+            )
+        )
+        logout_button.clicked.connect(
+            logout_selected
+        )
+        close_button.clicked.connect(
+            dialog.close
+        )
+
+        self._load_notify_sessions(
+            dialog
+        )
+
+        dialog.exec()
+
+    def _load_notify_sessions(
+        self,
+        dialog,
+    ):
+        if dialog is None:
+            return
+
+        dialog._status.setText(
+            "กำลังโหลด DailyLogNotify Sessions..."
+        )
+
+        request_id = self.cloud.call(
+            "list_notify_sessions"
+        )
+
+        self._cloud_pending[
+            request_id
+        ] = (
+            "notify_sessions_load",
+            dialog,
+        )
+
+    def _render_notify_sessions(
+        self,
+        dialog,
+        rows,
+    ):
+        if dialog is None:
+            return
+
+        dialog._session_rows = {}
+        dialog._session_list.clear()
+        dialog._details.clear()
+        dialog._logout_button.setEnabled(
+            False
+        )
+
+        online_count = 0
+        registered_count = 0
+
+        for row in rows or []:
+            if not isinstance(
+                row,
+                dict,
+            ):
+                continue
+
+            session_id = str(
+                row.get(
+                    "session_id",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            if not session_id:
+                continue
+
+            dialog._session_rows[
+                session_id
+            ] = row
+
+            registered = bool(
+                row.get(
+                    "device_registered",
+                    False,
+                )
+            )
+            online = bool(
+                row.get(
+                    "online",
+                    False,
+                )
+            )
+
+            if registered:
+                registered_count += 1
+
+            if online:
+                online_count += 1
+
+            icon = (
+                "🟢"
+                if online
+                else "⚪"
+            )
+
+            device_name = str(
+                row.get(
+                    "device_name",
+                    "",
+                )
+                or (
+                    "Unknown device (Legacy)"
+                    if not registered
+                    else "Unknown device"
+                )
+            )
+
+            version = str(
+                row.get(
+                    "app_version",
+                    "",
+                )
+                or (
+                    "Legacy"
+                    if not registered
+                    else "Unknown"
+                )
+            )
+
+            email = str(
+                row.get(
+                    "user_email",
+                    "",
+                )
+                or ""
+            )
+
+            last_seen = str(
+                row.get(
+                    "last_seen_at",
+                    "",
+                )
+                or row.get(
+                    "session_updated_at",
+                    "",
+                )
+                or ""
+            )
+
+            item = QListWidgetItem(
+                (
+                    f"{icon} {device_name} | "
+                    f"{email} | v{version}\n"
+                    f"Last seen: {last_seen} | "
+                    f"Session: {session_id[:12]}..."
+                )
+            )
+            item.setData(
+                Qt.ItemDataRole.UserRole,
+                session_id,
+            )
+
+            dialog._session_list.addItem(
+                item
+            )
+
+        total = len(
+            dialog._session_rows
+        )
+
+        dialog._status.setText(
+            (
+                f"Sessions: {total} | "
+                f"Registered devices: {registered_count} | "
+                f"Online: {online_count}"
+            )
+        )
+
+    # =========================================
+    # Dynamic Main Notification Sources
+    # =========================================
+
+    def open_main_notification_sources(
+        self,
+    ):
+        dialog = QDialog(
+            self
+        )
+        dialog.setWindowTitle(
+            "Main Notification Sources"
+        )
+        dialog.resize(
+            760,
+            470,
+        )
+
+        root = QHBoxLayout(
+            dialog
+        )
+
+        left = QVBoxLayout()
+        left.addWidget(
+            QLabel(
+                "Configured Sources"
+            )
+        )
+
+        source_list = QListWidget()
+        left.addWidget(
+            source_list
+        )
+
+        left_buttons = QHBoxLayout()
+        new_button = QPushButton(
+            "+ New"
+        )
+        reload_button = QPushButton(
+            "Reload"
+        )
+        left_buttons.addWidget(
+            new_button
+        )
+        left_buttons.addWidget(
+            reload_button
+        )
+        left.addLayout(
+            left_buttons
+        )
+
+        root.addLayout(
+            left,
+            1,
+        )
+
+        right = QVBoxLayout()
+
+        right.addWidget(
+            QLabel(
+                "Source Name"
+            )
+        )
+        name_input = QLineEdit()
+        name_input.setPlaceholderText(
+            "เช่น Finance Status / Booking / Stock"
+        )
+        right.addWidget(
+            name_input
+        )
+
+        right.addWidget(
+            QLabel(
+                "Apps Script Web App URL"
+            )
+        )
+        url_input = QLineEdit()
+        url_input.setPlaceholderText(
+            "https://script.google.com/macros/s/.../exec"
+        )
+        right.addWidget(
+            url_input
+        )
+
+        enabled_check = QCheckBox(
+            "Enable monitoring"
+        )
+        enabled_check.setChecked(
+            True
+        )
+
+        notify_check = QCheckBox(
+            "Show this Source in DailyLogNotify"
+        )
+        notify_check.setChecked(
+            False
+        )
+
+        right.addWidget(
+            enabled_check
+        )
+        right.addWidget(
+            notify_check
+        )
+
+        explain = QLabel(
+            "ถ้าไม่ติ๊ก DailyLogNotify: Event ยังเข้า DailyLog.exe "
+            "ผ่าน Central แต่จะไม่ปรากฏเป็นตัวเลือกในเครื่องพนักงาน"
+        )
+        explain.setWordWrap(
+            True
+        )
+        right.addWidget(
+            explain
+        )
+
+        status = QLabel("")
+        status.setWordWrap(
+            True
+        )
+        right.addWidget(
+            status
+        )
+
+        right.addStretch()
+
+        buttons = QHBoxLayout()
+
+        test_button = QPushButton(
+            "Test Connection"
+        )
+        save_button = QPushButton(
+            "Save"
+        )
+        delete_button = QPushButton(
+            "Delete"
+        )
+        close_button = QPushButton(
+            "Close"
+        )
+
+        buttons.addWidget(
+            test_button
+        )
+        buttons.addWidget(
+            save_button
+        )
+        buttons.addWidget(
+            delete_button
+        )
+        buttons.addStretch()
+        buttons.addWidget(
+            close_button
+        )
+        right.addLayout(
+            buttons
+        )
+
+        root.addLayout(
+            right,
+            2,
+        )
+
+        dialog._source_list = (
+            source_list
+        )
+        dialog._name_input = (
+            name_input
+        )
+        dialog._url_input = (
+            url_input
+        )
+        dialog._enabled_check = (
+            enabled_check
+        )
+        dialog._notify_check = (
+            notify_check
+        )
+        dialog._status = status
+        dialog._source_rows = {}
+        dialog._source_key = ""
+
+        def clear_form():
+            dialog._source_key = ""
+            source_list.clearSelection()
+            name_input.clear()
+            url_input.clear()
+            enabled_check.setChecked(
+                True
+            )
+            notify_check.setChecked(
+                False
+            )
+            delete_button.setEnabled(
+                False
+            )
+            status.setText(
+                "สร้าง Source ใหม่"
+            )
+
+        def select_source():
+            item = (
+                source_list.currentItem()
+            )
+
+            if item is None:
+                return
+
+            key = str(
+                item.data(
+                    Qt.ItemDataRole.UserRole
+                )
+                or ""
+            )
+
+            row = (
+                dialog._source_rows.get(
+                    key
+                )
+            )
+
+            if not row:
+                return
+
+            dialog._source_key = key
+
+            name_input.setText(
+                str(
+                    row.get(
+                        "source_name",
+                        "",
+                    )
+                    or ""
+                )
+            )
+            url_input.setText(
+                str(
+                    row.get(
+                        "gas_url",
+                        "",
+                    )
+                    or ""
+                )
+            )
+            enabled_check.setChecked(
+                bool(
+                    row.get(
+                        "enabled",
+                        True,
+                    )
+                )
+            )
+            notify_check.setChecked(
+                bool(
+                    row.get(
+                        "publish_to_notify",
+                        False,
+                    )
+                )
+            )
+            delete_button.setEnabled(
+                True
+            )
+            status.setText(
+                f"Source key: {key}"
+            )
+
+        def test_connection():
+            url = (
+                url_input.text()
+                .strip()
+                .replace(
+                    "https:https://",
+                    "https://",
+                    1,
+                )
+            )
+
+            if not url:
+                QMessageBox.warning(
+                    dialog,
+                    "Main Notification Source",
+                    "กรุณาใส่ Apps Script Web App URL",
+                )
+                return
+
+            if (
+                "docs.google.com/spreadsheets"
+                in url
+                or "/spreadsheets/d/"
+                in url
+            ):
+                QMessageBox.warning(
+                    dialog,
+                    "URL ไม่ถูกต้อง",
+                    (
+                        "ต้องใช้ Apps Script Web App URL "
+                        "ที่ลงท้ายด้วย /exec"
+                    ),
+                )
+                return
+
+            status.setText(
+                "กำลังทดสอบ Connection..."
+            )
+            test_button.setEnabled(
+                False
+            )
+
+            monitor = SaleAPIMonitor(
+                url
+            )
+
+            def ok(result):
+                test_button.setEnabled(
+                    True
+                )
+                version = str(
+                    result.get(
+                        "version",
+                        "",
+                    )
+                    or ""
+                ).strip()
+                status.setText(
+                    "✅ Connection สำเร็จ"
+                    + (
+                        f" | API: {version}"
+                        if version
+                        else ""
+                    )
+                )
+
+            def failed(message):
+                test_button.setEnabled(
+                    True
+                )
+                status.setText(
+                    "❌ Connection ไม่สำเร็จ\n"
+                    f"{message}"
+                )
+
+            run_async(
+                self,
+                monitor.ping,
+                ok,
+                failed,
+            )
+
+        def save_source():
+            name = (
+                name_input.text()
+                .strip()
+            )
+            url = (
+                url_input.text()
+                .strip()
+                .replace(
+                    "https:https://",
+                    "https://",
+                    1,
+                )
+            )
+
+            if not name or not url:
+                QMessageBox.warning(
+                    dialog,
+                    "Main Notification Source",
+                    "กรุณาใส่ Source Name และ Web App URL",
+                )
+                return
+
+            if (
+                "docs.google.com/spreadsheets"
+                in url
+                or "/spreadsheets/d/"
+                in url
+                or not url.startswith(
+                    (
+                        "http://",
+                        "https://",
+                    )
+                )
+            ):
+                QMessageBox.warning(
+                    dialog,
+                    "URL ไม่ถูกต้อง",
+                    (
+                        "ต้องใช้ Apps Script Web App URL "
+                        "ที่ลงท้ายด้วย /exec"
+                    ),
+                )
+                return
+
+            source_key = (
+                dialog._source_key
+                or (
+                    "main_"
+                    + uuid.uuid4().hex[:12]
+                )
+            )
+
+            existing = (
+                dialog._source_rows.get(
+                    source_key,
+                    {}
+                )
+            )
+
+            display_order = int(
+                existing.get(
+                    "display_order",
+                    200
+                    + len(
+                        dialog._source_rows
+                    ),
+                )
+                or 200
+            )
+
+            status.setText(
+                "กำลังบันทึก..."
+            )
+            save_button.setEnabled(
+                False
+            )
+
+            request_id = self.cloud.call(
+                "upsert_monitor_source",
+                source_key,
+                name,
+                "structured",
+                url,
+                enabled_check.isChecked(),
+                notify_check.isChecked(),
+                display_order,
+            )
+
+            self._cloud_pending[
+                request_id
+            ] = (
+                "main_source_save",
+                dialog,
+            )
+
+        def delete_source():
+            source_key = (
+                dialog._source_key
+            )
+
+            if not source_key:
+                return
+
+            answer = QMessageBox.question(
+                dialog,
+                "Delete Main Notification Source",
+                (
+                    "ต้องการลบ Source นี้หรือไม่?\n\n"
+                    f"{name_input.text().strip()}"
+                ),
+            )
+
+            if (
+                answer
+                != QMessageBox.StandardButton.Yes
+            ):
+                return
+
+            status.setText(
+                "กำลังลบ..."
+            )
+
+            request_id = self.cloud.call(
+                "delete_monitor_source",
+                source_key,
+            )
+
+            self._cloud_pending[
+                request_id
+            ] = (
+                "main_source_delete",
+                dialog,
+            )
+
+        source_list.currentItemChanged.connect(
+            lambda _current, _previous:
+            select_source()
+        )
+        new_button.clicked.connect(
+            clear_form
+        )
+        reload_button.clicked.connect(
+            lambda:
+            self._load_main_notification_sources(
+                dialog
+            )
+        )
+        test_button.clicked.connect(
+            test_connection
+        )
+        save_button.clicked.connect(
+            save_source
+        )
+        delete_button.clicked.connect(
+            delete_source
+        )
+        close_button.clicked.connect(
+            dialog.close
+        )
+
+        delete_button.setEnabled(
+            False
+        )
+
+        self._load_main_notification_sources(
+            dialog
+        )
+
+        dialog.exec()
+
+    def _load_main_notification_sources(
+        self,
+        dialog,
+    ):
+        if (
+            dialog is None
+            or not dialog.isVisible()
+        ):
+            # During initial open exec() has not started yet, but the
+            # dialog object is still valid. Continue unless deleted.
+            pass
+
+        dialog._status.setText(
+            "กำลังโหลด Sources..."
+        )
+
+        request_id = self.cloud.call(
+            "list_monitor_sources"
+        )
+
+        self._cloud_pending[
+            request_id
+        ] = (
+            "main_sources_load",
+            dialog,
+        )
+
+    def _render_main_notification_sources(
+        self,
+        dialog,
+        rows,
+    ):
+        if dialog is None:
+            return
+
+        source_rows = {}
+
+        for row in rows or []:
+            if not isinstance(
+                row,
+                dict,
+            ):
+                continue
+
+            key = str(
+                row.get(
+                    "source_key",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            if not key.startswith(
+                "main_"
+            ):
+                continue
+
+            source_rows[
+                key
+            ] = row
+
+        dialog._source_rows = (
+            source_rows
+        )
+        dialog._source_list.clear()
+
+        for key, row in source_rows.items():
+            name = str(
+                row.get(
+                    "source_name",
+                    key,
+                )
+                or key
+            )
+
+            enabled = bool(
+                row.get(
+                    "enabled",
+                    True,
+                )
+            )
+            to_notify = bool(
+                row.get(
+                    "publish_to_notify",
+                    False,
+                )
+            )
+
+            marks = (
+                ("🟢" if enabled else "⚪")
+                + (" 🔔" if to_notify else "")
+            )
+
+            item = QListWidgetItem(
+                f"{marks} {name}"
+            )
+            item.setData(
+                Qt.ItemDataRole.UserRole,
+                key,
+            )
+            dialog._source_list.addItem(
+                item
+            )
+
+        dialog._status.setText(
+            (
+                f"โหลดแล้ว {len(source_rows)} Sources"
+                if source_rows
+                else "ยังไม่มี Main Notification Source"
+            )
+        )
+
+    # =========================================
+    # Central Main Notification Event Stream
+    # =========================================
+
+    def start_main_notification_event_stream(
+        self,
+    ):
+        saved = self.settings.value(
+            "main_notifications_last_event_id",
+            None,
+        )
+
+        if saved is None:
+            request_id = self.cloud.call(
+                "get_latest_main_notification_event_id"
+            )
+            self._cloud_pending[
+                request_id
+            ] = (
+                "main_event_cursor_init",
+                None,
+            )
+            return
+
+        try:
+            self._main_event_last_id = int(
+                saved
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            self._main_event_last_id = 0
+
+        self._main_event_cursor_ready = (
+            True
+        )
+
+        if not self.main_notification_timer.isActive():
+            self.main_notification_timer.start()
+
+        self.poll_main_notification_events()
+
+    def poll_main_notification_events(
+        self,
+    ):
+        if (
+            not self._main_event_cursor_ready
+            or self._main_event_poll_busy
+        ):
+            return
+
+        self._main_event_poll_busy = True
+
+        request_id = self.cloud.call(
+            "get_main_notification_events_after",
+            self._main_event_last_id,
+        )
+
+        self._cloud_pending[
+            request_id
+        ] = (
+            "main_events",
+            None,
+        )
+
+    def _process_main_notification_events(
+        self,
+        rows,
+    ):
+        for row in rows or []:
+            if not isinstance(
+                row,
+                dict,
+            ):
+                continue
+
+            try:
+                event_id = int(
+                    row.get(
+                        "id",
+                        0,
+                    )
+                    or 0
+                )
+            except (
+                TypeError,
+                ValueError,
+            ):
+                event_id = 0
+
+            title = str(
+                row.get(
+                    "title",
+                    "Main Notification",
+                )
+                or "Main Notification"
+            )
+
+            message = str(
+                row.get(
+                    "message",
+                    "",
+                )
+                or ""
+            )
+
+            notification_type = str(
+                row.get(
+                    "notification_type",
+                    "info",
+                )
+                or "info"
+            )
+
+            show_popup = True
+
+            created_at = str(
+                row.get(
+                    "created_at",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            if created_at:
+                try:
+                    parsed = datetime.fromisoformat(
+                        created_at.replace(
+                            "Z",
+                            "+00:00",
+                        )
+                    )
+                    show_popup = (
+                        parsed.astimezone().date()
+                        ==
+                        datetime.now().astimezone().date()
+                    )
+                except ValueError:
+                    show_popup = True
+
+            self.add_sale_notification(
+                title,
+                message,
+                notification_type,
+                show_toast=show_popup,
+            )
+
+            if (
+                event_id
+                > self._main_event_last_id
+            ):
+                self._main_event_last_id = (
+                    event_id
+                )
+
+        self.settings.setValue(
+            "main_notifications_last_event_id",
+            self._main_event_last_id,
+        )
+        self.settings.sync()
+
+    def update_line_button(self):
+
+        enabled = self.notification_channels.line_enabled()
+        token = self.notification_channels.line_token()
+        target = self.notification_channels.line_target()
+
+        if self.line_status == "busy":
+            dot = "🟡"
+            tip = "กำลังตรวจสอบ LINE"
+        elif self.line_status == "error":
+            dot = "🔴"
+            tip = "LINE เชื่อมต่อหรือส่งข้อความไม่สำเร็จ"
+        elif enabled and token and target:
+            dot = "🟢"
+            tip = "LINE พร้อมทำงาน"
+        elif enabled:
+            dot = "🔴"
+            tip = "เปิด LINE แล้ว แต่ Token หรือ Target ID ไม่ครบ"
+        else:
+            dot = "⚪"
+            tip = "LINE ยังไม่ได้เปิดใช้งาน"
+
+        self.line_status_button.setText(f"{dot} LINE")
+        self.line_status_button.setToolTip(tip)
+
+    def configure_line_notifications(self):
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("LINE Messaging API")
+        dialog.resize(520, 250)
+
+        layout = QVBoxLayout(dialog)
+
+        enabled = QCheckBox(
+            "เปิดส่ง Notification ไป LINE"
+        )
+        enabled.setChecked(
+            self.notification_channels.line_enabled()
+        )
+
+        token = QLineEdit(
+            self.notification_channels.line_token()
+        )
+        token.setEchoMode(
+            QLineEdit.EchoMode.Password
+        )
+        token.setPlaceholderText(
+            "Channel access token"
+        )
+
+        target = QLineEdit(
+            self.notification_channels.line_target()
+        )
+        target.setPlaceholderText(
+            "User ID / Group ID"
+        )
+
+        layout.addWidget(enabled)
+        layout.addWidget(QLabel("Channel access token"))
+        layout.addWidget(token)
+        layout.addWidget(QLabel("User / Group ID"))
+        layout.addWidget(target)
+
+        buttons = QHBoxLayout()
+        test_button = QPushButton("Test LINE")
+        save_button = QPushButton("Save")
+        close_button = QPushButton("Close")
+        buttons.addWidget(test_button)
+        buttons.addStretch()
+        buttons.addWidget(save_button)
+        buttons.addWidget(close_button)
+        layout.addLayout(buttons)
+
+        def save():
+            self.notification_channels.save_line(
+                enabled.isChecked(),
+                token.text(),
+                target.text(),
+            )
+            self.line_status = "idle"
+            self.update_line_button()
+            QMessageBox.information(
+                dialog,
+                "LINE",
+                "บันทึกการตั้งค่าแล้ว",
+            )
+
+        def test():
+            self.notification_channels.save_line(
+                enabled.isChecked(),
+                token.text(),
+                target.text(),
+            )
+            self.line_status = "busy"
+            self.update_line_button()
+            QApplication.processEvents()
+            ok, message = self.notification_channels.send_line(
+                "DailyLog: LINE test message"
+            )
+            self.line_status = "idle" if ok else "error"
+            self.update_line_button()
+            if ok:
+                QMessageBox.information(
+                    dialog,
+                    "LINE",
+                    message,
+                )
+            else:
+                QMessageBox.warning(
+                    dialog,
+                    "LINE",
+                    message,
+                )
+
+        save_button.clicked.connect(save)
+        test_button.clicked.connect(test)
+        close_button.clicked.connect(dialog.close)
+        dialog.exec()
 
     def change_program_color(self):
 
@@ -2304,7 +3941,7 @@ class DailyLog(QWidget):
         notification_layout.setSpacing(5)
 
         self.notification_title = QLabel(
-            "🔔 Sale Delivery Notifications"
+            "🔔 Notification Logs"
         )
         self.notification_title.setStyleSheet(
             "font-weight: bold; padding: 4px;"
@@ -2317,6 +3954,10 @@ class DailyLog(QWidget):
         )
         self.notification_list.setSpacing(4)
         self.notification_list.setUniformItemSizes(False)
+
+        self.notification_presenter.set_central_list(
+            self.notification_list
+        )
 
         notification_layout.addWidget(
             self.notification_title
@@ -2603,6 +4244,141 @@ class DailyLog(QWidget):
 
             self.back_to_calendar()
 
+        elif kind == "notify_sessions_load":
+
+            dialog = payload
+
+            if (
+                dialog is not None
+                and dialog.isVisible()
+            ):
+                self._render_notify_sessions(
+                    dialog,
+                    result or [],
+                )
+
+        elif kind == "notify_session_revoke":
+
+            dialog = payload
+
+            if (
+                dialog is not None
+                and dialog.isVisible()
+            ):
+                if result:
+                    dialog._status.setText(
+                        "✅ ออก Session แล้ว"
+                    )
+                else:
+                    dialog._status.setText(
+                        "⚠️ ไม่พบ Session หรือ Session ถูกออกแล้ว"
+                    )
+
+                self._load_notify_sessions(
+                    dialog
+                )
+
+        elif kind == "main_sources_load":
+
+            dialog = payload
+
+            if (
+                dialog is not None
+                and dialog.isVisible()
+            ):
+                self._render_main_notification_sources(
+                    dialog,
+                    result or [],
+                )
+
+        elif kind == "main_source_save":
+
+            dialog = payload
+
+            if (
+                dialog is not None
+                and dialog.isVisible()
+            ):
+                dialog._status.setText(
+                    "✅ บันทึก Source แล้ว"
+                )
+
+                save_buttons = [
+                    button
+                    for button in dialog.findChildren(
+                        QPushButton
+                    )
+                    if button.text() == "Save"
+                ]
+
+                for button in save_buttons:
+                    button.setEnabled(
+                        True
+                    )
+
+                self._load_main_notification_sources(
+                    dialog
+                )
+
+        elif kind == "main_source_delete":
+
+            dialog = payload
+
+            if (
+                dialog is not None
+                and dialog.isVisible()
+            ):
+                dialog._source_key = ""
+                dialog._name_input.clear()
+                dialog._url_input.clear()
+                dialog._enabled_check.setChecked(
+                    True
+                )
+                dialog._notify_check.setChecked(
+                    False
+                )
+                dialog._status.setText(
+                    "✅ ลบ Source แล้ว"
+                )
+                self._load_main_notification_sources(
+                    dialog
+                )
+
+        elif kind == "main_event_cursor_init":
+
+            try:
+                self._main_event_last_id = int(
+                    result or 0
+                )
+            except (
+                TypeError,
+                ValueError,
+            ):
+                self._main_event_last_id = 0
+
+            self.settings.setValue(
+                "main_notifications_last_event_id",
+                self._main_event_last_id,
+            )
+            self.settings.sync()
+
+            self._main_event_cursor_ready = (
+                True
+            )
+
+            if not self.main_notification_timer.isActive():
+                self.main_notification_timer.start()
+
+            self.poll_main_notification_events()
+
+        elif kind == "main_events":
+
+            self._main_event_poll_busy = False
+
+            self._process_main_notification_events(
+                result or []
+            )
+
     def _on_cloud_error(
         self,
         request_id,
@@ -2704,6 +4480,70 @@ class DailyLog(QWidget):
                     "บันทึก Log ไม่สำเร็จ\n\n"
                     f"{message}"
                 ),
+            )
+
+        elif kind in {
+            "notify_sessions_load",
+            "notify_session_revoke",
+        }:
+
+            dialog = payload
+
+            if (
+                dialog is not None
+                and dialog.isVisible()
+            ):
+                dialog._status.setText(
+                    "❌ Session Manager Error\n"
+                    f"{message}"
+                )
+                dialog._logout_button.setEnabled(
+                    bool(
+                        dialog._session_list.currentItem()
+                    )
+                )
+
+        elif kind in {
+            "main_sources_load",
+            "main_source_save",
+            "main_source_delete",
+        }:
+
+            dialog = payload
+
+            if (
+                dialog is not None
+                and dialog.isVisible()
+            ):
+                dialog._status.setText(
+                    "❌ Central Source Error\n"
+                    f"{message}"
+                )
+
+                for button in dialog.findChildren(
+                    QPushButton
+                ):
+                    if button.text() == "Save":
+                        button.setEnabled(
+                            True
+                        )
+
+        elif kind == "main_event_cursor_init":
+
+            self._main_event_cursor_ready = (
+                True
+            )
+            self._main_event_last_id = 0
+
+            if not self.main_notification_timer.isActive():
+                self.main_notification_timer.start()
+
+        elif kind == "main_events":
+
+            self._main_event_poll_busy = False
+            print(
+                "[Main Notification Stream]",
+                message,
             )
 
     # =========================================
@@ -3573,50 +5413,15 @@ class DailyLog(QWidget):
         notification_type="info",
         show_toast=True,
     ):
+        """Record and present a notification.
 
+        GAS/network access never happens here. SaleAPIMonitor is the only
+        connection layer; sheet_monitor.NotificationPresenter owns the
+        list/popup UI.
+        """
         now = datetime.now().strftime(
             "%H:%M:%S"
         )
-
-        icons = {
-            "new": "🟢",
-            "edit": "🟡",
-            "delete": "🔴",
-            "due": "🚗",
-            "info": "🔔",
-        }
-
-        icon = icons.get(
-            notification_type,
-            "🔔",
-        )
-
-        item = QListWidgetItem(
-            (
-                f"{icon} {now}  {title}\n"
-                f"    {message}"
-            )
-        )
-
-        if hasattr(
-            self,
-            "notification_list",
-        ):
-
-            self.notification_list.insertItem(
-                0,
-                item,
-            )
-
-            while (
-                self.notification_list.count()
-                > 50
-            ):
-
-                self.notification_list.takeItem(
-                    self.notification_list.count()
-                    - 1
-                )
 
         self.sale_notifications.insert(
             0,
@@ -3632,16 +5437,32 @@ class DailyLog(QWidget):
             len(self.sale_notifications)
             > 50
         ):
-
             self.sale_notifications.pop()
 
-        if show_toast:
+        self.notification_presenter.present(
+            title=title,
+            message=message,
+            notification_type=notification_type,
+            show_popup=show_toast,
+            max_items=50,
+        )
 
-            self.show_sale_toast(
-                title,
-                message,
-                notification_type,
-            )
+        if show_toast:
+            # GAS-based central events are published by the Supabase
+            # Central Worker so employee Notify clients do not depend on
+            # this Admin PC being online.
+            if self.notification_channels.line_enabled():
+                ok, _line_message = (
+                    self.notification_channels.send_line(
+                        f"{title}\n{message}"
+                    )
+                )
+                self.line_status = (
+                    "idle"
+                    if ok
+                    else "error"
+                )
+                self.update_line_button()
 
     def show_sale_toast(
         self,
@@ -3649,141 +5470,16 @@ class DailyLog(QWidget):
         message,
         notification_type="info",
     ):
+        """Backward-compatible UI helper; no GAS access."""
+        from sheet_monitor import Notification
 
-        icons = {
-            "new": "🟢",
-            "edit": "🟡",
-            "delete": "🔴",
-            "due": "🚗",
-            "info": "🔔",
-        }
-
-        icon = icons.get(
-            notification_type,
-            "🔔",
-        )
-
-        dialog = QDialog(
-            self,
-            Qt.WindowType.Tool
-            | Qt.WindowType.WindowStaysOnTopHint,
-        )
-
-        dialog.setWindowTitle(
-            title
-        )
-
-        dialog.setModal(
-            False
-        )
-
-        dialog.setAttribute(
-            Qt.WidgetAttribute.WA_DeleteOnClose,
-            True,
-        )
-
-        dialog.setMinimumWidth(
-            210
-        )
-
-        layout = QVBoxLayout(
-            dialog
-        )
-
-        label = QLabel(
-            (
-                f"{icon} "
-                f"<b>{title}</b><br>"
-                f"{message.replace(chr(10), '<br>')}"
+        self.notification_presenter.show_popup(
+            Notification(
+                title=title,
+                message=message,
+                notification_type=notification_type,
             )
         )
-
-        label.setWordWrap(
-            True
-        )
-
-        label.setTextFormat(
-            Qt.TextFormat.RichText
-        )
-
-        label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-            | Qt.TextInteractionFlag.TextSelectableByKeyboard
-        )
-
-        layout.addWidget(
-            label
-        )
-
-        dialog.setStyleSheet(
-            """
-            QDialog {
-                background: #FFFFFF;
-                color: #111827;
-                border: 1px solid #94A3B8;
-                border-radius: 10px;
-            }
-
-            QLabel {
-                background: transparent;
-                color: #111827;
-                padding: 8px;
-                font-size: 11px;
-            }
-
-            QPushButton {
-                background: #374151;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 6px;
-                padding: 6px 14px;
-            }
-
-            QPushButton:hover {
-                background: #1F2937;
-                color: #FFFFFF;
-            }
-            """
-        )
-
-        self._sale_popups = getattr(
-            self,
-            "_sale_popups",
-            [],
-        )
-
-        self._sale_popups.append(
-            dialog
-        )
-
-        dialog.finished.connect(
-            lambda _=0, d=dialog:
-            (
-                self._sale_popups.remove(d)
-                if d in self._sale_popups
-                else None
-            )
-        )
-
-        dialog.adjustSize()
-
-        pos = self.mapToGlobal(
-            self.rect().topRight()
-        )
-
-        dialog.move(
-            pos.x()
-            - dialog.width()
-            - 12,
-            pos.y()
-            + 45,
-        )
-
-        dialog.show()
-
-        dialog.raise_()
-
-        dialog.activateWindow()
 
     # =========================================
     # Sale Monitor Helpers
@@ -3833,7 +5529,7 @@ class DailyLog(QWidget):
     ):
 
         if branch == "SA":
-            return "SA Notify"
+            return "SA Sathorn"
 
         if branch == "MainNoti":
             return "MainNoti"
@@ -3845,27 +5541,339 @@ class DailyLog(QWidget):
         branch,
     ):
 
-        button = self._sale_button(
+        button = self._sale_button(branch)
+
+        labels = {
+            "Sathorn": "Sathorn",
+            "Srinakarin": "Srinakarin",
+            "SA": "SA Sathorn",
+            "MainNoti": "MainNoti",
+        }
+
+        label = labels.get(
+            branch,
+            self._sale_title(branch),
+        )
+
+        if self._sale_busy.get(branch, False):
+            dot = "🟡"
+            tip = "กำลังเชื่อมต่อ / กำลังตรวจสอบ"
+        elif self._sale_retry_waiting.get(branch, False):
+            dot = "🟡"
+            tip = (
+                "Apps Script กำลังทำงานจากคำขออื่น "
+                "ระบบจะลองใหม่อัตโนมัติ"
+            )
+        elif self.sale_errors.get(branch, False):
+            dot = "🔴"
+            error_text = str(
+                self.sale_last_error.get(branch, "")
+                or ""
+            ).strip()
+            tip = (
+                "เชื่อมต่อ/อ่านข้อมูลไม่สำเร็จ"
+                + (
+                    f"\n{error_text[:220]}"
+                    if error_text
+                    else ""
+                )
+            )
+        elif self.sale_enabled.get(branch, False):
+            dot = "🟢"
+            elapsed = float(
+                self.sale_last_elapsed.get(
+                    branch,
+                    0.0,
+                )
+                or 0.0
+            )
+            tip = (
+                "ทำงานปกติ"
+                + (
+                    f"\nรอบล่าสุด {elapsed:.2f} วินาที"
+                    if elapsed > 0
+                    else ""
+                )
+            )
+        elif self.sale_api_urls.get(branch, "").strip():
+            dot = "🔴"
+            tip = "เชื่อมต่อไม่สำเร็จ / ไม่ทำงาน"
+        else:
+            dot = "⚪"
+            tip = "ยังไม่ได้ตั้งค่า GAS URL"
+
+        button.setText(f"{dot} {label}")
+        button.setToolTip(
+            f"{self._sale_title(branch)}: {tip}"
+        )
+
+    def _central_source_meta(
+        self,
+        branch,
+    ):
+        mapping = {
+            "Sathorn": (
+                "sale_sathorn",
+                "Sale Deli Sathorn",
+                "sale",
+            ),
+            "Srinakarin": (
+                "sale_srinakarin",
+                "Sale Deli Srinakarin",
+                "sale",
+            ),
+            "SA": (
+                "sa_sathorn",
+                "SA Sathorn",
+                "sa",
+            ),
+            "MainNoti": (
+                "main_noti",
+                "MainNoti",
+                "structured",
+            ),
+        }
+
+        return mapping.get(
             branch
         )
 
-        if self.sale_enabled.get(
+    def sync_monitor_source_to_cloud(
+        self,
+        branch,
+        enabled=True,
+    ):
+        meta = self._central_source_meta(
+            branch
+        )
+
+        if not meta:
+            return
+
+        source_key, source_name, source_type = (
+            meta
+        )
+
+        url = (
+            self.sale_api_urls.get(
+                branch,
+                "",
+            ).strip()
+        )
+
+        if enabled and not url:
+            return
+
+        try:
+            if enabled:
+                self.cloud.call(
+                    "upsert_monitor_source",
+                    source_key,
+                    source_name,
+                    source_type,
+                    url,
+                    True,
+                )
+            else:
+                self.cloud.call(
+                    "disable_monitor_source",
+                    source_key,
+                )
+        except Exception as error:
+            print(
+                "[Central Monitor Sync]",
+                branch,
+                error,
+            )
+
+    def sync_saved_monitor_sources_to_cloud(
+        self,
+    ):
+        for branch in (
+            "Sathorn",
+            "Srinakarin",
+            "SA",
+        ):
+            if (
+                self.sale_api_urls.get(
+                    branch,
+                    "",
+                ).strip()
+            ):
+                self.sync_monitor_source_to_cloud(
+                    branch,
+                    enabled=True,
+                )
+
+    # =========================================
+    # Re-connect GAS Monitors
+    # =========================================
+
+    def reconnect_sale_monitor(
+        self,
+        branch,
+    ):
+        """Reconnect one configured GAS source without duplicating clients."""
+
+        url = (
+            self.sale_api_urls.get(
+                branch,
+                "",
+            ).strip()
+        )
+
+        if not url:
+            self.update_sale_button(
+                branch
+            )
+            QMessageBox.information(
+                self,
+                "Re-connect GAS",
+                (
+                    f"{self._sale_title(branch)} "
+                    "ยังไม่มี GAS URL ที่บันทึกไว้"
+                ),
+            )
+            return False
+
+        if self._sale_busy.get(
             branch,
             False,
         ):
-
-            button.setText(
+            QMessageBox.information(
+                self,
+                "Re-connect GAS",
                 (
-                    f"🟢 "
-                    f"{self._sale_title(branch)}"
-                    ": ON"
-                )
+                    f"{self._sale_title(branch)} "
+                    "กำลังเชื่อมต่อ/ตรวจสอบอยู่แล้ว"
+                ),
+            )
+            return False
+
+        self._sale_timer(
+            branch
+        ).stop()
+
+        self._gas_scan_queue = [
+            queued
+            for queued in self._gas_scan_queue
+            if queued != branch
+        ]
+
+        self.sale_enabled[branch] = (
+            False
+        )
+
+        self.sale_monitors[branch] = (
+            None
+        )
+
+        self.sale_errors[branch] = (
+            False
+        )
+
+        self.sale_last_error[branch] = (
+            ""
+        )
+
+        self.sale_last_elapsed[branch] = (
+            0.0
+        )
+        self._sale_retry_waiting[branch] = (
+            False
+        )
+
+        self.update_sale_button(
+            branch
+        )
+
+        self._start_sale_check(
+            branch,
+            url,
+            initial=True,
+        )
+
+        return True
+
+    def reconnect_all_sale_monitors(self):
+
+        connected = 0
+
+        for branch in (
+            "Sathorn",
+            "Srinakarin",
+            "SA",
+        ):
+
+            url = (
+                self.sale_api_urls.get(
+                    branch,
+                    "",
+                ).strip()
             )
 
-        else:
+            if not url:
+                self.update_sale_button(
+                    branch
+                )
+                continue
 
-            button.setText(
-                self._sale_title(branch)
+            if self._sale_busy.get(
+                branch,
+                False,
+            ):
+                continue
+
+            connected += 1
+
+            self._sale_timer(
+                branch
+            ).stop()
+
+            self._gas_scan_queue = [
+                queued
+                for queued in self._gas_scan_queue
+                if queued != branch
+            ]
+
+            self.sale_enabled[branch] = (
+                False
+            )
+
+            self.sale_monitors[branch] = (
+                None
+            )
+
+            self.sale_errors[branch] = (
+                False
+            )
+
+            self.sale_last_error[branch] = (
+                ""
+            )
+
+            self.sale_last_elapsed[branch] = (
+                0.0
+            )
+
+            self.update_sale_button(
+                branch
+            )
+
+            self._start_sale_check(
+                branch,
+                url,
+                initial=True,
+            )
+
+        if connected == 0:
+            QMessageBox.information(
+                self,
+                "Re-connect GAS",
+                (
+                    "ไม่มี GAS URL ที่พร้อม Re-connect "
+                    "หรือทุกช่องทางกำลังตรวจสอบอยู่"
+                ),
             )
 
     # =========================================
@@ -3878,7 +5886,6 @@ class DailyLog(QWidget):
             "Sathorn",
             "Srinakarin",
             "SA",
-            "MainNoti",
         ):
 
             url = (
@@ -3920,6 +5927,9 @@ class DailyLog(QWidget):
             return
 
         self._sale_busy[branch] = True
+        self.sale_errors[branch] = False
+        self.sale_last_error[branch] = ""
+        self.update_sale_button(branch)
 
         monitor = self.sale_monitors.get(
             branch
@@ -3929,7 +5939,6 @@ class DailyLog(QWidget):
             monitor is None
             or initial
         ):
-
             monitor = SaleAPIMonitor(
                 url
             )
@@ -3937,6 +5946,15 @@ class DailyLog(QWidget):
         def finished(result):
 
             self._sale_busy[branch] = False
+            self.sale_errors[branch] = False
+            self.sale_last_error[branch] = ""
+            self.sale_last_elapsed[branch] = float(
+                result.get(
+                    "_elapsed_seconds",
+                    0.0,
+                )
+                or 0.0
+            )
 
             self.sale_monitors[branch] = (
                 monitor
@@ -3944,6 +5962,11 @@ class DailyLog(QWidget):
 
             self.sale_enabled[branch] = (
                 True
+            )
+
+            self.sync_monitor_source_to_cloud(
+                branch,
+                enabled=True,
             )
 
             self._sale_timer(
@@ -3955,20 +5978,55 @@ class DailyLog(QWidget):
             )
 
             if initial:
+                api_version = str(
+                    result.get("version")
+                    or result.get("api_version")
+                    or ""
+                ).strip()
+
+                elapsed = float(
+                    result.get(
+                        "_elapsed_seconds",
+                        0.0,
+                    )
+                    or 0.0
+                )
+                message = (
+                    "เชื่อมต่อ Apps Script Web App สำเร็จ"
+                    + (
+                        f" ({elapsed:.2f} วินาที)"
+                        if elapsed > 0
+                        else ""
+                    )
+                )
+
+                if api_version:
+                    message += (
+                        f"\nAPI: {api_version}"
+                    )
+
+                message += (
+                    "\nกำลังอ่านข้อมูลรอบแรก..."
+                )
 
                 self.add_sale_notification(
                     self._sale_title(
                         branch
                     ),
-                    (
-                        "เชื่อมต่อสำเร็จ\n"
-                        f"พบข้อมูล "
-                        f"{result.get('count', 0)} "
-                        "รายการ"
-                    ),
+                    message,
                     "info",
                     show_toast=False,
                 )
+
+                QTimer.singleShot(
+                    0,
+                    lambda b=branch:
+                    self.check_sale_delivery_plan(
+                        b
+                    ),
+                )
+
+                return
 
             self._process_sale_result(
                 branch,
@@ -3978,9 +6036,12 @@ class DailyLog(QWidget):
         def failed(message):
 
             self._sale_busy[branch] = False
+            self.sale_errors[branch] = True
+            self.sale_last_error[branch] = str(
+                message
+            )
 
             if initial:
-
                 self.sale_enabled[branch] = (
                     False
                 )
@@ -3993,29 +6054,38 @@ class DailyLog(QWidget):
                     branch
                 ).stop()
 
-                self.update_sale_button(
-                    branch
-                )
+            self.update_sale_button(
+                branch
+            )
 
+            if initial:
                 self.add_sale_notification(
                     self._sale_title(
                         branch
                     ),
                     (
-                        "เชื่อมต่อไม่สำเร็จ\n"
+                        "Re-connect ไม่สำเร็จ\n"
                         f"{message}"
                     ),
                     "info",
                     show_toast=False,
                 )
 
-        run_async(
-            self,
-            monitor.check,
-            finished,
-            failed,
-            initial,
-        )
+        if initial:
+            run_async(
+                self,
+                monitor.ping,
+                finished,
+                failed,
+            )
+        else:
+            run_async(
+                self,
+                monitor.check,
+                finished,
+                failed,
+                False,
+            )
 
     # =========================================
     # Configure Sale Branch / MainNoti
@@ -4087,6 +6157,10 @@ class DailyLog(QWidget):
             "เริ่มแจ้งเตือน"
         )
 
+        reconnect_button = QPushButton(
+            "🔄 Re-connect"
+        )
+
         stop_button = QPushButton(
             "หยุดแจ้งเตือน"
         )
@@ -4097,6 +6171,10 @@ class DailyLog(QWidget):
 
         button_layout.addWidget(
             start_button
+        )
+
+        button_layout.addWidget(
+            reconnect_button
         )
 
         button_layout.addWidget(
@@ -4161,6 +6239,10 @@ class DailyLog(QWidget):
                 False
             )
 
+            reconnect_button.setEnabled(
+                False
+            )
+
             stop_button.setEnabled(
                 False
             )
@@ -4213,9 +6295,19 @@ class DailyLog(QWidget):
                 branch,
                 url,
                 dialog,
+                controls={
+                    "start": start_button,
+                    "reconnect": reconnect_button,
+                    "stop": stop_button,
+                    "url": url_input,
+                },
             )
 
         start_button.clicked.connect(
+            start_monitoring
+        )
+
+        reconnect_button.clicked.connect(
             start_monitoring
         )
 
@@ -4241,6 +6333,7 @@ class DailyLog(QWidget):
         branch,
         url,
         dialog,
+        controls=None,
     ):
 
         if self._sale_busy.get(
@@ -4249,15 +6342,46 @@ class DailyLog(QWidget):
         ):
             return
 
+        controls = controls or {}
+
         self._sale_busy[branch] = True
+        self.sale_errors[branch] = False
+        self.sale_last_error[branch] = ""
+        self.update_sale_button(branch)
 
         monitor = SaleAPIMonitor(
             url
         )
 
+        def restore_controls():
+
+            for key in (
+                "start",
+                "reconnect",
+                "stop",
+                "url",
+            ):
+                widget = controls.get(
+                    key
+                )
+
+                if widget is not None:
+                    widget.setEnabled(
+                        True
+                    )
+
         def finished(result):
 
             self._sale_busy[branch] = False
+            self.sale_errors[branch] = False
+            self.sale_last_error[branch] = ""
+            self.sale_last_elapsed[branch] = float(
+                result.get(
+                    "_elapsed_seconds",
+                    0.0,
+                )
+                or 0.0
+            )
 
             self.sale_monitors[branch] = (
                 monitor
@@ -4265,6 +6389,11 @@ class DailyLog(QWidget):
 
             self.sale_enabled[branch] = (
                 True
+            )
+
+            self.sync_monitor_source_to_cloud(
+                branch,
+                enabled=True,
             )
 
             self._sale_timer(
@@ -4275,30 +6404,63 @@ class DailyLog(QWidget):
                 branch
             )
 
+            api_version = str(
+                result.get("version")
+                or result.get("api_version")
+                or ""
+            ).strip()
+
+            elapsed = float(
+                result.get(
+                    "_elapsed_seconds",
+                    0.0,
+                )
+                or 0.0
+            )
+            message = (
+                "Re-connect สำเร็จ"
+                + (
+                    f" ({elapsed:.2f} วินาที)"
+                    if elapsed > 0
+                    else ""
+                )
+            )
+
+            if api_version:
+                message += (
+                    f"\nAPI: {api_version}"
+                )
+
+            message += (
+                "\nกำลังอ่านข้อมูลรอบแรก..."
+            )
+
             self.add_sale_notification(
                 self._sale_title(
                     branch
                 ),
-                (
-                    "เชื่อมต่อสำเร็จ\n"
-                    f"พบข้อมูล "
-                    f"{result.get('count', 0)} "
-                    "รายการ"
-                ),
+                message,
                 "info",
-            )
-
-            self._process_sale_result(
-                branch,
-                result,
             )
 
             if dialog.isVisible():
                 dialog.accept()
 
+            QTimer.singleShot(
+                0,
+                lambda b=branch:
+                self.check_sale_delivery_plan(
+                    b
+                ),
+            )
+
         def failed(message):
 
             self._sale_busy[branch] = False
+            self.sale_errors[branch] = True
+            self.sale_last_error[branch] = str(
+                message
+            )
 
             self.sale_enabled[branch] = (
                 False
@@ -4316,22 +6478,25 @@ class DailyLog(QWidget):
                 branch
             )
 
+            restore_controls()
+
             QMessageBox.critical(
                 dialog,
-                "เชื่อมต่อไม่สำเร็จ",
+                "Re-connect ไม่สำเร็จ",
                 (
                     "ไม่สามารถเชื่อมต่อ "
                     "Apps Script Web App ได้\n\n"
-                    f"{message}"
+                    f"{message}\n\n"
+                    "ตรวจว่า Deploy เป็น Web App, "
+                    "URL ลงท้าย /exec และ GAS รองรับ action=ping"
                 ),
             )
 
         run_async(
             self,
-            monitor.check,
+            monitor.ping,
             finished,
             failed,
-            True,
         )
 
     # =========================================
@@ -4371,6 +6536,11 @@ class DailyLog(QWidget):
             branch
         )
 
+        self.sync_monitor_source_to_cloud(
+            branch,
+            enabled=False,
+        )
+
         self.sale_api_urls[branch] = (
             ""
         )
@@ -4403,6 +6573,13 @@ class DailyLog(QWidget):
         self,
         branch="Sathorn",
     ):
+        """Queue one GAS data scan.
+
+        Connection pings are lightweight and may finish together, but the
+        expensive action=changes requests are serialized globally so Sathorn,
+        Srinakarin, SA and MainNoti never perform heavy sheet scans at the
+        same time.
+        """
 
         if not self.sale_enabled.get(
             branch,
@@ -4415,41 +6592,235 @@ class DailyLog(QWidget):
         ) is None:
             return
 
-        monitor = self.sale_monitors[
-            branch
-        ]
-
-        if self._sale_busy.get(
-            branch,
-            False,
+        if (
+            branch == self._gas_scan_active
+            or branch in self._gas_scan_queue
         ):
             return
 
-        self._sale_busy[branch] = True
+        self._gas_scan_queue.append(
+            branch
+        )
 
-        def finished(result):
-
-            self._sale_busy[branch] = (
-                False
+        # If another source is scanning, this source is healthy but waiting.
+        if self._gas_scan_active is not None:
+            self._sale_retry_waiting[branch] = (
+                True
+            )
+            self.sale_errors[branch] = False
+            self.sale_last_error[branch] = (
+                "รอคิวตรวจข้อมูลจาก GAS ช่องทางอื่น"
+            )
+            self.update_sale_button(
+                branch
             )
 
-            self._process_sale_result(
+        self._run_next_gas_scan()
+
+    def _run_next_gas_scan(self):
+        if self._gas_scan_active is not None:
+            return
+
+        while self._gas_scan_queue:
+            branch = self._gas_scan_queue.pop(0)
+
+            if not self.sale_enabled.get(
                 branch,
-                result,
+                False,
+            ):
+                self._sale_retry_waiting[branch] = (
+                    False
+                )
+                self.update_sale_button(
+                    branch
+                )
+                continue
+
+            monitor = self.sale_monitors.get(
+                branch
             )
 
-        def failed(_message):
+            if monitor is None:
+                self._sale_retry_waiting[branch] = (
+                    False
+                )
+                self.update_sale_button(
+                    branch
+                )
+                continue
 
-            self._sale_busy[branch] = (
+            self._gas_scan_active = branch
+            self._sale_busy[branch] = True
+            self._sale_retry_waiting[branch] = False
+            self.sale_errors[branch] = False
+            self.sale_last_error[branch] = ""
+            self.update_sale_button(branch)
+
+            def finished(
+                result,
+                b=branch,
+            ):
+                self._sale_busy[b] = False
+                self._gas_scan_active = None
+                self._sale_retry_waiting[b] = False
+                self.sale_errors[b] = False
+                self.sale_last_error[b] = ""
+                self.sale_last_elapsed[b] = float(
+                    result.get(
+                        "_elapsed_seconds",
+                        0.0,
+                    )
+                    or 0.0
+                )
+                self.update_sale_button(b)
+
+                self._process_sale_result(
+                    b,
+                    result,
+                )
+
+                QTimer.singleShot(
+                    800,
+                    self._run_next_gas_scan,
+                )
+
+            def failed(
+                message,
+                b=branch,
+            ):
+                self._sale_busy[b] = False
+                self._gas_scan_active = None
+
+                error_text = str(
+                    message
+                )
+
+                if error_text.startswith(
+                    "[GAS_BUSY]"
+                ):
+                    clean_message = (
+                        error_text
+                        .replace(
+                            "[GAS_BUSY]",
+                            "",
+                            1,
+                        )
+                        .strip()
+                    )
+
+                    self.sale_errors[b] = False
+                    self._sale_retry_waiting[b] = True
+                    self.sale_last_error[b] = (
+                        clean_message
+                    )
+                    self.update_sale_button(b)
+
+                    # Do not put the same request back immediately because
+                    # the server-side GAS execution may still hold the lock.
+                    QTimer.singleShot(
+                        20000,
+                        lambda branch_to_retry=b:
+                        self._queue_busy_gas_retry(
+                            branch_to_retry
+                        ),
+                    )
+
+                    QTimer.singleShot(
+                        800,
+                        self._run_next_gas_scan,
+                    )
+                    return
+
+                self._sale_retry_waiting[b] = False
+                self.sale_errors[b] = True
+
+                if error_text.startswith(
+                    "[GAS_404]"
+                ):
+                    clean_error = (
+                        error_text
+                        .replace(
+                            "[GAS_404]",
+                            "",
+                            1,
+                        )
+                        .strip()
+                    )
+                else:
+                    clean_error = (
+                        error_text
+                    )
+
+                self.sale_last_error[b] = (
+                    clean_error
+                )
+                self.update_sale_button(b)
+
+                # Keep the exact reason visible in the DailyLog notification
+                # list without creating a popup/LINE/central event.
+                self.add_sale_notification(
+                    self._sale_title(b),
+                    (
+                        "Web App เชื่อมต่อได้ แต่การอ่านข้อมูลไม่สำเร็จ\n"
+                        f"{clean_error}"
+                    ),
+                    "info",
+                    show_toast=False,
+                )
+
+                QTimer.singleShot(
+                    800,
+                    self._run_next_gas_scan,
+                )
+
+            run_async(
+                self,
+                monitor.check,
+                finished,
+                failed,
+                False,
+            )
+
+            return
+
+    def _queue_busy_gas_retry(
+        self,
+        branch,
+    ):
+        if not self.sale_enabled.get(
+            branch,
+            False,
+        ):
+            self._sale_retry_waiting[branch] = (
                 False
             )
+            self.update_sale_button(
+                branch
+            )
+            return
 
-        run_async(
-            self,
-            monitor.check,
-            finished,
-            failed,
-            False,
+        if self.sale_monitors.get(
+            branch
+        ) is None:
+            self._sale_retry_waiting[branch] = (
+                False
+            )
+            self.update_sale_button(
+                branch
+            )
+            return
+
+        if (
+            branch == self._gas_scan_active
+            or branch in self._gas_scan_queue
+        ):
+            return
+
+        self._sale_retry_waiting[branch] = (
+            False
+        )
+        self.check_sale_delivery_plan(
+            branch
         )
 
     # =========================================
@@ -4466,6 +6837,311 @@ class DailyLog(QWidget):
             branch
         )
 
+        def row_data_items(values):
+            items = (
+                values.get(
+                    "row_data"
+                )
+                if isinstance(
+                    values,
+                    dict,
+                )
+                else None
+            )
+
+            if isinstance(
+                items,
+                list,
+            ):
+                return [
+                    item
+                    for item in items
+                    if isinstance(
+                        item,
+                        dict,
+                    )
+                ]
+
+            fallback = []
+
+            for (
+                label,
+                key,
+            ) in (
+                ("Model", "model"),
+                ("VIN", "vin"),
+                ("Customer", "customer"),
+                ("Sale", "sale"),
+                ("Pay Day", "pay_day"),
+                (
+                    "Delivery Date",
+                    "delivery_date",
+                ),
+            ):
+                fallback.append({
+                    "column": "",
+                    "header": label,
+                    "value":
+                        values.get(
+                            key,
+                            "",
+                        )
+                        if isinstance(
+                            values,
+                            dict,
+                        )
+                        else "",
+                })
+
+            return fallback
+
+        def row_data_map(values):
+            result_map = {}
+
+            for item in row_data_items(
+                values
+            ):
+                column = str(
+                    item.get(
+                        "column",
+                        "",
+                    )
+                    or ""
+                ).strip()
+
+                header = str(
+                    item.get(
+                        "header",
+                        "",
+                    )
+                    or ""
+                ).strip()
+
+                key = (
+                    column
+                    or header
+                )
+
+                if not key:
+                    continue
+
+                result_map[key] = {
+                    "column": column,
+                    "header": header,
+                    "value": str(
+                        item.get(
+                            "value",
+                            "",
+                        )
+                        or ""
+                    ),
+                }
+
+            return result_map
+
+        def row_item_label(item):
+            column = str(
+                item.get(
+                    "column",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            header = str(
+                item.get(
+                    "header",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            if column and header:
+                return (
+                    f"{column} - {header}"
+                )
+
+            return (
+                header
+                or column
+                or "ข้อมูล"
+            )
+
+        def format_full_row(values):
+            lines = []
+
+            for item in row_data_items(
+                values
+            ):
+                value = str(
+                    item.get(
+                        "value",
+                        "",
+                    )
+                    or ""
+                ).strip()
+
+                if value == "":
+                    continue
+
+                lines.append(
+                    (
+                        f"{row_item_label(item)}: "
+                        f"{value}"
+                    )
+                )
+
+            if not lines:
+                return "ไม่มีข้อมูลในแถว"
+
+            return "\n".join(
+                lines
+            )
+
+        def full_row_changes(
+            old_values,
+            new_values,
+        ):
+            old_map = row_data_map(
+                old_values
+            )
+            new_map = row_data_map(
+                new_values
+            )
+
+            ordered_keys = []
+
+            for item in row_data_items(
+                new_values
+            ):
+                key = (
+                    str(
+                        item.get(
+                            "column",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+                    or str(
+                        item.get(
+                            "header",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+                )
+
+                if (
+                    key
+                    and key not in
+                    ordered_keys
+                ):
+                    ordered_keys.append(
+                        key
+                    )
+
+            for item in row_data_items(
+                old_values
+            ):
+                key = (
+                    str(
+                        item.get(
+                            "column",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+                    or str(
+                        item.get(
+                            "header",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+                )
+
+                if (
+                    key
+                    and key not in
+                    ordered_keys
+                ):
+                    ordered_keys.append(
+                        key
+                    )
+
+            changes = []
+
+            for key in ordered_keys:
+                old_item = old_map.get(
+                    key,
+                    {},
+                )
+                new_item = new_map.get(
+                    key,
+                    {},
+                )
+
+                old_value = str(
+                    old_item.get(
+                        "value",
+                        "",
+                    )
+                    or ""
+                )
+
+                new_value = str(
+                    new_item.get(
+                        "value",
+                        "",
+                    )
+                    or ""
+                )
+
+                if (
+                    old_value ==
+                    new_value
+                ):
+                    continue
+
+                label = row_item_label(
+                    new_item
+                    or old_item
+                )
+
+                if (
+                    old_value == ""
+                    and new_value != ""
+                ):
+                    changes.append(
+                        (
+                            f"{label}: เพิ่ม "
+                            f"{new_value}"
+                        )
+                    )
+
+                elif (
+                    old_value != ""
+                    and new_value == ""
+                ):
+                    changes.append(
+                        (
+                            f"{label}: ลบ "
+                            f"{old_value}"
+                        )
+                    )
+
+                else:
+                    changes.append(
+                        (
+                            f"{label}: "
+                            f"{old_value or '-'} "
+                            "→ "
+                            f"{new_value or '-'}"
+                        )
+                    )
+
+            return changes
+
         # =====================================
         # NEW
         # =====================================
@@ -4474,23 +7150,15 @@ class DailyLog(QWidget):
             "added",
             [],
         ):
-
             message = (
-                f"Row: {row}\n"
-                f"Model: "
-                f"{values.get('model', '-')}\n"
-                f"VIN: "
-                f"{values.get('vin', '-')}\n"
-                f"Customer: "
-                f"{values.get('customer', '-')}\n"
-                f"Sale: "
-                f"{values.get('sale', '-')}\n"
-                f"Delivery: "
-                f"{values.get('delivery_date', '-')}"
+                "ข้อมูลที่เพิ่ม\n"
+                + format_full_row(
+                    values
+                )
             )
 
             self.add_sale_notification(
-                f"{title} - เพิ่มรายการใหม่",
+                f"{title} - เพิ่มข้อมูล",
                 message,
                 "new",
             )
@@ -4507,221 +7175,451 @@ class DailyLog(QWidget):
             "changed",
             [],
         ):
+            changes = full_row_changes(
+                old_values,
+                new_values,
+            )
 
-            changes = []
+            if not changes:
+                continue
 
-            fields = [
-                ("Model", "model"),
-                ("VIN", "vin"),
-                ("Customer", "customer"),
-                ("Sale", "sale"),
-                ("Pay Day", "pay_day"),
+            message = (
+                "ข้อมูลที่เปลี่ยน\n"
+                + "\n".join(
+                    changes
+                )
+                + "\n\nรายละเอียดแจ้ง:\n"
+                + format_full_row(
+                    new_values
+                )
+            )
+
+            self.add_sale_notification(
                 (
-                    "Delivery Date",
-                    "delivery_date",
+                    f"{title} "
+                    "- มีการแก้ไขข้อมูล"
                 ),
-            ]
-
-            for label, key in fields:
-
-                old_value = old_values.get(
-                    key,
-                    "",
-                )
-
-                new_value = new_values.get(
-                    key,
-                    "",
-                )
-
-                if old_value != new_value:
-
-                    changes.append(
-                        (
-                            f"{label}: "
-                            f"{old_value or '-'} "
-                            f"→ "
-                            f"{new_value or '-'}"
-                        )
-                    )
-
-            if changes:
-
-                message = (
-                    f"Row: {row}\n"
-                    + "\n".join(changes)
-                )
-
-                self.add_sale_notification(
-                    (
-                        f"{title} "
-                        "- มีการแก้ไขข้อมูล"
-                    ),
-                    message,
-                    "edit",
-                )
+                message,
+                "edit",
+            )
 
         # =====================================
         # DELETE
         # =====================================
 
-        for row in result.get(
+        for deleted_item in result.get(
             "deleted",
             [],
         ):
+            if (
+                isinstance(
+                    deleted_item,
+                    (tuple, list),
+                )
+                and len(
+                    deleted_item
+                ) >= 2
+            ):
+                row = (
+                    deleted_item[0]
+                )
+                old_values = (
+                    deleted_item[1]
+                )
+            else:
+                row = deleted_item
+                old_values = {}
+
+            message = (
+                "ข้อมูลที่ถูกลบ\n"
+                + format_full_row(
+                    old_values
+                )
+            )
 
             self.add_sale_notification(
                 (
                     f"{title} "
-                    "- รายการถูกลบ"
+                    "- ลบข้อมูล"
                 ),
-                f"Row: {row}",
+                message,
                 "delete",
             )
 
         # =====================================
-        # GAS CHANGE MONITOR EVENTS (SA & MainNoti)
+        # STRUCTURED GAS EVENTS
         # =====================================
 
-        column_labels = {
-            "B": "เวลานัดหมาย (预约时间)",
-            "C": "ลำดับ (序号)",
-            "D": "วันที่ (日期)",
-            "E": "ชื่อลูกค้า (客户的姓名)",
-            "F": "ทะเบียนรถ (车牌)",
-            "G": "เบอร์ติดต่อ (电话)",
-            "H": "รุ่นรถ (车型)",
-            "I": "แผนก BP/SV (部分)",
-            "J": "SA (SA 在)",
-            "K": "รายการคำสั่งซ่อม (保修项目)",
-            "L": "สถานะการโทรติดตาม (电话跟进状态)",
-            "M": "เวลาส่งมอบรถ (交车时间)",
-            "N": "นัดผ่าน (预约方式)",
-            "O": "สถานะ (预约状态)",
-            "P": "หมายเหตุ (备注)",
+        sa_column_labels = {
+            "B": "เวลานัดหมาย 预约时间",
+            "C": "ลำดับ 序号",
+            "D": "วันที่ 日期",
+            "E": "ชื่อ-นามสกุล ลูกค้า 客户的姓名",
+            "F": "ทะเบียนรถ 车牌",
+            "G": "เบอร์ติดต่อ 电话",
+            "H": "รุ่นรถ 车型",
+            "I": "แผนก BP/SV 部分",
+            "J": "SA 在",
+            "K": "รายการคำสั่งซ่อม 保修项目",
+            "L": (
+                "สถานะการโทรติดตาม "
+                "(รับนัด , ไม่สะดวก , ไม่รับสาย , เข้าศูนย์อื่น) "
+                "电话跟进状态：已预约 / 不方便 / 未接 / 去其他店"
+            ),
+            "M": "เวลาส่งมอบรถ 交车时间",
+            "N": "นัดผ่าน 预约方式",
+            "O": "สถานะ 预约状态",
+            "P": "หมายเหตุ 备注",
         }
 
         def value_text(value):
             if value is None or value == "":
                 return "-"
             if isinstance(value, (dict, list)):
-                return json.dumps(value, ensure_ascii=False)
+                return json.dumps(
+                    value,
+                    ensure_ascii=False,
+                )
             return str(value)
 
         def column_letter(value):
             if value is None:
                 return ""
-            text_value = str(value).strip().upper()
-            if text_value in column_labels:
+
+            text_value = str(
+                value
+            ).strip().upper()
+
+            if (
+                len(text_value) == 1
+                and "A" <= text_value <= "Z"
+            ):
                 return text_value
+
             if text_value.isdigit():
                 number = int(text_value)
                 if 1 <= number <= 26:
-                    return chr(64 + number)
+                    return chr(
+                        64 + number
+                    )
+
             return ""
 
-        for event in result.get("changes", []):
-            if not isinstance(event, dict):
-                event_text = value_text(event)
+        def event_item_label(item):
+            # Structured Sale Delivery GAS sends "header".
+            # SA may send either "header" or column metadata.
+            header = (
+                item.get("header")
+                or item.get("field")
+                or item.get("columnName")
+                or item.get("name")
+            )
+
+            if header:
+                return str(header)
+
+            col = column_letter(
+                item.get("columnLetter")
+                or item.get("column")
+                or item.get("col")
+                or item.get("columnIndex")
+                or item.get("colIndex")
+            )
+
+            if (
+                branch == "SA"
+                and col in sa_column_labels
+            ):
+                return sa_column_labels[col]
+
+            return col or "ข้อมูล"
+
+        for event in result.get(
+            "changes",
+            [],
+        ):
+
+            if not isinstance(
+                event,
+                dict,
+            ):
+
                 self.add_sale_notification(
-                    f"{title} - มีการเปลี่ยนแปลงข้อมูล",
-                    event_text,
+                    (
+                        f"{title} "
+                        "- มีการเปลี่ยนแปลงข้อมูล"
+                    ),
+                    value_text(event),
                     "edit",
                 )
                 continue
 
-            row_number = (
-                event.get("row")
-                or event.get("rowNumber")
-                or event.get("row_number")
-                or event.get("r")
-            )
-            sheet_name = (
-                event.get("sheetName")
-                or event.get("sheet_name")
-                or event.get("sheet")
-                or event.get("tab")
-            )
-            col = column_letter(
-                event.get("columnLetter")
-                or event.get("column")
-                or event.get("col")
-                or event.get("columnIndex")
-                or event.get("colIndex")
-            )
-            field_name = (
-                event.get("field")
-                or event.get("columnName")
-                or event.get("header")
-                or event.get("name")
-            )
-            label = column_labels.get(col, str(field_name or col or "ข้อมูล"))
-            lines = []
-            old_keys = ("oldValue", "old_value", "before", "old")
-            new_keys = ("newValue", "new_value", "after", "new", "value")
-            old_value = next((event[k] for k in old_keys if k in event), None)
-            new_value = next((event[k] for k in new_keys if k in event), None)
+            event_type = str(
+                event.get("type")
+                or "row_change"
+            ).strip()
 
-            if any(k in event for k in old_keys) or any(k in event for k in ("newValue", "new_value", "after", "new")):
-                lines.append(
-                    f"{label}: {value_text(old_value)} → {value_text(new_value)}"
+            nested_changes = (
+                event.get("changes")
+                if isinstance(
+                    event.get("changes"),
+                    list,
+                )
+                else []
+            )
+
+            # SA Notify is date-driven only:
+            # show current-day appointment matches, never edit/delete events.
+            if branch == "SA":
+                if event_type != "today_appointment":
+                    continue
+                nested_changes = []
+
+            # Pure today reminders repeat from GAS every poll.
+            # Persistently suppress only those reminders; a real edit in
+            # the same row is still allowed through.
+            if (
+                event_type in (
+                    "delivery_today",
+                    "today_appointment",
+                )
+                and not nested_changes
+            ):
+                today_fields_for_key = (
+                    event.get("today_fields")
+                    if isinstance(
+                        event.get("today_fields"),
+                        list,
+                    )
+                    else []
+                )
+                signature = "|".join(
+                    (
+                        f"{item.get('header', '')}:"
+                        f"{item.get('value', '')}"
+                    )
+                    for item in today_fields_for_key
+                    if isinstance(item, dict)
+                )
+                due_key = (
+                    "structured_due/"
+                    f"{date.today().isoformat()}/"
+                    f"{branch}/"
+                    f"{event.get('sheet', '')}/"
+                    f"{event.get('row', '')}/"
+                    f"{signature}"
+                )
+                if self.settings.value(
+                    due_key,
+                    False,
+                    type=bool,
+                ):
+                    continue
+
+                self.settings.setValue(
+                    due_key,
+                    True,
+                )
+                self.settings.sync()
+
+            customer = str(
+                event.get("customer")
+                or ""
+            ).strip()
+
+            model = str(
+                event.get("model")
+                or ""
+            ).strip()
+
+            lines = []
+
+            # Context สำคัญของรายการ
+            if customer:
+                if branch == "SA":
+                    lines.append(
+                        "ชื่อ-นามสกุล ลูกค้า "
+                        f"客户的姓名: {customer}"
+                    )
+                else:
+                    lines.append(
+                        f"Customer: {customer}"
+                    )
+
+            if model:
+                if branch == "SA":
+                    lines.append(
+                        f"รุ่นรถ 车型: {model}"
+                    )
+                else:
+                    lines.append(
+                        f"Model: {model}"
+                    )
+
+            # วันที่ที่ตรงกับวันนี้
+            today_fields = (
+                event.get("today_fields")
+                if isinstance(
+                    event.get("today_fields"),
+                    list,
+                )
+                else []
+            )
+
+            for item in today_fields:
+
+                if not isinstance(
+                    item,
+                    dict,
+                ):
+                    continue
+
+                label = (
+                    item.get("header")
+                    or item.get("field")
+                    or "วันที่"
                 )
 
-            nested = event.get("changes")
-            if isinstance(nested, list):
-                for item in nested:
-                    if isinstance(item, dict):
-                        item_col = column_letter(
-                            item.get("columnLetter") or item.get("column")
-                            or item.get("col") or item.get("columnIndex")
+                value = item.get(
+                    "value",
+                    "",
+                )
+
+                if value not in (
+                    None,
+                    "",
+                ):
+                    lines.append(
+                        f"{label}: {value}"
+                    )
+
+            # สิ่งที่เปลี่ยนทั้งหมดใน Row เดียวกัน
+            nested = nested_changes
+
+            for item in nested:
+
+                if not isinstance(
+                    item,
+                    dict,
+                ):
+                    lines.append(
+                        value_text(item)
+                    )
+                    continue
+
+                label = event_item_label(
+                    item
+                )
+
+                change_type = str(
+                    item.get("type")
+                    or ""
+                ).lower()
+
+                before = next(
+                    (
+                        item[key]
+                        for key in (
+                            "oldValue",
+                            "old_value",
+                            "before",
+                            "old",
                         )
-                        item_label = column_labels.get(
-                            item_col, str(item.get("field") or item.get("columnName") or "ข้อมูล")
+                        if key in item
+                    ),
+                    None,
+                )
+
+                after = next(
+                    (
+                        item[key]
+                        for key in (
+                            "newValue",
+                            "new_value",
+                            "after",
+                            "new",
+                            "value",
                         )
-                        before = next((item[k] for k in old_keys if k in item), None)
-                        after = next((item[k] for k in new_keys if k in item), None)
-                        if any(k in item for k in old_keys) or any(k in item for k in ("newValue", "new_value", "after", "new")):
-                            lines.append(f"{item_label}: {value_text(before)} → {value_text(after)}")
-                        else:
-                            lines.append(value_text(item))
-                    else:
-                        lines.append(value_text(item))
-            elif isinstance(nested, dict):
-                for key, value in nested.items():
-                    lines.append(f"{key}: {value_text(value)}")
+                        if key in item
+                    ),
+                    None,
+                )
+
+                if change_type == "created":
+
+                    lines.append(
+                        f"{label}: "
+                        f"{value_text(after)}"
+                    )
+
+                elif change_type == "deleted":
+
+                    lines.append(
+                        f"{label}: "
+                        "ลบข้อมูล "
+                        f"(เดิม: {value_text(before)})"
+                    )
+
+                else:
+
+                    lines.append(
+                        f"{label}: "
+                        f"{value_text(before)} "
+                        "→ "
+                        f"{value_text(after)}"
+                    )
 
             if not lines:
-                ignored = {
-                    "row", "rowNumber", "row_number", "r", "sheetName",
-                    "sheet_name", "sheet", "tab", "timestamp", "time",
-                    "event", "type", "changes",
-                }
-                for key, value in event.items():
-                    if key in ignored:
-                        continue
-                    key_col = column_letter(key)
-                    display_key = column_labels.get(key_col, key)
-                    lines.append(f"{display_key}: {value_text(value)}")
+                lines.append(
+                    "พบการเปลี่ยนแปลงข้อมูล"
+                )
 
-            header = []
-            if sheet_name:
-                header.append(f"แท็บ: {sheet_name}")
-            if row_number is not None:
-                header.append(f"แถว: {row_number}")
-            message = "\n".join(header + lines) or "พบการเปลี่ยนแปลงข้อมูล"
+            # ห้ามแสดง Row / Sheet metadata ใน Popup
+            message = "\n".join(
+                lines
+            )
+
+            if event_type == "delivery_today":
+
+                event_title = (
+                    f"{title} - ส่งรถวันนี้"
+                )
+                notification_type = "due"
+
+            elif event_type == "today_appointment":
+
+                event_title = (
+                    f"{title} - นัดหมายวันนี้"
+                )
+                notification_type = "due"
+
+            else:
+
+                event_title = (
+                    f"{title} "
+                    "- มีการเปลี่ยนแปลงข้อมูล"
+                )
+                notification_type = "edit"
+
             self.add_sale_notification(
-                f"{title} - มีการเปลี่ยนแปลงข้อมูล",
+                event_title,
                 message,
-                "edit",
+                notification_type,
             )
 
         # =====================================
         # DUE TODAY
         # =====================================
 
-        self.notify_due_today(
-            branch
-        )
+        # Structured GAS already emits delivery_today / today_appointment.
+        # Legacy row feeds still use get_due_today().
+        if not result.get(
+            "structured",
+            False,
+        ):
+            self.notify_due_today(
+                branch
+            )
 
     # =========================================
     # Delivery Due Today
@@ -4732,6 +7630,11 @@ class DailyLog(QWidget):
         branch="Sathorn",
     ):
 
+        # SA uses the merged Column-D current-day scope and only reports
+        # add/edit/delete changes inside that scope.
+        if branch == "SA":
+            return
+
         monitor = self.sale_monitors.get(
             branch
         )
@@ -4739,19 +7642,123 @@ class DailyLog(QWidget):
         if monitor is None:
             return
 
+        def format_row(values):
+            items = (
+                values.get(
+                    "row_data"
+                )
+                if isinstance(
+                    values,
+                    dict,
+                )
+                else None
+            )
+
+            lines = []
+
+            if isinstance(
+                items,
+                list,
+            ):
+                for item in items:
+                    if not isinstance(
+                        item,
+                        dict,
+                    ):
+                        continue
+
+                    value = str(
+                        item.get(
+                            "value",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+
+                    if not value:
+                        continue
+
+                    column = str(
+                        item.get(
+                            "column",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+
+                    header = str(
+                        item.get(
+                            "header",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+
+                    label = (
+                        (
+                            f"{column} - {header}"
+                            if column and header
+                            else header
+                            or column
+                        )
+                        or "ข้อมูล"
+                    )
+
+                    lines.append(
+                        f"{label}: {value}"
+                    )
+
+            if not lines:
+                for label, key in (
+                    ("Model", "model"),
+                    ("VIN", "vin"),
+                    (
+                        "Customer",
+                        "customer",
+                    ),
+                    ("Sale", "sale"),
+                    (
+                        "Pay Day",
+                        "pay_day",
+                    ),
+                    (
+                        "Delivery Date",
+                        "delivery_date",
+                    ),
+                ):
+                    value = str(
+                        values.get(
+                            key,
+                            "",
+                        )
+                        or ""
+                    ).strip()
+
+                    if value:
+                        lines.append(
+                            f"{label}: {value}"
+                        )
+
+            return "\n".join(
+                lines
+            )
+
         for row, values in (
             monitor.get_due_today()
         ):
-
-            delivery_date = values.get(
-                "delivery_date",
-                "",
+            due_fields = (
+                values.get(
+                    "due_fields",
+                    [],
+                )
+                or []
             )
 
             notification_key = (
                 f"{branch}-"
+                f"{date.today().isoformat()}-"
                 f"{row}-"
-                f"{delivery_date}"
+                f"{'|'.join(due_fields)}"
             )
 
             if (
@@ -4764,26 +7771,36 @@ class DailyLog(QWidget):
                 notification_key
             )
 
+            if due_fields == [
+                "Pay Day"
+            ]:
+                suffix = (
+                    "Pay Day วันนี้"
+                )
+
+            elif due_fields == [
+                "Delivery Date"
+            ]:
+                suffix = (
+                    "ส่งรถวันนี้"
+                )
+
+            else:
+                suffix = (
+                    "Pay Day / Delivery Date วันนี้"
+                )
+
             message = (
-                f"Row: {row}\n"
-                f"Model: "
-                f"{values.get('model', '-')}\n"
-                f"VIN: "
-                f"{values.get('vin', '-')}\n"
-                f"Customer: "
-                f"{values.get('customer', '-')}\n"
-                f"Sale: "
-                f"{values.get('sale', '-')}\n"
-                f"Pay Day: "
-                f"{values.get('pay_day', '-')}\n"
-                f"Delivery Date: "
-                f"{delivery_date}"
+                "รายละเอียดแจ้ง:\n"
+                + format_row(
+                    values
+                )
             )
 
             self.add_sale_notification(
                 (
                     f"{self._sale_title(branch)} "
-                    "- ถึงกำหนดส่งรถวันนี้"
+                    f"- {suffix}"
                 ),
                 message,
                 "due",
@@ -4803,6 +7820,7 @@ class DailyLog(QWidget):
             self.sale_sheet_timer_srinakarin,
             self.sale_sheet_timer_sa,
             self.sale_sheet_timer_main_noti,
+            self.main_notification_timer,
         ):
 
             timer.stop()
@@ -4864,8 +7882,6 @@ class DailyLog(QWidget):
 
             self.search_input.show()
 
-            self.main_noti_button.show()
-
             self.sale_alert_button.show()
 
             self.sale_alert_button_srinakarin.show()
@@ -4894,8 +7910,6 @@ class DailyLog(QWidget):
 
             self.search_input.hide()
 
-            self.main_noti_button.hide()
-
             self.sale_alert_button.hide()
 
             self.sale_alert_button_srinakarin.hide()
@@ -4922,6 +7936,13 @@ class DailyLog(QWidget):
 # =============================================
 
 if __name__ == "__main__":
+
+    if "--smoke-test" in sys.argv:
+        db = CloudDB()
+        if not db.url or not db.key:
+            raise RuntimeError("Supabase public client config is unavailable")
+        print(f"DailyLog {APP_VERSION} smoke test OK")
+        sys.exit(0)
 
     app = QApplication(
         sys.argv
