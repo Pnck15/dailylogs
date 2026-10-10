@@ -32,7 +32,7 @@ from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.6"
+APP_VERSION = "1.5.7"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
