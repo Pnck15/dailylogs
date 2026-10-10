@@ -5,6 +5,9 @@ on:
     branches: [feature/dailylog-notify]
     paths:
       - main.py
+      - dailylog_finance.py
+      - dailylog_forms.py
+      - tests/windows_main_features_smoke.py
       - cloud_db.py
       - cloud_worker.py
       - sale_api_monitor.py
@@ -28,7 +31,7 @@ permissions:
 
 concurrency:
   group: dailylog-main-release
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   windows-release:
@@ -47,7 +50,7 @@ jobs:
       - name: Compile Python sources
         run: >
           python -m py_compile
-          main.py cloud_db.py cloud_worker.py sale_api_monitor.py
+          main.py dailylog_finance.py dailylog_forms.py cloud_db.py cloud_worker.py sale_api_monitor.py
           sheet_monitor.py notify_channels.py update_checker.py updater.py
 
       - name: Validate PowerShell build and publishing scripts
@@ -76,6 +79,8 @@ jobs:
           if ($app.ExitCode -ne 0) { throw "DailyLog binary smoke test failed: $($app.ExitCode)" }
           ./.venv/Scripts/python.exe tests/windows_main_update_smoke.py
           if ($LASTEXITCODE -ne 0) { throw "Compiled updater smoke test failed." }
+          ./.venv/Scripts/python.exe tests/windows_main_features_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw "Main 3% calculator / red-plate form smoke test failed." }
 
       - uses: actions/upload-artifact@v4
         with:
