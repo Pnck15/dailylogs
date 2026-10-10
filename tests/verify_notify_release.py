@@ -1,5 +1,6 @@
 """Verify the published files through the same public endpoint clients use."""
 import ast
+import os
 import sys
 from pathlib import Path
 
@@ -7,6 +8,10 @@ root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root))
 import requests
 from notify_updates import fetch_update, REPO, HEADERS
+
+token = os.getenv("GH_TOKEN", "").strip()
+if token:
+    HEADERS["Authorization"] = f"Bearer {token}"
 
 source = ast.parse((root / "dailylog_notify.py").read_text(encoding="utf-8"))
 current = next(node.value.value for node in source.body if isinstance(node, ast.Assign)
