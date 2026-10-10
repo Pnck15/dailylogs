@@ -73,6 +73,40 @@ No source-only GitHub commit can directly edit files inside `D:\mini_daily_log`
 until you synchronize the local checkout. No release has been published by
 these fixes.
 
+## PowerShell parse error: `<<<<<<< HEAD` in `build_release.ps1`
+
+This is an unresolved **local Git merge conflict**, not a PyInstaller/PySide6 error.
+The clean `build_release.ps1` on GitHub main contains no conflict markers.
+
+When `git pull` is blocked by an unfinished merge, do **not** run
+`git reset --hard` or delete project files. On the Windows build PC:
+
+```powershell
+cd D:\mini_daily_log
+
+# Fetch the clean GitHub version; this does not merge.
+git fetch origin main
+
+# Save the two local scripts first.
+New-Item -ItemType Directory -Force .\.build_repair_backups | Out-Null
+Copy-Item .\build_release.ps1 .\.build_repair_backups\build_release.before_restore.ps1 -Force
+Copy-Item .\repair_build.ps1 .\.build_repair_backups\repair_build.before_restore.ps1 -Force
+
+# Replace only the tracked Build scripts with verified origin/main copies.
+git restore --source=origin/main --staged --worktree -- build_release.ps1 repair_build.ps1
+
+# Show any other unresolved merge files.
+git diff --name-only --diff-filter=U
+
+# Run normal local build, including the notifier.
+powershell -NoProfile -ExecutionPolicy Bypass -File .\repair_build.ps1 -BuildOnly
+```
+
+If `git diff --name-only --diff-filter=U` lists other paths, resolve those
+separately before committing or pulling again. Local-only `build_notify.ps1`,
+`build_all_release.ps1`, and `publish_all_release.ps1` remain untouched.
+Do not publish a Release until the build passes and the application version
+has been increased.
 ## Diagnostics
 
 Confirm the active venv, not the global Python:
