@@ -979,24 +979,6 @@ async function processSale(
   };
 }
 
-function bangkokNowMinutes(): number {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
-  }).formatToParts(new Date());
-  const h = Number(parts.find(p => p.type === "hour")?.value ?? "0");
-  const m = Number(parts.find(p => p.type === "minute")?.value ?? "0");
-  return h * 60 + m;
-}
-
-function appointmentMinutes(value: unknown): number | null {
-  const text = normalize(value).replace(/[：]/g, ":");
-  const match = text.match(/(?:^|\s)(\d{1,2})\s*[:.]\s*(\d{2})(?:\s*(?:น\.|นาฬิกา))?/);
-  if (!match) return null;
-  const hour = Number(match[1]);
-  const minute = Number(match[2]);
-  return hour < 24 && minute < 60 ? hour * 60 + minute : null;
-}
-
 async function processSa(
   source: SourceRow,
   payload: AnyRow,
@@ -1075,7 +1057,8 @@ async function processSa(
           Record<string, AnyRow>
       : {};
 
-  // First scan of each new day/version becomes the baseline.
+  // The first scan of a GAS version becomes the baseline. Keep the same
+  // baseline across days so edits in 10.2026 / 11.2026 remain detectable.
   if (initialized) {
     const reconciled =
       reconcileRows(
@@ -1192,34 +1175,6 @@ async function processSa(
           )
         ),
         "delete",
-      );
-    }
-  }
-
-  // Time-based reminders are independent of row changes.
-  // The central worker runs every ~5 minutes; a 5-minute catch-up window
-  // tolerates polling drift while dedupe keys guarantee one alert per slot.
-  const nowMinute = bangkokNowMinutes();
-  for (const [physicalKey, row] of Object.entries(current)) {
-    const appointmentDate = dateKeyFromText(row.group_date ?? row.appointment_date);
-    if (appointmentDate !== today) continue;
-    const appointmentMinute = appointmentMinutes(rowDataColumn(row, "B"));
-    if (appointmentMinute === null) continue;
-    const identity = saStableIdentity(row) || physicalKey;
-    for (const offset of [10, 0]) {
-      const triggerMinute = appointmentMinute - offset;
-      if (triggerMinute < 0) continue;
-      const elapsed = nowMinute - triggerMinute;
-      if (elapsed < 0 || elapsed >= 5) continue;
-      const hh = String(Math.floor(appointmentMinute / 60)).padStart(2, "0");
-      const mm = String(appointmentMinute % 60).padStart(2, "0");
-      const time = hh + ":" + mm;
-      await publishEvent(
-        source,
-        source.source_key + "|appointment|" + today + "|" + identity + "|" + time + "|" + offset,
-        source.source_name + (offset === 10 ? " - ก่อนนัดหมาย 10 นาที" : " - ถึงเวลานัดหมาย"),
-        "เวลานัดหมาย 预约时间: " + time + "\\n" + (offset === 10 ? "อีก 10 นาทีถึงเวลานัดหมาย" : "ถึงเวลานัดหมายแล้ว") + "\\n\\nรายละเอียดแจ้ง:\\n" + formatFullRow(row),
-        "due",
       );
     }
   }
