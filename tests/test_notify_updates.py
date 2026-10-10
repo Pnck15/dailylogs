@@ -1,3 +1,4 @@
+import ast
 import hashlib
 import logging
 import sys
@@ -15,9 +16,18 @@ except ImportError:
 import notify_updates as updates
 import updater
 
+root = Path(__file__).resolve().parents[1]
+source = ast.parse((root / "dailylog_notify.py").read_text(encoding="utf-8"))
+CURRENT_VERSION = next(
+    node.value.value
+    for node in source.body
+    if isinstance(node, ast.Assign)
+    and any(isinstance(target, ast.Name) and target.id == "APP_VERSION" for target in node.targets)
+)
+
 PE = b"MZ" + b"x" * (110 * 1024)
 HASH = hashlib.sha256(PE).hexdigest()
-PREFIX = "https://github.com/Pnck15/dailylogs/releases/download/notify-v1.5.1/"
+PREFIX = f"https://github.com/Pnck15/dailylogs/releases/download/notify-v{CURRENT_VERSION}/"
 
 
 def response(data=None, payload=PE):
@@ -29,7 +39,8 @@ def response(data=None, payload=PE):
     return result
 
 
-def release(tag="notify-v1.5.1", **kwargs):
+def release(tag=None, **kwargs):
+    tag = tag or f"notify-v{CURRENT_VERSION}"
     return dict(tag_name=tag, assets=[
         {"name": name, "browser_download_url": PREFIX + name}
         for name in ["notify-version.json", "DailyLogNotify.exe", "DailyLogUpdater.exe"]
@@ -37,7 +48,7 @@ def release(tag="notify-v1.5.1", **kwargs):
 
 
 def manifest():
-    return dict(version="1.5.1", download_url=PREFIX + "DailyLogNotify.exe", sha256=HASH,
+    return dict(version=CURRENT_VERSION, download_url=PREFIX + "DailyLogNotify.exe", sha256=HASH,
                 updater_download_url=PREFIX + "DailyLogUpdater.exe", updater_sha256=HASH)
 
 
@@ -51,12 +62,12 @@ class ReleaseTests(unittest.TestCase):
 
     def test_equal_version_still_describes_updater_repair(self):
         with patch.object(updates.requests, "get", side_effect=[response([release()]), response(manifest())]):
-            result = updates.fetch_update("1.5.1")
+            result = updates.fetch_update(CURRENT_VERSION)
         self.assertFalse(result["available"])
         self.assertIn("updater_sha256", result)
 
     def test_rejects_wrong_tag_hash_and_asset_url(self):
-        for field, value in [("version", "1.5.2"), ("sha256", ""),
+        for field, value in [("version", "99.0.0"), ("sha256", ""),
                              ("download_url", "https://example.com/app.exe")]:
             data = manifest()
             data[field] = value
