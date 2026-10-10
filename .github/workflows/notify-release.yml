@@ -29,7 +29,7 @@ permissions:
   contents: write
 concurrency:
   group: dailylog-notify-release
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   windows-release:
     runs-on: windows-latest
