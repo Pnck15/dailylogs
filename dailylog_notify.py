@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import sys
 import time
@@ -63,6 +64,20 @@ FALLBACK_SOURCE_OPTIONS = [
         "aliases": {"SA Srinakarin"},
     },
 ]
+
+
+def clean_sa_notification_message(message):
+    """Hide SA display-only metadata; never change stored Sheet/Central rows."""
+    lines = []
+    for line in str(message or "").splitlines():
+        if re.match(r"^\s*Merged\s+D\s*:", line, flags=re.IGNORECASE):
+            continue
+        if re.match(r"^\s*C\s*[-–]\s*", line, flags=re.IGNORECASE):
+            continue
+        # Inherited D still matters, but the popup needs no merge internals.
+        line = re.sub(r"\s*\(Merged D\)", "", line, flags=re.IGNORECASE)
+        lines.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
 def make_tray_icon():
@@ -441,7 +456,7 @@ class NotifyPopup(QDialog):
 
     This popup does not depend on Windows Notification settings.
     Text can be selected/copied, the user can close it with X,
-    and each popup closes automatically after 10 minutes.
+    and each popup closes automatically after 3 minutes.
     """
 
     def __init__(
@@ -536,6 +551,25 @@ class NotifyPopup(QDialog):
             28,
             28,
         )
+        close_button.setObjectName("notifyPopupCloseButton")
+        close_button.setStyleSheet(
+            """
+            QPushButton#notifyPopupCloseButton {
+                background-color: #DC2626;
+                color: #FFFFFF;
+                border: 1px solid #B91C1C;
+                border-radius: 6px;
+                font-weight: bold;
+                font-size: 16px;
+            }
+            QPushButton#notifyPopupCloseButton:hover {
+                background-color: #B91C1C;
+            }
+            QPushButton#notifyPopupCloseButton:pressed {
+                background-color: #991B1B;
+            }
+            """
+        )
         close_button.setToolTip(
             "Close"
         )
@@ -595,7 +629,7 @@ class NotifyPopup(QDialog):
         footer = QHBoxLayout()
 
         hint = QLabel(
-            "เลือกข้อความแล้ว Ctrl+C ได้ • ปิดอัตโนมัติใน 10 นาที"
+            "ปิดอัตโนมัติใน 3 นาที"
         )
         hint.setStyleSheet(
             "color: #6B7280; font-size: 10px;"
@@ -645,7 +679,7 @@ class NotifyPopup(QDialog):
             True
         )
         self._auto_close_timer.setInterval(
-            10 * 60 * 1000
+            3 * 60 * 1000
         )
         self._auto_close_timer.timeout.connect(
             self.close
@@ -1578,6 +1612,15 @@ class NotifyApp(QWidget):
         ):
             return
 
+        # Hide SA-only metadata in both new popup and local history.
+        # Keep upstream row values, event identity and deduplication intact.
+        if (
+            str(source_key or "").strip().lower() == "sa_sathorn"
+            or str(source or "").strip().casefold()
+            in {"sa sathorn", "sa notify"}
+        ):
+            message = clean_sa_notification_message(message)
+
         self.history.add(
             source,
             title,
@@ -1599,7 +1642,7 @@ class NotifyApp(QWidget):
             (
                 "ทดสอบ Popup ของ DailyLogNotify\n"
                 "หน้าต่างนี้ไม่ใช้ Windows Notification\n"
-                "สามารถเลือกข้อความเพื่อ Copy ได้ และจะปิดอัตโนมัติใน 10 นาที"
+                "ปิดอัตโนมัติใน 3 นาที"
             ),
         )
 
