@@ -69,9 +69,9 @@ try {
             $utf16le = $bytes.Length -ge 2 -and $bytes[0] -eq 255 -and $bytes[1] -eq 254
             $utf16be = $bytes.Length -ge 2 -and $bytes[0] -eq 254 -and $bytes[1] -eq 255
             $utf8bom = $bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191
-            if ($utf16le) { $encoding = New-Object System.Text.UnicodeEncoding($false, $true) }
-            elseif ($utf16be) { $encoding = New-Object System.Text.UnicodeEncoding($true, $true) }
-            else { $encoding = New-Object System.Text.UTF8Encoding($utf8bom) }
+            if ($utf16le) { $encoding = [System.Text.UnicodeEncoding]::new($false, $true) }
+            elseif ($utf16be) { $encoding = [System.Text.UnicodeEncoding]::new($true, $true) }
+            else { $encoding = [System.Text.UTF8Encoding]::new($utf8bom) }
 
             [System.IO.File]::WriteAllText($file.FullName, $new, $encoding)
             Write-Host "Fixed: $relative"
