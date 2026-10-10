@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 import subprocess
@@ -6,6 +7,7 @@ import time
 
 import requests
 from PySide6.QtCore import QSettings, QTimer, Qt
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -78,6 +80,46 @@ def clean_sa_notification_message(message):
         line = re.sub(r"\s*\(Merged D\)", "", line, flags=re.IGNORECASE)
         lines.append(line)
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def claim_single_notify_instance(startup=False, instance_name=None):
+    """Keep one receiver per Windows user, avoiding competing auth sessions.
+
+    If an instance is already running, a manual launch activates it, and a
+    Windows startup launch exits quietly. No settings or database are changed.
+    """
+    if not instance_name:
+        profile = os.path.normcase(os.path.expanduser("~"))
+        suffix = hashlib.sha256(
+            profile.encode("utf-8", errors="replace")
+        ).hexdigest()[:20]
+        instance_name = "MiniDailyLogNotify-" + suffix
+
+    server = QLocalServer()
+    if server.listen(instance_name):
+        return server
+
+    # A second invocation must not sign in or run a second poll loop.
+    probe = QLocalSocket()
+    probe.connectToServer(instance_name)
+    if probe.waitForConnected(1200):
+        if not startup:
+            probe.write(b"activate")
+            probe.flush()
+            probe.waitForBytesWritten(800)
+        probe.disconnectFromServer()
+        return None
+
+    # A stale local socket may remain after an unclean shutdown.
+    # This never removes any user data, sessions or SQLite files.
+    QLocalServer.removeServer(instance_name)
+    if server.listen(instance_name):
+        return server
+
+    # Fail closed rather than silently running two receivers for one account.
+    raise RuntimeError(
+        "DailyLogNotify instance lock is busy. Check the existing tray process."
+    )
 
 
 def make_tray_icon():
@@ -1992,7 +2034,31 @@ if __name__ == "__main__":
         make_tray_icon()
     )
 
+    # Start with Windows and double-clicked launches share ONE session,
+    # updater, notification cursor and tray process per Windows user.
+    try:
+        notify_instance_server = claim_single_notify_instance(
+            startup="--startup" in sys.argv
+        )
+    except Exception as error:
+        print("[Notify Single Instance]", type(error).__name__)
+        raise SystemExit(1) from error
+
+    if notify_instance_server is None:
+        raise SystemExit(0)
+
     window = NotifyApp()
+
+    def show_existing_window():
+        while notify_instance_server.hasPendingConnections():
+            connection = notify_instance_server.nextPendingConnection()
+            if connection is not None:
+                connection.disconnectFromServer()
+            window.showNormal()
+            window.raise_()
+            window.activateWindow()
+
+    notify_instance_server.newConnection.connect(show_existing_window)
 
     if "--startup" not in sys.argv:
         window.show()
