@@ -1,7 +1,11 @@
 """Run with QT_QPA_PLATFORM=offscreen after Windows build installs PySide6."""
 import os
 import sys
+from pathlib import Path
 
+# python tests/windows_notify_popup_smoke.py sets sys.path[0] to tests/.
+# Explicitly include the project root before importing the Notify entrypoint.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QTimer
