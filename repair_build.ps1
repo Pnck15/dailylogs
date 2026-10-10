@@ -33,13 +33,22 @@ try {
 
     if ($isPython314) {
         Write-Host "Checking local build scripts for incompatible PySide6 pins..."
+        # The local notifier build can read a different requirements file.
+        # Recursively find build/dependency files, without traversing .venv
+        # or any generated release files.
         $targets = @()
-        foreach ($folder in @(".", "scripts", "build_scripts", "packaging")) {
-            if (-not (Test-Path $folder -PathType Container)) { continue }
-            if ($folder -eq ".") {
-                $targets += @(Get-ChildItem -LiteralPath $folder -File)
-            } else {
-                $targets += @(Get-ChildItem -LiteralPath $folder -File -Recurse)
+        $pending = New-Object 'System.Collections.Generic.Stack[string]'
+        $pending.Push($PSScriptRoot)
+        $skipDirs = @(
+            ".venv", "venv", ".git", "build", "dist", "release",
+            ".build_repair_backups", "__pycache__", "node_modules", ".idea"
+        )
+        while ($pending.Count -gt 0) {
+            $folder = $pending.Pop()
+            $targets += @(Get-ChildItem -LiteralPath $folder -File -ErrorAction Stop)
+            foreach ($child in @(Get-ChildItem -LiteralPath $folder -Directory -ErrorAction Stop)) {
+                if ($child.Name -in $skipDirs) { continue }
+                $pending.Push($child.FullName)
             }
         }
 
@@ -49,10 +58,11 @@ try {
         foreach ($file in $targets) {
             $scriptFile = $file.Extension -in @(".ps1", ".cmd", ".bat")
             $dependencyFile = (
-                $file.Extension -in @(".txt", ".in") -and
-                $file.Name -match '(?i)requirements|dependencies'
+                $file.Extension -in @(".txt", ".in", ".toml", ".cfg", ".ini") -and
+                $file.Name -match '(?i)requirements|dependenc|pyproject|pipfile|setup|tox'
             )
-            if (-not ($scriptFile -or $dependencyFile)) { continue }
+            $buildSpec = ($file.Extension -eq ".spec")
+            if (-not ($scriptFile -or $dependencyFile -or $buildSpec)) { continue }
             if ($file.Name -eq "repair_build.ps1") { continue }
 
             $old = [System.IO.File]::ReadAllText($file.FullName)
@@ -77,7 +87,30 @@ try {
             Write-Host "Fixed: $relative"
             $changed++
         }
-        Write-Host "Updated $changed local file(s). Backups: $backupRoot"
+        if ($changed -gt 0) {
+            Write-Host "Updated $changed local file(s). Backups: $backupRoot"
+        } else {
+            Write-Host "No incompatible PySide6 pin found in local build files."
+        }
+
+        # Detect any remaining incompatible pins *before* invoking pip/build.
+        # Otherwise a build may still read a second requirements file and fail.
+        $remaining = @()
+        foreach ($file in $targets) {
+            $scriptFile = $file.Extension -in @(".ps1", ".cmd", ".bat")
+            $dependencyFile = (
+                $file.Extension -in @(".txt", ".in", ".toml", ".cfg", ".ini") -and
+                $file.Name -match '(?i)requirements|dependenc|pyproject|pipfile|setup|tox'
+            )
+            if (-not ($scriptFile -or $dependencyFile -or $file.Extension -eq ".spec")) { continue }
+            $content = [System.IO.File]::ReadAllText($file.FullName)
+            if ([regex]::IsMatch($content, $legacyPin)) {
+                $remaining += $file.FullName
+            }
+        }
+        if ($remaining.Count -gt 0) {
+            throw "Incompatible PySide6 pins still found: $($remaining -join ', ')"
+        }
     } else {
         Write-Host "Python is below 3.14; no local PySide6 pins changed."
     }
@@ -98,13 +131,28 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Publication failed ($LASTEXITCODE)." }
     } elseif ($BuildOnly) {
         $allBuild = Join-Path $PSScriptRoot "build_all_release.ps1"
+        $notifyBuilt = $false
+        $buildStartUtc = (Get-Date).ToUniversalTime()
         if (Test-Path $allBuild -PathType Leaf) {
+            Write-Host "Running local build_all_release.ps1 (includes notifier)..."
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $allBuild
+            $notifyBuilt = $true
         } else {
             Write-Warning "Local build_all_release.ps1 not found. Building DailyLog + Updater only."
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "build_release.ps1") -GitHubRepo $GitHubRepo
         }
         if ($LASTEXITCODE -ne 0) { throw "Build failed ($LASTEXITCODE)." }
+        if ($notifyBuilt) {
+            $notifyExe = Join-Path $PSScriptRoot "release\DailyLogNotify.exe"
+            if (-not (Test-Path -LiteralPath $notifyExe -PathType Leaf)) {
+                throw "Notifier build did not create release\DailyLogNotify.exe."
+            }
+            $item = Get-Item -LiteralPath $notifyExe
+            if ($item.LastWriteTimeUtc -lt $buildStartUtc.AddSeconds(-5)) {
+                throw "release\DailyLogNotify.exe is stale; notifier was not rebuilt in this run."
+            }
+            Write-Host "Confirmed fresh DailyLogNotify.exe build."
+        }
     } else {
         Write-Host "Repair completed. No build or GitHub Release was published."
     }
