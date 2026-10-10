@@ -615,7 +615,7 @@ class CentralNotifyReceiver(QObject):
         self.send_heartbeat()
 
         self.status_changed.emit(
-            f"🟢 Central Notification: {self.email}"
+            "🟡 Central Login สำเร็จ — กำลังยืนยันอุปกรณ์รับแจ้งเตือน"
         )
         self.login_success.emit(self.email)
         self.poll()
@@ -890,6 +890,9 @@ class CentralNotifyReceiver(QObject):
                 timespec="seconds"
             )
             self.last_heartbeat_error = ""
+            self.status_changed.emit(
+                f"🟢 Central Notification: {self.email}"
+            )
 
         if data.get(
             "active",
@@ -1045,9 +1048,14 @@ class CentralNotifyReceiver(QObject):
             )
             self.settings.sync()
 
-        self.status_changed.emit(
-            f"🟢 Central Notification: {self.email}"
-        )
+        if self.device_registration_state == "active":
+            self.status_changed.emit(
+                f"🟢 Central Notification: {self.email}"
+            )
+        else:
+            self.status_changed.emit(
+                "🟡 Central Login สำเร็จ — รอยืนยัน Heartbeat อุปกรณ์"
+            )
 
     @Slot(str)
     def _poll_error(self, message):
