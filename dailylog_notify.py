@@ -106,17 +106,25 @@ def claim_single_notify_instance(startup=False, instance_name=None):
     owner_lock.setStaleLockTime(0)
 
     if not owner_lock.tryLock(0):
-        if not startup:
-            # Bring forward the already-running tray instance when the user
-            # double-clicks the EXE. Never open a competing receiver.
-            probe = QLocalSocket()
-            probe.connectToServer(instance_name)
-            if probe.waitForConnected(1000):
-                probe.write(b"activate")
-                probe.flush()
-                probe.waitForBytesWritten(400)
-                probe.disconnectFromServer()
-        return None
+        # An existing process already owns the exclusive receiver lock.
+        # On manual launch, failure to reach its IPC MUST be visible to
+        # the user rather than causing another silent exit.
+        if startup:
+            return None
+        probe = QLocalSocket()
+        probe.connectToServer(instance_name)
+        if probe.waitForConnected(1500):
+            probe.write(b"activate")
+            probe.flush()
+            probe.waitForBytesWritten(500)
+            probe.disconnectFromServer()
+            return None
+        raise RuntimeError(
+            "พบการล็อกโปรแกรม DailyLogNotify อยู่ "
+            "แต่เปิดหน้าต่างของตัวที่รันอยู่ไม่ได้ "
+            "กรุณาตรวจใน Task Manager ว่ายังมี "
+            "DailyLogNotify.exe เปิดอยู่หรือไม่"
+        )
 
     server = QLocalServer()
     if not server.listen(instance_name):
@@ -311,11 +319,19 @@ class LoginDialog(QDialog):
         )
         self.login_button.setEnabled(False)
 
-        self.receiver.login(
+        started = self.receiver.login(
             email,
             password,
             remember=self.remember.isChecked(),
         )
+        if started is False:
+            # An automatic saved-credentials login may still be active.
+            # Do not trap the user on a disabled Login button forever.
+            self.login_button.setEnabled(True)
+            self.error_label.setText(
+                "ระบบกำลังทำ Login รอบก่อนอยู่ "
+                "กรุณาดูสถานะหรือกดลองอีกครั้ง"
+            )
 
     def _login_success(self, _email):
         if self.isVisible():
@@ -894,7 +910,10 @@ class NotifyApp(QWidget):
             "DailyLog Notify"
         )
 
-        tray_menu = QMenu()
+        # Qt's tray API does not own the context menu. Keep the menu
+        # parented and referenced for the full tray process lifetime.
+        self.tray_menu = QMenu(self)
+        tray_menu = self.tray_menu
 
         show_action = QAction(
             "Open DailyLog Notify",
@@ -958,6 +977,8 @@ class NotifyApp(QWidget):
         self.tray.setContextMenu(
             tray_menu
         )
+        self.tray.activated.connect(self._tray_activated)
+        self._tray_hide_notice_shown = False
 
         show_action.triggered.connect(
             self.showNormal
@@ -1818,6 +1839,19 @@ class NotifyApp(QWidget):
 
             y -= spacing
 
+    def _tray_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+
+    def _tray_available(self):
+        return (
+            QSystemTrayIcon.isSystemTrayAvailable()
+            and self.tray is not None
+            and self.tray.isVisible()
+        )
+
     def enable_startup(self):
         if not getattr(
             sys,
@@ -2023,8 +2057,32 @@ class NotifyApp(QWidget):
         )
 
     def closeEvent(self, event):
+        # Keep the application reachable even on PCs whose Windows tray
+        # is not available (Explorer crash, policy, remote desktop etc.).
         event.ignore()
-        self.hide()
+        if self._tray_available():
+            self.hide()
+            if not self._tray_hide_notice_shown:
+                self._tray_hide_notice_shown = True
+                try:
+                    self.tray.showMessage(
+                        "DailyLogNotify ยังทำงานอยู่",
+                        "โปรแกรมยังรับแจ้งเตือนใน System Tray "
+                        "กดไอคอน ^ บน Taskbar หรือดับเบิลคลิก "
+                        "DailyLogNotify.exe เพื่อเปิดหน้าต่างอีกครั้ง",
+                        QSystemTrayIcon.MessageIcon.Information,
+                        4000,
+                    )
+                except Exception:
+                    pass
+        else:
+            # Do NOT make a working receiver disappear if no tray is
+            # available: leave it minimized on the Windows taskbar.
+            self.showMinimized()
+            self.status.setToolTip(
+                "ไม่พบ Windows System Tray — "
+                "หน้าต่างถูกย่อไว้ที่ Taskbar ไม่ได้ปิดโปรแกรม"
+            )
 
 
 if __name__ == "__main__":
@@ -2054,6 +2112,12 @@ if __name__ == "__main__":
         )
     except Exception as error:
         print("[Notify Single Instance]", type(error).__name__)
+        if "--startup" not in sys.argv:
+            QMessageBox.warning(
+                None,
+                "DailyLogNotify - เปิดโปรแกรมไม่ได้",
+                str(error),
+            )
         raise SystemExit(1) from error
 
     if notify_instance_server is None:
