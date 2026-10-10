@@ -1,5 +1,6 @@
 """History schema upgrade must never remove or rewrite existing records."""
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,7 +13,7 @@ class HistoryMigrationTests(unittest.TestCase):
     def test_adds_source_key_without_deleting_old_records(self):
         with tempfile.TemporaryDirectory() as folder:
             db_path = Path(folder) / "notification_history.db"
-            with sqlite3.connect(db_path) as db:
+            with closing(sqlite3.connect(db_path)) as db, db:
                 db.execute(
                     "CREATE TABLE notifications("
                     "id INTEGER PRIMARY KEY AUTOINCREMENT,"
