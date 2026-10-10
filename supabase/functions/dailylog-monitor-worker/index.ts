@@ -321,7 +321,7 @@ function diffSaFullRow(oldRow: AnyRow, newRow: AnyRow) {
 
   if (before !== after) {
     changes.push(
-      `D - วันที่นัดหมาย (Merged D): ${before || "-"} → ${after || "-"}`,
+      `D - วันที่นัดหมาย: ${before || "-"} → ${after || "-"}`,
     );
   }
   return changes;
@@ -394,6 +394,35 @@ function formatFullRow(row: AnyRow) {
         `${label}: ${value}`,
     )
     .join("\n") || "ไม่มีข้อมูลในแถว";
+}
+
+// Presentation-only: suppress technical SA column C (sequence) while
+// keeping it in snapshots, identity matching, change detection and dedupe.
+function formatSaFullRow(row: AnyRow) {
+  const items = rowData(row).filter(
+    (item) => normalize(item.column).toUpperCase() !== "C",
+  );
+  if (!items.length) return "ไม่มีข้อมูลในแถว";
+
+  const lines = items.map((item) => {
+    const value = normalize(item.value);
+    return value ? `${itemLabel(item)}: ${value}` : "";
+  }).filter(Boolean);
+
+  return lines.join("\n") || "ไม่มีข้อมูลในแถว";
+}
+
+function displaySaChanges(changes: string[]) {
+  const visible = changes.filter(
+    (line) => !/^\s*C\s*[-–]\s*/i.test(line),
+  ).map(
+    (line) => line.replace(/\s*\(Merged D\)/gi, ""),
+  );
+  // C-only changes must still generate an update event. We simply hide
+  // the internal sequence/ID value from the displayed message.
+  return visible.length
+    ? visible.join("\n")
+    : "ข้อมูลภายในรายการมีการเปลี่ยนแปลง";
 }
 
 function diffFullRow(
@@ -1184,11 +1213,11 @@ async function processSa(
         `${source.source_name} - มีการแก้ไขข้อมูล`,
         (
           "ข้อมูลที่เปลี่ยน\n"
-          + changes.join(
-            "\n",
+          + displaySaChanges(
+            changes,
           )
           + "\n\nรายละเอียดแจ้ง:\n"
-          + formatFullRow(
+          + formatSaFullRow(
             row,
           )
         ),
@@ -1217,7 +1246,7 @@ async function processSa(
         `${source.source_name} - เพิ่มข้อมูล`,
         (
           "ข้อมูลที่เพิ่ม\n"
-          + formatFullRow(
+          + formatSaFullRow(
             row,
           )
         ),
@@ -1246,7 +1275,7 @@ async function processSa(
         `${source.source_name} - ลบข้อมูล`,
         (
           "ข้อมูลที่ถูกลบ\n"
-          + formatFullRow(
+          + formatSaFullRow(
             old,
           )
         ),
