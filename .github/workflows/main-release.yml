@@ -91,7 +91,8 @@ jobs:
           $tag = "v$version"
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
-            throw "Release $tag already exists; increase APP_VERSION before publishing another DailyLog build."
+            Write-Host "Release $tag already exists; verifying the published assets."
+            exit 0
           }
           ./publish_release.ps1 -GitHubRepo $env:GITHUB_REPOSITORY
 

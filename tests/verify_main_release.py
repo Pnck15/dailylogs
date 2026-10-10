@@ -1,6 +1,7 @@
 """Verify the published DailyLog release and hashes through public GitHub endpoints."""
 import ast
 import hashlib
+import os
 from pathlib import Path
 
 import requests
@@ -16,6 +17,9 @@ version = next(
 )
 tag = f"v{version}"
 headers = {"Accept": "application/vnd.github+json", "User-Agent": "DailyLog-Release-Verify/1.0"}
+token = os.getenv("GH_TOKEN", "").strip()
+if token:
+    headers["Authorization"] = f"Bearer {token}"
 
 release_response = requests.get(
     f"https://api.github.com/repos/{REPO}/releases/tags/{tag}",
