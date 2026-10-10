@@ -7,6 +7,7 @@ application source files. Local scripts missing from GitHub are preserved.
 [CmdletBinding()]
 param(
     [switch]$BuildOnly,
+    [switch]$NotifyOnly,
     [switch]$Publish,
     [string]$GitHubRepo = "Pnck15/dailylogs"
 )
@@ -14,8 +15,10 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-if ($BuildOnly -and $Publish) {
-    throw "Choose -BuildOnly or -Publish, not both."
+if (($BuildOnly -and $Publish) -or
+    ($BuildOnly -and $NotifyOnly) -or
+    ($NotifyOnly -and $Publish)) {
+    throw "Choose only one mode: -NotifyOnly, -BuildOnly, or -Publish."
 }
 
 
@@ -66,6 +69,49 @@ function Restore-BuildReleaseFromGitHub {
         throw "Restored build_release.ps1 has PowerShell parse errors."
     }
     Write-Host "Restored clean build_release.ps1 from origin/main."
+}
+
+
+function Backup-ExistingExecutables {
+    param([string[]]$Names)
+    # Only copies; never moves/deletes existing Release or Dist executables.
+    $backupDir = Join-Path $PSScriptRoot (
+        '.build_repair_backups\' + (Get-Date -Format 'yyyyMMdd_HHmmss_fff')
+    )
+    $saved = 0
+    foreach ($name in $Names) {
+        foreach ($folder in @('release', 'dist')) {
+            $relativePath = Join-Path $folder $name
+            $source = Join-Path $PSScriptRoot $relativePath
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { continue }
+            $dest = Join-Path $backupDir $relativePath
+            $destFolder = Split-Path -Parent $dest
+            New-Item -ItemType Directory -Force -Path $destFolder | Out-Null
+            Copy-Item -LiteralPath $source -Destination $dest -Force -ErrorAction Stop
+            $saved++
+        }
+    }
+    if ($saved -gt 0) {
+        Write-Host "Saved $saved existing EXE(s) to: $backupDir"
+    } else {
+        Write-Host 'No existing EXEs found to back up.'
+    }
+}
+
+function Assert-FreshNotifyExe {
+    param([datetime]$BuildStartUtc)
+    $exe = Join-Path $PSScriptRoot 'release\DailyLogNotify.exe'
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+        throw 'Notifier build did not create release\DailyLogNotify.exe.'
+    }
+    $info = Get-Item -LiteralPath $exe
+    if ($info.LastWriteTimeUtc -lt $BuildStartUtc.AddSeconds(-5)) {
+        throw 'DailyLogNotify.exe is an old file; build did not create a fresh EXE.'
+    }
+    if ($info.Length -le 0) {
+        throw 'DailyLogNotify.exe has zero bytes.'
+    }
+    Write-Host ('Notifier built successfully: {0:N1} MB' -f ($info.Length / 1MB))
 }
 
 Push-Location $PSScriptRoot
@@ -204,7 +250,23 @@ try {
         }
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -GitHubRepo $GitHubRepo
         if ($LASTEXITCODE -ne 0) { throw "Publication failed ($LASTEXITCODE)." }
+    } elseif ($NotifyOnly) {
+        $notifyScript = Join-Path $PSScriptRoot "build_notify.ps1"
+        if (-not (Test-Path -LiteralPath $notifyScript -PathType Leaf)) {
+            throw "Local build_notify.ps1 is missing. Existing files were not modified by the build."
+        }
+        Backup-ExistingExecutables -Names @("DailyLogNotify.exe")
+        $buildStartUtc = (Get-Date).ToUniversalTime()
+        Write-Host "Building only DailyLogNotify.exe; DailyLog.exe and Updater are untouched."
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $notifyScript
+        if ($LASTEXITCODE -ne 0) {
+            throw "DailyLogNotify build failed ($LASTEXITCODE). Existing EXEs were backed up."
+        }
+        Assert-FreshNotifyExe -BuildStartUtc $buildStartUtc
     } elseif ($BuildOnly) {
+        Backup-ExistingExecutables -Names @(
+            "DailyLog.exe", "DailyLogUpdater.exe", "DailyLogNotify.exe"
+        )
         $allBuild = Join-Path $PSScriptRoot "build_all_release.ps1"
         $notifyBuilt = $false
         $buildStartUtc = (Get-Date).ToUniversalTime()
@@ -218,15 +280,7 @@ try {
         }
         if ($LASTEXITCODE -ne 0) { throw "Build failed ($LASTEXITCODE)." }
         if ($notifyBuilt) {
-            $notifyExe = Join-Path $PSScriptRoot "release\DailyLogNotify.exe"
-            if (-not (Test-Path -LiteralPath $notifyExe -PathType Leaf)) {
-                throw "Notifier build did not create release\DailyLogNotify.exe."
-            }
-            $item = Get-Item -LiteralPath $notifyExe
-            if ($item.LastWriteTimeUtc -lt $buildStartUtc.AddSeconds(-5)) {
-                throw "release\DailyLogNotify.exe is stale; notifier was not rebuilt in this run."
-            }
-            Write-Host "Confirmed fresh DailyLogNotify.exe build."
+            Assert-FreshNotifyExe -BuildStartUtc $buildStartUtc
         }
     } else {
         Write-Host "Repair completed. No build or GitHub Release was published."
