@@ -131,6 +131,14 @@ class DailyLog(QWidget):
             "MainNoti": 0.0,
         }
 
+        # Last successful data scan; a successful ping is not a data scan.
+        self.sale_last_success_at = {
+            "Sathorn": 0.0,
+            "Srinakarin": 0.0,
+            "SA": 0.0,
+            "MainNoti": 0.0,
+        }
+
         self.sale_notifications = []
 
         self.sale_due_notified = set()
@@ -5555,14 +5563,45 @@ class DailyLog(QWidget):
             self._sale_title(branch),
         )
 
-        if self._sale_busy.get(branch, False):
-            dot = "🟡"
-            tip = "กำลังเชื่อมต่อ / กำลังตรวจสอบ"
-        elif self._sale_retry_waiting.get(branch, False):
-            dot = "🟡"
+        # Scanning or waiting in the queue is not a lost connection.
+        # Preserve green while a completed data scan is recent.
+        last_success = float(
+            self.sale_last_success_at.get(branch, 0.0)
+            or 0.0
+        )
+        age_seconds = (
+            datetime.now().timestamp() - last_success
+            if last_success > 0
+            else None
+        )
+        recently_healthy = (
+            age_seconds is not None
+            and 0 <= age_seconds <= 15 * 60
+        )
+
+        if (
+            self.sale_errors.get(branch, False)
+            and not self._sale_busy.get(branch, False)
+            and not self._sale_retry_waiting.get(branch, False)
+        ):
+            dot = "🔴"
+            error_text = str(self.sale_last_error.get(branch, "") or "")
+            tip = "ตรวจข้อมูลไม่สำเร็จ" + (
+                f"\n{error_text[:220]}" if error_text else ""
+            )
+        elif self._sale_busy.get(branch, False):
+            dot = "🟢" if recently_healthy else "🟡"
             tip = (
-                "Apps Script กำลังทำงานจากคำขออื่น "
-                "ระบบจะลองใหม่อัตโนมัติ"
+                "เชื่อมต่อได้ • กำลังตรวจข้อมูลรอบใหม่"
+                if recently_healthy
+                else "กำลังเชื่อมต่อ / ตรวจข้อมูลครั้งแรก"
+            )
+        elif self._sale_retry_waiting.get(branch, False):
+            dot = "🟢" if recently_healthy else "🟡"
+            tip = (
+                "เชื่อมต่อได้ • รอคิว / จะลองใหม่อัตโนมัติ"
+                if recently_healthy
+                else "กำลังรอคิว / จะลองใหม่อัตโนมัติ"
             )
         elif self.sale_errors.get(branch, False):
             dot = "🔴"
@@ -5926,6 +5965,8 @@ class DailyLog(QWidget):
         ):
             return
 
+        if initial:
+            self.sale_last_success_at[branch] = 0.0
         self._sale_busy[branch] = True
         self.sale_errors[branch] = False
         self.sale_last_error[branch] = ""
@@ -6663,6 +6704,7 @@ class DailyLog(QWidget):
                 self._sale_busy[b] = False
                 self._gas_scan_active = None
                 self._sale_retry_waiting[b] = False
+                self.sale_last_success_at[b] = datetime.now().timestamp()
                 self.sale_errors[b] = False
                 self.sale_last_error[b] = ""
                 self.sale_last_elapsed[b] = float(
@@ -6991,6 +7033,18 @@ class DailyLog(QWidget):
                     )
                 )
 
+            if branch == "SA" and isinstance(values, dict):
+                group_date = str(
+                    values.get("appointment_date")
+                    or values.get("group_date")
+                    or ""
+                ).strip()
+                if group_date:
+                    lines.insert(
+                        0,
+                        f"D - วันที่นัดหมาย (Merged D): {group_date}",
+                    )
+
             if not lines:
                 return "ไม่มีข้อมูลในแถว"
 
@@ -7138,6 +7192,23 @@ class DailyLog(QWidget):
                             "→ "
                             f"{new_value or '-'}"
                         )
+                    )
+
+            if branch == "SA":
+                old_date = str(
+                    old_values.get("appointment_date")
+                    or old_values.get("group_date")
+                    or ""
+                ).strip()
+                new_date = str(
+                    new_values.get("appointment_date")
+                    or new_values.get("group_date")
+                    or ""
+                ).strip()
+                if old_date != new_date:
+                    changes.append(
+                        "D - วันที่นัดหมาย (Merged D): "
+                        f"{old_date or '-'} → {new_date or '-'}"
                     )
 
             return changes
