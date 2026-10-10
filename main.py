@@ -55,7 +55,7 @@ APP_NAME = "DailyLog"
 APP_DISPLAY_NAME = "GAC日記"
 
 DEFAULT_ACCENT = "#2563EB"
-APP_VERSION = "1.2.2"
+APP_VERSION = "1.2.3"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 
 UPDATE_CHECK_DELAY_MS = 2500
@@ -7015,6 +7015,12 @@ class DailyLog(QWidget):
             for item in row_data_items(
                 values
             ):
+                if (
+                    branch == "SA"
+                    and str(item.get("column", "")).strip().upper() == "C"
+                ):
+                    # Presentation-only. Keep C in comparison and identity.
+                    continue
                 value = str(
                     item.get(
                         "value",
@@ -7042,7 +7048,7 @@ class DailyLog(QWidget):
                 if group_date:
                     lines.insert(
                         0,
-                        f"D - วันที่นัดหมาย (Merged D): {group_date}",
+                        f"วันที่นัดหมาย: {group_date}",
                     )
 
             if not lines:
@@ -7207,7 +7213,7 @@ class DailyLog(QWidget):
                 ).strip()
                 if old_date != new_date:
                     changes.append(
-                        "D - วันที่นัดหมาย (Merged D): "
+                        "วันที่นัดหมาย: "
                         f"{old_date or '-'} → {new_date or '-'}"
                     )
 
@@ -7253,6 +7259,13 @@ class DailyLog(QWidget):
 
             if not changes:
                 continue
+
+            if branch == "SA":
+                # Hide Column C's value but retain its edits as events.
+                changes = [
+                    line for line in changes
+                    if not str(line).lstrip().upper().startswith("C - ")
+                ] or ["ข้อมูลภายในรายการมีการเปลี่ยนแปลง"]
 
             message = (
                 "ข้อมูลที่เปลี่ยน\n"
