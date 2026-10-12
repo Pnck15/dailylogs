@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QCheckBox,
     QComboBox,
+    QInputDialog,
 )
 from PySide6.QtGui import (
     QColor,
@@ -1613,6 +1614,13 @@ class DailyLog(QWidget):
             self.open_notify_devices_sessions
         )
 
+        central_history_action = notify_menu.addAction(
+            "🧹 ล้างประวัติ Central / ทุกเครื่อง (Admin)..."
+        )
+        central_history_action.triggered.connect(
+            self.open_central_history_cleanup
+        )
+
         notify_menu.addSeparator()
 
         reconnect_menu = notify_menu.addMenu(
@@ -2261,6 +2269,47 @@ class DailyLog(QWidget):
                 f"Online: {online_count}"
             )
         )
+
+    def open_central_history_cleanup(self):
+        """Never delete Central data without a second Admin confirmation."""
+        choice_labels = {
+            "ล้างเมื่อวาน (เวลาไทย)": "yesterday",
+            "ล้างย้อนหลัง 7 วัน (ไม่รวมวันนี้)": "last_7_days",
+            "ล้างทั้งหมดถึงเวลาปัจจุบัน": "all",
+        }
+        choice, ok = QInputDialog.getItem(
+            self,
+            "Central History Retention — เฉพาะ Admin",
+            "เลือกช่วงเวลาที่ต้องการล้างออกจาก Supabase Central "
+            "และให้ DailyLogNotify ทุกเครื่องล้างตาม:",
+            list(choice_labels),
+            0,
+            False,
+        )
+        if not ok or choice not in choice_labels:
+            return
+        scope = choice_labels[choice]
+        warning = (
+            "นี่คือการลบ Notification Events ออกจาก Supabase Central "
+            "ของ Workspace นี้จริง ๆ\n\n"
+            f"ช่วงที่เลือก: {choice}\n\n"
+            "เครื่องที่ออนไลน์และอัปเดตโปรแกรมแล้วจะล้างประวัติท้องถิ่น "
+            "หลังได้รับสัญญาณจาก Central ส่วนเครื่องที่ออฟไลน์ "
+            "จะล้างเมื่อกลับมาเชื่อมต่อ\n\n"
+            "ข้อมูล Google Sheets และ Daily Logs จะไม่ถูกลบ "
+            "แต่ประวัติแจ้งเตือนที่ลบจะกู้คืนจากโปรแกรมไม่ได้\n\n"
+            "ยืนยันล้างประวัติ Central หรือไม่?"
+        )
+        answer = QMessageBox.question(
+            self, "ยืนยันลบประวัติ Central ทุกเครื่อง",
+            warning,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        request_id = self.cloud.call("purge_notification_history", scope)
+        self._cloud_pending[request_id] = ("central_history_purge", scope)
 
     # =========================================
     # Dynamic Main Notification Sources
@@ -3020,6 +3069,15 @@ class DailyLog(QWidget):
                 )
                 or "info"
             )
+
+            # Internal cross-device purge markers are not user alerts.
+            if (
+                notification_type == "history_purge"
+                and str(row.get("source_key") or "") == "__central_history_purge__"
+            ):
+                if event_id > self._main_event_last_id:
+                    self._main_event_last_id = event_id
+                continue
 
             show_popup = True
 
@@ -4396,6 +4454,20 @@ class DailyLog(QWidget):
                     dialog
                 )
 
+        elif kind == "central_history_purge":
+            info = result if isinstance(result, dict) else {}
+            deleted = info.get("deleted_events", 0)
+            marker_id = info.get("marker_id", "-")
+            QMessageBox.information(
+                self, "Central History",
+                f"ลบ Central Notification Events แล้ว {deleted} รายการ\n"
+                f"Signal ID: {marker_id}\n\n"
+                "เครื่องที่ออนไลน์จะล้างตามเมื่อได้รับสัญญาณ "
+                "เครื่องออฟไลน์จะล้างเมื่อเชื่อมต่ออีกครั้ง",
+            )
+            if payload == "all":
+                self.notification_list.clear()
+
         elif kind == "main_event_cursor_init":
 
             try:
@@ -4579,6 +4651,13 @@ class DailyLog(QWidget):
                         button.setEnabled(
                             True
                         )
+
+        elif kind == "central_history_purge":
+            QMessageBox.critical(
+                self, "Central History",
+                "ไม่สามารถล้าง Central Notification Events ได้\n\n"
+                + str(message),
+            )
 
         elif kind == "main_event_cursor_init":
 
