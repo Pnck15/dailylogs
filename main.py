@@ -5180,6 +5180,9 @@ class DailyLog(QWidget):
         if red_plate_data is not None:
             original_plate = red_plate_data.get("plate", "")
             original_description = log[4] or ""
+        elif original_form_key:
+            original_plate = (original_form_data or {}).get("plate", "")
+            original_description = log[4] or ""
 
         mode_row = QHBoxLayout()
         mode_caption = QLabel("รูปแบบ:")
@@ -5311,8 +5314,10 @@ class DailyLog(QWidget):
             elif mode_selector.currentData() in STRUCTURED_FORM_SPECS:
                 mode = mode_selector.currentData()
                 try:
+                    values = structured_editors[mode].values()
+                    values["plate"] = plate_input.text().strip()
                     new_description = serialize_structured_log(
-                        mode, structured_editors[mode].values()
+                        mode, values
                     )
                 except ValueError as error:
                     QMessageBox.warning(dialog, "แบบฟอร์ม", str(error))
@@ -5591,6 +5596,7 @@ class DailyLog(QWidget):
             form_spec = STRUCTURED_FORM_SPECS[mode]
             try:
                 values = self.structured_forms[mode].values()
+                values["plate"] = self.plate_input.text().strip()
                 description = serialize_structured_log(mode, values)
             except ValueError as error:
                 QMessageBox.warning(self, "แบบฟอร์ม", str(error))
