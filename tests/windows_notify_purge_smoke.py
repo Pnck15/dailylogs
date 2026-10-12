@@ -91,6 +91,21 @@ def verify_purge(app):
         assert settings.value(
             "central/offline-workspace/last_event_id"
         ) == 16
+        # Global deletion must be denied to Member accounts even if they
+        # know the RPC name, and be queued only for an Admin.
+        receiver.client = object()
+        receiver.role = "member"
+        failures = []
+        receiver.global_purge_error.connect(failures.append)
+        assert receiver.purge_notification_history("all") is False
+        assert "Admin" in failures[-1]
+        receiver.role = "admin"
+        tasks = []
+        with patch.object(receiver, "_start_job", side_effect=tasks.append):
+            assert receiver.purge_notification_history("last_7_days") is True
+        assert len(tasks) == 1
+        assert tasks[0].scope == "last_7_days"
+
         receiver.timer.stop()
         receiver.source_timer.stop()
         receiver.heartbeat_timer.stop()
