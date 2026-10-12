@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import json
 import platform
 import sys
 import time
@@ -336,7 +337,9 @@ class CentralNotifyReceiver(QObject):
         str,
         bool,
         str,
+        str,  # Original Central event created_at, for global retention
     )
+    history_purge = Signal(object)
     source_list_changed = Signal(object)
     status_changed = Signal(str)
     login_success = Signal(str)
@@ -1020,6 +1023,26 @@ class CentralNotifyReceiver(QObject):
                 row.get("created_at") or ""
             ).strip()
 
+            # Admin cleanup is a signed workspace event published by the
+            # restricted RPC, never a normal source popup or local history.
+            if (
+                str(row.get("notification_type") or "") == "history_purge"
+                and source_key == "__central_history_purge__"
+            ):
+                try:
+                    payload = json.loads(message)
+                    if (
+                        isinstance(payload, dict)
+                        and payload.get("scope") in ("yesterday", "last_7_days", "all")
+                        and payload.get("end")
+                    ):
+                        self.history_purge.emit(payload)
+                except (ValueError, TypeError):
+                    print("[Notify Central Purge] Ignored malformed marker")
+                if event_id > self.last_id:
+                    self.last_id = event_id
+                continue
+
             show_popup = True
             if created_at:
                 try:
@@ -1040,6 +1063,7 @@ class CentralNotifyReceiver(QObject):
                 message,
                 show_popup,
                 source_key,
+                created_at,
             )
 
             if event_id > self.last_id:
