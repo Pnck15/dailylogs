@@ -24,7 +24,10 @@ class FakeHistory:
 
 
 class FakeReceiver(QObject):
-    event = Signal(str, str, str, bool, str)
+    event = Signal(str, str, str, bool, str, str)
+    history_purge = Signal(object)
+    global_purge_success = Signal(object)
+    global_purge_error = Signal(str)
     source_list_changed = Signal(object)
     status_changed = Signal(str)
     login_success = Signal(str)
