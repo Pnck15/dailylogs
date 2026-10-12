@@ -199,10 +199,13 @@ def make_tray_icon():
 
 class HistoryDialog(QDialog):
     """Selectable text, context-menu Copy, Excel export and confirmed delete."""
-    def __init__(self, history, source_allowed=None, parent=None):
+    def __init__(self, history, source_allowed=None, parent=None,
+                 central_purge_callback=None, is_admin=False):
         super().__init__(parent)
         self.history = history
         self.source_allowed = source_allowed
+        self.central_purge_callback = central_purge_callback
+        self.is_admin = bool(is_admin)
         self.visible_rows = []
         self.setWindowTitle("DailyLogNotify - ประวัติแจ้งเตือนทั้งหมด")
         self.resize(700, 490)
@@ -246,12 +249,22 @@ class HistoryDialog(QDialog):
             "QPushButton { background-color: #B91C1C; color: #FFFFFF; "
             "border-radius: 5px; padding: 6px; }"
         )
+        self.central_button = QPushButton("ล้างทุกเครื่อง (Admin)")
+        self.central_button.setObjectName("globalHistoryPurgeButton")
+        self.central_button.setEnabled(
+            self.is_admin and callable(self.central_purge_callback)
+        )
+        self.central_button.setToolTip(
+            "ต้องใช้บัญชี Admin และเชื่อมต่อ Supabase Central"
+        )
         close_button = QPushButton("Close")
+        self.central_button.clicked.connect(self.clear_history_everywhere)
         self.export_button.clicked.connect(self.export_excel)
         self.clear_button.clicked.connect(self.clear_history)
         close_button.clicked.connect(self.close)
         bottom.addWidget(self.export_button)
         bottom.addWidget(self.clear_button)
+        bottom.addWidget(self.central_button)
         bottom.addStretch()
         bottom.addWidget(close_button)
         root.addLayout(bottom)
@@ -317,6 +330,35 @@ class HistoryDialog(QDialog):
             self, "ส่งออกสำเร็จ",
             f"บันทึก {count} รายการลง Excel แล้ว\n{path}"
         )
+
+    def clear_history_everywhere(self):
+        """Admin-only action; local cache is cleared after Central marker."""
+        if not self.is_admin or not callable(self.central_purge_callback):
+            return
+        scope_by_label = {
+            "ล้างเมื่อวาน": "yesterday",
+            "ล้างย้อนหลัง 7 วัน (ไม่รวมวันนี้)": "last_7_days",
+            "ล้างทั้งหมด": "all",
+        }
+        selected, ok = QInputDialog.getItem(
+            self, "ล้างประวัติทั้ง Central และทุกเครื่อง",
+            "เลือกช่วงวันที่ (เวลาไทย):", list(scope_by_label), 0, False,
+        )
+        if not ok or selected not in scope_by_label:
+            return
+        scope = scope_by_label[selected]
+        answer = QMessageBox.question(
+            self, "ยืนยันล้างประวัติทุกเครื่อง",
+            f"ยืนยันล้าง {selected} จาก Supabase Central และ "
+            "ให้ DailyLogNotify ทุกเครื่องล้างประวัติตามนี้หรือไม่?\n\n"
+            "เครื่องออฟไลน์จะล้างเมื่อกลับมาเชื่อมต่อ \n"
+            "บันทึก Daily Logs และ Google Sheets จะไม่ถูกลบ\n"
+            "ไม่สามารถกู้ Notification Events ที่ลบแล้วได้",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.central_purge_callback(scope)
 
     def clear_history(self):
         choices = {
@@ -1139,6 +1181,12 @@ class NotifyApp(QWidget):
             self.receiver.history_purge.connect(
                 self._apply_central_history_purge
             )
+            self.receiver.global_purge_success.connect(
+                self._central_purge_success
+            )
+            self.receiver.global_purge_error.connect(
+                self._central_purge_error
+            )
             self.receiver.source_list_changed.connect(
                 self._source_list_changed
             )
@@ -1851,12 +1899,36 @@ class NotifyApp(QWidget):
             self.history,
             source_allowed=self._source_allowed,
             parent=self,
+            central_purge_callback=self._request_global_purge,
+            is_admin=(
+                self.receiver is not None
+                and str(self.receiver.role or "").lower() == "admin"
+                and self.receiver.client is not None
+            ),
         )
         self._history_dialog = dialog
         try:
             dialog.exec()
         finally:
             self._history_dialog = None
+
+    def _request_global_purge(self, scope):
+        if self.receiver is not None:
+            self.receiver.purge_notification_history(scope)
+
+    def _central_purge_success(self, data):
+        deleted = data.get("deleted_events", 0) if isinstance(data, dict) else 0
+        QMessageBox.information(
+            self, "Central History Cleanup",
+            f"ลบ Central Notification Events {deleted} รายการแล้ว\n"
+            "เครื่องอื่นจะล้างประวัติที่ตรงช่วงวันที่เมื่อรับสัญญาณ Central",
+        )
+
+    def _central_purge_error(self, message):
+        QMessageBox.critical(
+            self, "Central History Cleanup",
+            "ล้างประวัติทุกเครื่องไม่สำเร็จ\n" + str(message),
+        )
 
     def _apply_central_history_purge(self, payload):
         """Purge markers synchronize the local SQLite cache between PCs."""
