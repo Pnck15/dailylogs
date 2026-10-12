@@ -9,6 +9,7 @@ on:
       - notify_receiver.py
       - notify_history.py
       - notify_excel.py
+      - supabase/central_notification_retention.sql
       - workers.py
       - DailyLogNotify.spec
       - updater.spec
@@ -22,6 +23,7 @@ on:
       - tests/test_notify_excel.py
       - tests/windows_notify_popup_smoke.py
       - tests/windows_notify_history_smoke.py
+      - tests/windows_notify_purge_smoke.py
       - tests/windows_notify_resilience_smoke.py
       - tests/windows_notify_tray_login_smoke.py
       - tests/windows_notify_sources_smoke.py
@@ -76,6 +78,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "NotifyPopup UI smoke test failed." }
           ./.venv/Scripts/python.exe tests/windows_notify_history_smoke.py
           if ($LASTEXITCODE -ne 0) { throw "Notify History Excel/copy/clear smoke test failed." }
+          ./.venv/Scripts/python.exe tests/windows_notify_purge_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw "Notify cross-device Central purge marker smoke test failed." }
           ./.venv/Scripts/python.exe tests/windows_notify_resilience_smoke.py
           if ($LASTEXITCODE -ne 0) { throw "Notify login and startup resilience smoke test failed." }
           ./.venv/Scripts/python.exe tests/windows_notify_tray_login_smoke.py
