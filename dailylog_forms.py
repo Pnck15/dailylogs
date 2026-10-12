@@ -286,6 +286,7 @@ def serialize_structured_log(form_key, values):
         key: str((values or {}).get(key) or "").strip()
         for key, _, _ in spec["fields"]
     }
+    normalized["plate"] = str((values or {}).get("plate") or "").strip()
     for key in spec["required"]:
         if not normalized[key]:
             label = next(label for field, label, _ in spec["fields"] if field == key)
@@ -298,6 +299,8 @@ def serialize_structured_log(form_key, values):
                 raise ValueError(f"{label} ไม่ถูกต้อง")
     normalized["vin"] = normalized.get("vin", "").upper()
     lines = [spec["header"]]
+    if normalized["plate"]:
+        lines.append(f"เลขทะเบียน: {normalized['plate']}")
     for key, label, _ in spec["fields"]:
         pieces = normalized[key].splitlines()
         lines.append(f"{label}: {pieces[0] if pieces else ''}")
@@ -314,7 +317,9 @@ def parse_structured_log(description):
         if lines[0].strip() != spec["header"]:
             continue
         values = {key: "" for key, _, _ in spec["fields"]}
+        values["plate"] = ""
         label_to_key = {label: key for key, label, _ in spec["fields"]}
+        label_to_key["เลขทะเบียน"] = "plate"
         last_key = None
         for line in lines[1:]:
             if line.startswith("  ") and last_key:
