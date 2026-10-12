@@ -241,3 +241,218 @@ class RedPlateForm(QWidget):
             "sc_name": self.sc_name.text().strip(),
             "notes": self.notes.toPlainText().strip(),
         }
+
+
+# Structured receipt/payment logs intentionally share existing logs.title and
+# logs.description. No database migration or deletion of older entries.
+STRUCTURED_FORM_SPECS = {
+    "vehicle_receipt": {
+        "header": "แบบฟอร์ม: รับรถ",
+        "title": "รับรถ",
+        "fields": (
+            ("sc_name", "ชื่อ SC", "text"),
+            ("customer", "ชื่อลูกค้า", "text"),
+            ("vin", "เลข VIN", "text"),
+            ("received_date", "วันที่", "date"),
+            ("payment_date", "จ่ายเงินวันไหน", "date_optional"),
+            ("payment_method", "ช่องทางจ่าย", "payment"),
+            ("notes", "หมายเหตุ", "notes"),
+        ),
+        "required": ("sc_name", "customer", "vin"),
+    },
+    "customer_payment": {
+        "header": "แบบฟอร์ม: ลูกค้าจ่ายเงิน",
+        "title": "ลูกค้าจ่ายเงิน",
+        "fields": (
+            ("ro", "เลข RO", "text"),
+            ("vin", "เลข VIN", "text"),
+            ("customer", "ชื่อลูกค้า", "text"),
+            ("payer", "ชื่อคนจ่ายเงิน", "text"),
+            ("payment_date", "จ่ายเงินวันไหน", "date"),
+            ("payment_method", "ช่องทางจ่าย", "payment"),
+            ("notes", "หมายเหตุ", "notes"),
+        ),
+        "required": ("ro", "vin", "customer"),
+    },
+}
+
+
+def serialize_structured_log(form_key, values):
+    """Serialize additional forms with a stable marker and safe note lines."""
+    spec = STRUCTURED_FORM_SPECS.get(form_key)
+    if spec is None:
+        raise ValueError("ไม่พบประเภทแบบฟอร์ม")
+    normalized = {
+        key: str((values or {}).get(key) or "").strip()
+        for key, _, _ in spec["fields"]
+    }
+    for key in spec["required"]:
+        if not normalized[key]:
+            label = next(label for field, label, _ in spec["fields"] if field == key)
+            raise ValueError(f"กรุณากรอก {label}")
+    for key, label, field_type in spec["fields"]:
+        if field_type == "date" and not normalized[key]:
+            raise ValueError(f"กรุณากรอก {label}")
+        if field_type in ("date", "date_optional") and normalized[key]:
+            if not QDate.fromString(normalized[key], "yyyy-MM-dd").isValid():
+                raise ValueError(f"{label} ไม่ถูกต้อง")
+    normalized["vin"] = normalized.get("vin", "").upper()
+    lines = [spec["header"]]
+    for key, label, _ in spec["fields"]:
+        pieces = normalized[key].splitlines()
+        lines.append(f"{label}: {pieces[0] if pieces else ''}")
+        lines.extend("  " + text for text in pieces[1:])
+    return "\n".join(lines)
+
+
+def parse_structured_log(description):
+    """Return (form_key, values) or (None, None) for general/legacy logs."""
+    lines = str(description or "").splitlines()
+    if not lines:
+        return None, None
+    for form_key, spec in STRUCTURED_FORM_SPECS.items():
+        if lines[0].strip() != spec["header"]:
+            continue
+        values = {key: "" for key, _, _ in spec["fields"]}
+        label_to_key = {label: key for key, label, _ in spec["fields"]}
+        last_key = None
+        for line in lines[1:]:
+            if line.startswith("  ") and last_key:
+                values[last_key] += "\n" + line[2:]
+                continue
+            if ": " not in line:
+                continue
+            label, text = line.split(": ", 1)
+            last_key = label_to_key.get(label.strip())
+            if last_key is not None:
+                values[last_key] = text.strip()
+        return form_key, values
+    return None, None
+
+
+class StructuredLogForm(QWidget):
+    """One reusable Add/Edit widget for both vehicle and payment forms."""
+    def __init__(self, form_key, parent=None):
+        super().__init__(parent)
+        if form_key not in STRUCTURED_FORM_SPECS:
+            raise ValueError("ไม่พบประเภทแบบฟอร์ม")
+        self.form_key = form_key
+        self.spec = STRUCTURED_FORM_SPECS[form_key]
+        self.widgets = {}
+        self.date_enabled = {}
+        self.setObjectName("structuredLogForm")
+        self.setStyleSheet("""
+            QWidget#structuredLogForm { background-color:#1E293B;
+                border:1px solid #64748B; border-radius:6px; }
+            QWidget#structuredLogForm QLabel { color:#FFFFFF; background:transparent; }
+            QWidget#structuredLogForm QLineEdit,
+            QWidget#structuredLogForm QDateEdit,
+            QWidget#structuredLogForm QComboBox,
+            QWidget#structuredLogForm QTextEdit {
+                color:#FFFFFF; background-color:#334155;
+                border:1px solid #64748B; border-radius:4px; padding:3px;
+            }
+            QWidget#structuredLogForm QCheckBox {
+                color:#FFFFFF; background:transparent;
+            }
+        """)
+        layout = QFormLayout(self)
+        layout.setContentsMargins(9, 7, 9, 7)
+        for key, label, field_type in self.spec["fields"]:
+            if field_type in ("date", "date_optional"):
+                picker = QDateEdit(self)
+                picker.setCalendarPopup(True)
+                picker.setLocale(
+                    QLocale(QLocale.Language.English, QLocale.Country.UnitedStates)
+                )
+                picker.setDisplayFormat("dd/MM/yyyy")
+                picker.setDate(QDate.currentDate())
+                picker.calendarWidget().setLocale(
+                    QLocale(QLocale.Language.English, QLocale.Country.UnitedStates)
+                )
+                self.widgets[key] = picker
+                if field_type == "date_optional":
+                    row = QWidget(self)
+                    parts = QHBoxLayout(row)
+                    parts.setContentsMargins(0, 0, 0, 0)
+                    check = QCheckBox("ยังไม่กำหนด", row)
+                    check.setChecked(True)
+                    check.setStyleSheet("QCheckBox { color:#FFFFFF; }")
+                    picker.setEnabled(False)
+                    check.toggled.connect(
+                        lambda checked, date=picker: date.setEnabled(not checked)
+                    )
+                    parts.addWidget(picker, 1)
+                    parts.addWidget(check)
+                    self.date_enabled[key] = check
+                    layout.addRow(label, row)
+                else:
+                    layout.addRow(label, picker)
+            elif field_type == "payment":
+                field = QComboBox(self)
+                field.setEditable(True)
+                field.addItems(["", "เงินสด", "โอนเงิน", "บัตรเครดิต", "QR Code", "อื่นๆ"])
+                field.setCurrentText("")
+                self.widgets[key] = field
+                layout.addRow(label, field)
+            elif field_type == "notes":
+                field = QTextEdit(self)
+                field.setMaximumHeight(75)
+                field.setPlaceholderText("รายละเอียดเพิ่มเติม (ถ้ามี)")
+                self.widgets[key] = field
+                layout.addRow(label, field)
+            else:
+                field = QLineEdit(self)
+                field.setPlaceholderText(label)
+                self.widgets[key] = field
+                layout.addRow(label + (" *" if key in self.spec["required"] else ""), field)
+
+    def reset(self, selected_date=None):
+        selected_date = selected_date if isinstance(selected_date, QDate) and selected_date.isValid() else QDate.currentDate()
+        for key, _, field_type in self.spec["fields"]:
+            widget = self.widgets[key]
+            if field_type in ("date", "date_optional"):
+                widget.setDate(selected_date)
+                if key in self.date_enabled:
+                    self.date_enabled[key].setChecked(True)
+            elif field_type == "notes":
+                widget.clear()
+            elif field_type == "payment":
+                widget.setCurrentText("")
+            else:
+                widget.clear()
+
+    def set_values(self, values):
+        values = dict(values or {})
+        for key, _, field_type in self.spec["fields"]:
+            widget = self.widgets[key]
+            value = str(values.get(key) or "")
+            if field_type in ("date", "date_optional"):
+                date = QDate.fromString(value, "yyyy-MM-dd")
+                if key in self.date_enabled:
+                    self.date_enabled[key].setChecked(not date.isValid())
+                if date.isValid():
+                    widget.setDate(date)
+            elif field_type == "notes":
+                widget.setPlainText(value)
+            elif field_type == "payment":
+                widget.setCurrentText(value)
+            else:
+                widget.setText(value)
+
+    def values(self):
+        result = {}
+        for key, _, field_type in self.spec["fields"]:
+            widget = self.widgets[key]
+            if field_type in ("date", "date_optional"):
+                result[key] = (
+                    "" if key in self.date_enabled and self.date_enabled[key].isChecked()
+                    else widget.date().toString("yyyy-MM-dd")
+                )
+            elif field_type == "notes":
+                result[key] = widget.toPlainText().strip()
+            elif field_type == "payment":
+                result[key] = widget.currentText().strip()
+            else:
+                result[key] = widget.text().strip()
+        return result
