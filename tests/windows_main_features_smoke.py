@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtCore import QDate
-from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QStackedWidget, QWidget, QPushButton
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QStackedWidget, QWidget, QPushButton, QLineEdit
 from dailylog_finance import invoice_withholding_3_percent, settlement_3_percent, WithholdingCalculator
 from dailylog_forms import RED_PLATE_HEADER, RedPlateForm, serialize_red_plate, parse_red_plate, split_log_plate, with_log_plate, STRUCTURED_FORM_SPECS, StructuredLogForm, serialize_structured_log, parse_structured_log
 from main import DailyLog
@@ -113,12 +113,14 @@ def test_new_form_serialization(app):
     example_values = {
         "vehicle_receipt": {
             "sc_name": "SC Sathorn", "customer": "คุณตัวอย่าง",
+            "plate": "6 ขอ 7577",
             "vin": "lmgna000000012345", "received_date": "2026-10-12",
             "payment_date": "", "payment_method": "โอนเงิน",
             "notes": "รับรถ\nสภาพสมบูรณ์",
         },
         "customer_payment": {
             "ro": "RO12345", "vin": "lmgna000000012345",
+            "plate": "8 กท 1234",
             "customer": "คุณตัวอย่าง", "payer": "เจ้าของรถ",
             "payment_date": "2026-10-12", "payment_method": "QR Code",
             "notes": "ชำระครบ",
@@ -127,10 +129,13 @@ def test_new_form_serialization(app):
     for key, fields in example_values.items():
         form = StructuredLogForm(key)
         form.set_values(fields)
-        stored = serialize_structured_log(key, form.values())
+        stored = serialize_structured_log(
+            key, {**form.values(), "plate": fields["plate"]}
+        )
         mode, restored = parse_structured_log(stored)
         assert mode == key
         assert restored["vin"] == fields["vin"].upper()
+        assert restored["plate"] == fields["plate"]
         assert restored["notes"] == fields["notes"]
         assert restored["payment_method"] == fields["payment_method"]
         assert STRUCTURED_FORM_SPECS[key]["title"] in stored.splitlines()[0]
@@ -251,12 +256,14 @@ def test_main_add_and_edit(app):
         owner.log_form_selector.setCurrentIndex(expected_idx)
         assert owner.log_add_stack.currentIndex() == expected_idx
         owner.structured_forms[form_key].set_values(props)
+        owner.plate_input.setText("7 กท 7777")
         owner.save_log()
         saved = owner.cloud.added[-1]
         assert saved[2].startswith(STRUCTURED_FORM_SPECS[form_key]["title"])
         mode, restored = parse_structured_log(saved[3])
         assert mode == form_key
         assert restored["payment_method"] == props["payment_method"]
+        assert restored["plate"] == "7 กท 7777"
         log = (70 + index, "2026-10-12", "15:00:00", saved[2], saved[3], "sc")
         owner._open_edit_dialog(70 + index, log)
         app.processEvents()
@@ -269,6 +276,9 @@ def test_main_add_and_edit(app):
             if w.form_key == form_key
         )
         field.widgets["notes"].setPlainText("แก้ไขบันทึกแล้ว")
+        assert "7 กท 7777" in [
+            box.text() for box in dialog.findChildren(QLineEdit)
+        ]
         button = next(
             b for b in dialog.findChildren(QPushButton) if b.text() == "Save"
         )
