@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QStackedWidget, 
 from dailylog_finance import invoice_withholding_3_percent, settlement_3_percent, WithholdingCalculator
 from dailylog_forms import RED_PLATE_HEADER, RedPlateForm, serialize_red_plate, parse_red_plate, split_log_plate, with_log_plate, STRUCTURED_FORM_SPECS, StructuredLogForm, serialize_structured_log, parse_structured_log
 from main import DailyLog
+from cloud_db import CloudDB
 
 
 def test_finance(app):
@@ -284,6 +285,48 @@ def test_main_add_and_edit(app):
     owner.deleteLater()
 
 
+def test_admin_central_history_guard():
+    """No Supabase operations: enforce authorization before creating request."""
+    class OfflineClient:
+        def __init__(self):
+            self.calls = []
+        def rpc(self, name, args):
+            self.calls.append((name, args))
+            return self
+        def execute(self):
+            return type("Result", (), {"data": {
+                "scope": "yesterday", "deleted_events": 0, "marker_id": 1
+            }})()
+
+    db = CloudDB.__new__(CloudDB)
+    db.user = object()
+    db.session = object()
+    db.workspace_id = "offline-test"
+    db.client = OfflineClient()
+    db.role = "member"
+    try:
+        db.purge_notification_history("all")
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("Member must not delete Central Events")
+    assert db.client.calls == []
+
+    db.role = "admin"
+    try:
+        db.purge_notification_history("forever")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Invalid range must be rejected")
+    assert db.client.calls == []
+    result = db.purge_notification_history("yesterday")
+    assert result["marker_id"] == 1
+    assert db.client.calls == [
+        ("purge_notification_history", {"p_scope": "yesterday"})
+    ]
+
+
 if __name__ == "__main__":
     app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
@@ -291,4 +334,5 @@ if __name__ == "__main__":
     test_red_plate_serialization(app)
     test_new_form_serialization(app)
     test_main_add_and_edit(app)
+    test_admin_central_history_guard()
     print("PASS: VAT invoice, Add/Edit of red plate, vehicle receipt and customer payment templates.")
