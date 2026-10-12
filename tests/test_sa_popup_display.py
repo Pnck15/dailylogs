@@ -69,7 +69,7 @@ class SaMessageCleanerTests(unittest.TestCase):
 
     def test_history_ui_filters_source_without_deleting_rows(self):
         self.assertIn("source_allowed=self._source_allowed", SOURCE)
-        self.assertIn("if callable(self.source_allowed) and not", SOURCE)
+        self.assertIn("or self.source_allowed(", SOURCE)
         self.assertIn("source_key=source_key", SOURCE)
 
     def test_x_is_red_and_copy_remains(self):
