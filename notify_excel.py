@@ -76,8 +76,10 @@ def make_history_xlsx(path, records):
     book = ET.Element(f"{{{S}}}workbook", {f"{{{R}}}dummy": ""})
     book.attrib.pop(f"{{{R}}}dummy")
     tabs = ET.SubElement(book, f"{{{S}}}sheets")
-    ET.SubElement(tabs, f"{{{S}}}sheet", name="Notification History",
-                  sheetId="1", {f"{{{R}}}id": "rId1"})
+    ET.SubElement(
+        tabs, f"{{{S}}}sheet",
+        {"name": "Notification History", "sheetId": "1", f"{{{R}}}id": "rId1"},
+    )
 
     styles = """<?xml version="1.0" encoding="UTF-8"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
