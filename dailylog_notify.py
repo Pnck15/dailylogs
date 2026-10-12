@@ -4,6 +4,8 @@ import re
 import subprocess
 import sys
 import time
+from datetime import datetime
+from pathlib import Path
 
 import requests
 from PySide6.QtCore import QLockFile, QSettings, QTimer, Qt
@@ -13,6 +15,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QDialog,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -28,12 +31,13 @@ from PySide6.QtWidgets import (
 )
 
 from notify_history import NotificationHistory, app_data_dir
+from notify_excel import make_history_xlsx
 from notify_receiver import CentralNotifyReceiver
 from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.9"
+APP_VERSION = "1.5.10"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
@@ -166,50 +170,141 @@ def make_tray_icon():
 
 
 class HistoryDialog(QDialog):
+    """Selectable text, context-menu Copy, Excel export and confirmed delete."""
     def __init__(self, history, source_allowed=None, parent=None):
         super().__init__(parent)
-
         self.history = history
-        # Live predicate: changing Notification Sources immediately updates
-        # the visible history without deleting historical SQLite records.
         self.source_allowed = source_allowed
+        self.visible_rows = []
+        self.setWindowTitle("DailyLogNotify - ประวัติแจ้งเตือนทั้งหมด")
+        self.resize(700, 490)
 
-        self.setWindowTitle(
-            "DailyLogNotify - ประวัติแจ้งเตือนทั้งหมด"
+        root = QVBoxLayout(self)
+        note = QLabel(
+            "แสดงและส่งออกเฉพาะ Source ที่เครื่องนี้เลือกไว้ "
+            "• สามารถลากเลือกข้อความหรือคลิกขวาเพื่อ Copy"
         )
-        self.resize(620, 420)
+        note.setWordWrap(True)
+        root.addWidget(note)
 
-        layout = QVBoxLayout(self)
+        self.text_area = QTextEdit(self)
+        self.text_area.setObjectName("selectableHistoryText")
+        self.text_area.setReadOnly(True)
+        self.text_area.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        self.text_area.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.DefaultContextMenu
+        )
+        self.text_area.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        root.addWidget(self.text_area, 1)
 
-        self.list_widget = QListWidget()
-        layout.addWidget(self.list_widget)
-
+        self.count_label = QLabel("")
+        root.addWidget(self.count_label)
+        bottom = QHBoxLayout()
+        self.export_button = QPushButton("ส่งออกเป็น .excel")
+        self.export_button.setObjectName("exportHistoryExcelButton")
+        self.clear_button = QPushButton("ล้างประวัติ")
+        self.clear_button.setObjectName("clearNotificationHistoryButton")
+        self.clear_button.setStyleSheet(
+            "QPushButton { background-color: #B91C1C; color: #FFFFFF; "
+            "border-radius: 5px; padding: 6px; }"
+        )
         close_button = QPushButton("Close")
+        self.export_button.clicked.connect(self.export_excel)
+        self.clear_button.clicked.connect(self.clear_history)
         close_button.clicked.connect(self.close)
-        layout.addWidget(close_button)
-
+        bottom.addWidget(self.export_button)
+        bottom.addWidget(self.clear_button)
+        bottom.addStretch()
+        bottom.addWidget(close_button)
+        root.addLayout(bottom)
         self.reload()
 
     def reload(self):
-        self.list_widget.clear()
-
-        for item in self.history.all():
-            if callable(self.source_allowed) and not self.source_allowed(
-                item.get("source", ""),
-                item.get("source_key", ""),
-            ):
-                continue
-
-            created_at = item.get("created_at", "")
-            source = item.get("source", "")
-            title = item.get("title", "")
-            message = item.get("message", "")
-
-            self.list_widget.addItem(
-                f"{created_at}  [{source}]\n"
-                f"{title}\n"
-                f"{message}"
+        self.visible_rows = [
+            item for item in self.history.all()
+            if (
+                not callable(self.source_allowed)
+                or self.source_allowed(
+                    item.get("source", ""), item.get("source_key", "")
+                )
             )
+        ]
+        blocks = []
+        for item in self.visible_rows:
+            blocks.append(
+                f"{item.get('created_at', '')}  "
+                f"[{item.get('source', '')}]\n"
+                f"{item.get('title', '')}\n"
+                f"{item.get('message', '')}"
+            )
+        self.text_area.setPlainText(
+            "\n\n" + ("─" * 38 + "\n\n").join(blocks)
+            if blocks else "ไม่มีประวัติแจ้งเตือนสำหรับ Source ที่เลือก"
+        )
+        self.text_area.moveCursor(
+            self.text_area.textCursor().MoveOperation.Start
+        )
+        self.count_label.setText(
+            f"แสดง {len(self.visible_rows)} รายการตาม Source ที่เลือก"
+        )
+        self.export_button.setEnabled(bool(self.visible_rows))
+
+    def export_excel(self):
+        if not self.visible_rows:
+            QMessageBox.information(
+                self, "Notification History",
+                "ไม่มีประวัติใน Source ที่เลือกสำหรับส่งออก"
+            )
+            return
+        documents = Path.home() / "Documents"
+        if not documents.is_dir():
+            documents = Path.home()
+        name = "DailyLogNotify_History_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".xlsx"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "ส่งออกประวัติแจ้งเตือน", str(documents / name),
+            "Excel Workbook (*.xlsx)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+        try:
+            count = make_history_xlsx(path, self.visible_rows)
+        except (OSError, ValueError, RuntimeError) as error:
+            QMessageBox.critical(
+                self, "ส่งออก Excel ไม่สำเร็จ", str(error)
+            )
+            return
+        QMessageBox.information(
+            self, "ส่งออกสำเร็จ",
+            f"บันทึก {count} รายการลง Excel แล้ว\n{path}"
+        )
+
+    def clear_history(self):
+        # Explicitly warn that previously hidden source records are included.
+        answer = QMessageBox.question(
+            self, "ยืนยันล้างประวัติ",
+            "แน่ใจหรือไม่ว่าต้องการล้างประวัติแจ้งเตือนทั้งหมด "
+            "ในเครื่องนี้ รวม Source ที่ไม่ได้ติ๊กด้วย?\n\n"
+            "ไม่สามารถย้อนคืนได้ แต่จะไม่ลบข้อมูลใน Supabase "
+            "หรือประวัติของเครื่องอื่น",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            count = self.history.clear_all()
+        except (OSError, RuntimeError) as error:
+            QMessageBox.critical(self, "ล้างประวัติไม่สำเร็จ", str(error))
+            return
+        self.reload()
+        self.count_label.setText(
+            f"ล้างประวัติในเครื่องนี้แล้ว {count} รายการ"
+        )
 
 
 class LoginDialog(QDialog):
@@ -658,7 +753,7 @@ class NotifyPopup(QDialog):
         footer = QHBoxLayout()
 
         hint = QLabel(
-            "ปิดอัตโนมัติใน 20 วินาที"
+            "ปิดอัตโนมัติใน 23 วินาที"
         )
         hint.setStyleSheet(
             "color: #6B7280; font-size: 10px;"
@@ -708,7 +803,7 @@ class NotifyPopup(QDialog):
             True
         )
         self._auto_close_timer.setInterval(
-            20 * 1000
+            23 * 1000
         )
         self._auto_close_timer.timeout.connect(
             self.dismiss
@@ -1738,7 +1833,7 @@ class NotifyApp(QWidget):
             (
                 "ทดสอบ Popup ของ DailyLogNotify\n"
                 "หน้าต่างนี้ไม่ใช้ Windows Notification\n"
-                "ปิดอัตโนมัติใน 20 วินาที"
+                "ปิดอัตโนมัติใน 23 วินาที"
             ),
         )
 
