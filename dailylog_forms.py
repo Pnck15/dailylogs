@@ -5,7 +5,7 @@ is a human-readable form identifier; all fields remain searchable and editable.
 """
 from PySide6.QtCore import QDate, QLocale
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDateEdit, QFormLayout, QLabel, QLineEdit, QTextEdit, QWidget,
+    QCheckBox, QComboBox, QDateEdit, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QTextEdit, QWidget,
 )
 
 def style_form_selector(selector: QComboBox):
