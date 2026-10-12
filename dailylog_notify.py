@@ -230,10 +230,17 @@ class HistoryDialog(QDialog):
 
         self.count_label = QLabel("")
         root.addWidget(self.count_label)
+        central_note = QLabel(
+            "ต้องการให้ทุกเครื่องหายพร้อมกัน? ใช้เมนู "
+            "DailyLog → Notification System Settings → "
+            "ล้างประวัติ Central / ทุกเครื่อง (เฉพาะ Admin)"
+        )
+        central_note.setWordWrap(True)
+        root.addWidget(central_note)
         bottom = QHBoxLayout()
         self.export_button = QPushButton("ส่งออกเป็น .excel")
         self.export_button.setObjectName("exportHistoryExcelButton")
-        self.clear_button = QPushButton("ล้างประวัติ")
+        self.clear_button = QPushButton("ล้างประวัติ (เครื่องนี้)")
         self.clear_button.setObjectName("clearNotificationHistoryButton")
         self.clear_button.setStyleSheet(
             "QPushButton { background-color: #B91C1C; color: #FFFFFF; "
@@ -312,28 +319,57 @@ class HistoryDialog(QDialog):
         )
 
     def clear_history(self):
-        # Explicitly warn that previously hidden source records are included.
+        choices = {
+            "ล้างเมื่อวาน": "yesterday",
+            "ล้างย้อนหลัง 7 วัน (ไม่รวมวันนี้)": "last_7_days",
+            "ล้างทั้งหมด": "all",
+        }
+        selected, ok = QInputDialog.getItem(
+            self, "ช่วงเวลาล้างประวัติในเครื่องนี้",
+            "เลือกช่วงเวลาที่ต้องการล้าง:",
+            list(choices), 0, False,
+        )
+        if not ok or selected not in choices:
+            return
+        scope = choices[selected]
+        now_bkk = datetime.now(timezone(timedelta(hours=7)))
+        today_start = now_bkk.replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        if scope == "yesterday":
+            start = today_start - timedelta(days=1)
+            end = today_start
+        elif scope == "last_7_days":
+            start = today_start - timedelta(days=7)
+            end = today_start
+        else:
+            start = None
+            end = now_bkk + timedelta(microseconds=1)
+
         answer = QMessageBox.question(
-            self, "ยืนยันล้างประวัติ",
-            "แน่ใจหรือไม่ว่าต้องการล้างประวัติแจ้งเตือนทั้งหมด "
-            "ในเครื่องนี้ รวม Source ที่ไม่ได้ติ๊กด้วย?\n\n"
-            "ไม่สามารถย้อนคืนได้ แต่จะไม่ลบข้อมูลใน Supabase "
-            "หรือประวัติของเครื่องอื่น",
+            self, "ยืนยันล้างประวัติในเครื่องนี้",
+            f"ล้างประวัติ: {selected}\n\n"
+            "การล้างจากหน้าต่างนี้มีผลเฉพาะ SQLite บนพีซีนี้ "
+            "ไม่ได้ลบเครื่องอื่นและไม่ได้ลดพื้นที่ Supabase\n\n"
+            "หากต้องการล้างทุกเครื่อง ให้ Admin ใช้เมนู Central "
+            "ใน DailyLog.exe\n\n"
+            "รายการที่ลบไม่สามารถย้อนคืนได้ ยืนยันหรือไม่?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            count = self.history.clear_all()
-        except (OSError, RuntimeError) as error:
+            count = self.history.clear_period(
+                start.isoformat() if start else None, end.isoformat()
+            )
+        except (OSError, ValueError, RuntimeError) as error:
             QMessageBox.critical(self, "ล้างประวัติไม่สำเร็จ", str(error))
             return
         self.reload()
         self.count_label.setText(
-            f"ล้างประวัติในเครื่องนี้แล้ว {count} รายการ"
+            f"ล้างประวัติ ({selected}) ในเครื่องนี้แล้ว {count} รายการ"
         )
-
 
 class LoginDialog(QDialog):
     def __init__(self, receiver, settings, parent=None):
