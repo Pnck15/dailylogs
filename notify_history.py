@@ -1,7 +1,7 @@
 import os
 import sqlite3
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 def app_data_dir():
     base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
@@ -31,14 +31,15 @@ class NotificationHistory:
                     "ADD COLUMN source_key TEXT NOT NULL DEFAULT ''"
                 )
 
-    def add(self, source, title, message, source_key=""):
+    def add(self, source, title, message, source_key="", event_created_at=""):
         with closing(sqlite3.connect(self.path)) as db, db:
             db.execute(
                 "INSERT INTO notifications("
                 "created_at,source,title,message,source_key"
                 ") VALUES(?,?,?,?,?)",
                 (
-                    datetime.now().isoformat(timespec="seconds"),
+                    str(event_created_at or "").strip()
+                    or datetime.now().isoformat(timespec="seconds"),
                     source,
                     title,
                     message,
@@ -84,3 +85,45 @@ class NotificationHistory:
         with closing(sqlite3.connect(self.path)) as db, db:
             cursor = db.execute("DELETE FROM notifications")
             return max(cursor.rowcount, 0)
+
+
+    @staticmethod
+    def _event_time(value):
+        """Old rows use PC-local Bangkok time; new rows retain UTC event time."""
+        from datetime import datetime, timedelta, timezone
+        bangkok = timezone(timedelta(hours=7))
+        try:
+            stamp = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=bangkok)
+        return stamp.astimezone(timezone.utc)
+
+    def clear_period(self, start_at=None, end_at=None):
+        """Delete events in [start,end), never touches the Central database.
+
+        Rows added by new EXEs use original server created_at, while legacy
+        rows use their local saved timestamp in Thailand.
+        """
+        from datetime import datetime, timezone
+        start = self._event_time(start_at) if start_at else None
+        end = self._event_time(end_at) if end_at else datetime.now(timezone.utc)
+        if end is None or (start is not None and start >= end):
+            raise ValueError("ช่วงเวลาที่ต้องการล้างไม่ถูกต้อง")
+        with closing(sqlite3.connect(self.path)) as db, db:
+            matches = []
+            for entry_id, stamp in db.execute(
+                "SELECT id, created_at FROM notifications"
+            ):
+                event_time = self._event_time(stamp)
+                if event_time is None:
+                    # Conservative: skip unparseable timestamps except all.
+                    if start is None:
+                        matches.append((entry_id,))
+                    continue
+                if event_time < end and (start is None or event_time >= start):
+                    matches.append((entry_id,))
+            if matches:
+                db.executemany("DELETE FROM notifications WHERE id=?", matches)
+            return len(matches)
