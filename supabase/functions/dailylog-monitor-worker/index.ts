@@ -308,7 +308,7 @@ function saScheduleContext(row: AnyRow, previousRow?: AnyRow) {
     ? `${previousTime || "-"} → ${time || "-"}`
     : time || "-";
 
-  return `วันที่นัดหมาย (Column D): ${dateLabel}\nเวลานัดหมาย: ${timeLabel}`;
+  return `วันที่นัดหมาย: ${dateLabel}\nเวลานัดหมาย: ${timeLabel}`;
 }
 
 // v6.1 GAS parsed Thai "10.10.69" as 2069-10-10. On monthly
