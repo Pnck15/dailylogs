@@ -284,6 +284,33 @@ function saEffectiveDate(row: AnyRow) {
   );
 }
 
+// Format the date inherited from a merged Column D group. GAS assigns
+// appointment_date/group_date to every child row, even when physical D
+// is empty; the original merged cell range is never shown to the user.
+function saScheduleContext(row: AnyRow, previousRow?: AnyRow) {
+  const date = saEffectiveDate(row);
+  const previousDate = previousRow ? saEffectiveDate(previousRow) : "";
+  const dateLabel = previousDate && date !== previousDate
+    ? `${previousDate || "-"} → ${date || "-"}`
+    : date || "-";
+
+  const time = normalize(row.appointment_time)
+    || normalize(rowData(row).find(
+      (item) => normalize(item.column).toUpperCase() === "B",
+    )?.value);
+  const previousTime = previousRow
+    ? normalize(previousRow.appointment_time)
+      || normalize(rowData(previousRow).find(
+        (item) => normalize(item.column).toUpperCase() === "B",
+      )?.value)
+    : "";
+  const timeLabel = previousTime && previousTime !== time
+    ? `${previousTime || "-"} → ${time || "-"}`
+    : time || "-";
+
+  return `วันที่นัดหมาย (Column D): ${dateLabel}\nเวลานัดหมาย: ${timeLabel}`;
+}
+
 // v6.1 GAS parsed Thai "10.10.69" as 2069-10-10. On monthly
 // tab 10.2026 this +43 year offset unambiguously identifies BE 2569.
 // Normalize BOTH current and previous snapshots without touching any
@@ -1213,6 +1240,8 @@ async function processSa(
         `${source.source_name} - มีการแก้ไขข้อมูล`,
         (
           "ข้อมูลที่เปลี่ยน\n"
+          + saScheduleContext(row, old)
+          + "\n\n"
           + displaySaChanges(
             changes,
           )
@@ -1246,6 +1275,8 @@ async function processSa(
         `${source.source_name} - เพิ่มข้อมูล`,
         (
           "ข้อมูลที่เพิ่ม\n"
+          + saScheduleContext(row)
+          + "\n\n"
           + formatSaFullRow(
             row,
           )
@@ -1275,6 +1306,8 @@ async function processSa(
         `${source.source_name} - ลบข้อมูล`,
         (
           "ข้อมูลที่ถูกลบ\n"
+          + saScheduleContext(old)
+          + "\n\n"
           + formatSaFullRow(
             old,
           )
