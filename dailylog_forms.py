@@ -3,7 +3,7 @@
 No schema migration: logs already supports title + description. The first line
 is a human-readable form identifier; all fields remain searchable and editable.
 """
-from PySide6.QtCore import QDate
+from PySide6.QtCore import QDate, QLocale
 from PySide6.QtWidgets import (
     QCheckBox, QDateEdit, QFormLayout, QLabel, QLineEdit, QTextEdit, QWidget,
 )
@@ -12,6 +12,7 @@ RED_PLATE_HEADER = "แบบฟอร์ม: ป้ายแดง"
 RED_PLATE_FIELDS = (
     ("customer", "ชื่อลูกค้า"),
     ("vin", "เลข VIN"),
+    ("plate", "เลขทะเบียน"),
     ("received_date", "วันที่รับป้ายแดง"),
     ("returned_date", "วันที่คืนป้ายแดง"),
     ("sc_name", "ชื่อ SC"),
@@ -24,8 +25,8 @@ def serialize_red_plate(values):
     """Build readable, searchable text without storing extra private copies."""
     normalized = {key: str(values.get(key, "") or "").strip()
                   for key, _ in RED_PLATE_FIELDS}
-    for key, label in RED_PLATE_FIELDS[:3]:
-        if not normalized[key]:
+    for key, label in RED_PLATE_FIELDS:
+        if key in ('customer', 'vin', 'received_date') and not normalized[key]:
             raise ValueError(f"กรุณากรอก {label}")
     date = QDate.fromString(normalized["received_date"], "yyyy-MM-dd")
     if not date.isValid():
@@ -48,6 +49,25 @@ def serialize_red_plate(values):
         if key == "notes" and len(notes) > 1:
             lines.extend(f"  {line}" for line in notes[1:])
     return "\n".join(lines)
+
+
+PLATE_PREFIX = "เลขทะเบียน: "
+
+
+def split_log_plate(description):
+    """Read new general-log plate metadata; leave legacy logs unchanged."""
+    text = str(description or "")
+    head, separator, remainder = text.partition("\n")
+    if head.startswith(PLATE_PREFIX):
+        return head[len(PLATE_PREFIX):].strip(), remainder if separator else ""
+    return "", text
+
+
+def with_log_plate(description, plate):
+    """Save license plate in existing searchable description; no schema change."""
+    _, plain = split_log_plate(description)
+    value = str(plate or "").strip()
+    return PLATE_PREFIX + value + ("\n" + plain if plain else "") if value else plain
 
 
 def parse_red_plate(description):
@@ -76,23 +96,64 @@ class RedPlateForm(QWidget):
     """Shared entry widget for Add Log and editing saved red-plate logs."""
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("redPlateForm")
+        self.setStyleSheet("""
+            QWidget#redPlateForm {
+                background-color: #1E293B;
+                border: 1px solid #64748B;
+                border-radius: 7px;
+            }
+            QWidget#redPlateForm QLabel, QWidget#redPlateForm QCheckBox {
+                color: #FFFFFF;
+                background: transparent;
+            }
+            QWidget#redPlateForm QLineEdit,
+            QWidget#redPlateForm QTextEdit,
+            QWidget#redPlateForm QDateEdit {
+                color: #FFFFFF;
+                background-color: #334155;
+                border: 1px solid #64748B;
+                border-radius: 4px;
+                padding: 3px;
+            }
+            QWidget#redPlateForm QDateEdit:disabled {
+                color: #CBD5E1;
+                background-color: #475569;
+            }
+        """)
         form = QFormLayout(self)
-        form.setContentsMargins(2, 2, 2, 2)
+        form.setContentsMargins(9, 7, 9, 7)
         self.customer = QLineEdit()
         self.customer.setPlaceholderText("ชื่อ - นามสกุลลูกค้า")
         self.vin = QLineEdit()
         self.vin.setPlaceholderText("เลขตัวถัง / VIN")
         self.received_date = QDateEdit()
         self.received_date.setCalendarPopup(True)
+        self.received_date.setLocale(
+            QLocale(QLocale.Language.English, QLocale.Country.UnitedStates)
+        )
         self.received_date.setDisplayFormat("dd/MM/yyyy")
         self.received_date.setDate(QDate.currentDate())
         self.not_returned = QCheckBox("ยังไม่คืนป้ายแดง")
         self.not_returned.setChecked(True)
         self.returned_date = QDateEdit()
+        self.returned_date.setLocale(
+            QLocale(QLocale.Language.English, QLocale.Country.UnitedStates)
+        )
         self.returned_date.setDisplayFormat("dd/MM/yyyy")
         self.returned_date.setCalendarPopup(True)
         self.returned_date.setDate(QDate.currentDate())
         self.returned_date.setEnabled(False)
+        for date_box in (self.received_date, self.returned_date):
+            calendar = date_box.calendarWidget()
+            if calendar is not None:
+                calendar.setLocale(
+                    QLocale(QLocale.Language.English, QLocale.Country.UnitedStates)
+                )
+                calendar.setStyleSheet("QCalendarWidget { color: #111827; background-color: #FFFFFF; }")
+        self.not_returned.setStyleSheet(
+            "QCheckBox { color: #FFFFFF; background: transparent; }"
+        )
         self.not_returned.toggled.connect(
             lambda checked: self.returned_date.setEnabled(not checked)
         )
