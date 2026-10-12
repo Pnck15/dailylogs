@@ -53,6 +53,8 @@ from dailylog_finance import WithholdingCalculator
 from dailylog_forms import (
     RedPlateForm, serialize_red_plate, parse_red_plate,
     split_log_plate, with_log_plate, style_form_selector,
+    STRUCTURED_FORM_SPECS, StructuredLogForm,
+    serialize_structured_log, parse_structured_log,
 )
 
 
@@ -61,7 +63,7 @@ APP_NAME = "DailyLog"
 APP_DISPLAY_NAME = "GAC日記"
 
 DEFAULT_ACCENT = "#2563EB"
-APP_VERSION = "1.2.6"
+APP_VERSION = "1.2.7"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 
 UPDATE_CHECK_DELAY_MS = 2500
@@ -5094,6 +5096,7 @@ class DailyLog(QWidget):
         )
 
         red_plate_data = parse_red_plate(log[4] or "")
+        original_form_key, original_form_data = parse_structured_log(log[4] or "")
         original_plate, original_description = split_log_plate(log[4] or "")
         if red_plate_data is not None:
             original_plate = red_plate_data.get("plate", "")
@@ -5109,6 +5112,8 @@ class DailyLog(QWidget):
         mode_selector = style_form_selector(QComboBox())
         mode_selector.addItem("ทั่วไป", "general")
         mode_selector.addItem("แบบฟอร์มป้ายแดง", "red_plate")
+        for form_key, spec in STRUCTURED_FORM_SPECS.items():
+            mode_selector.addItem(spec["title"], form_key)
         mode_row.addWidget(mode_selector)
         mode_row.addStretch()
         layout.addLayout(mode_row)
@@ -5144,15 +5149,32 @@ class DailyLog(QWidget):
             selected_date = QDate.fromString(str(log[1]), "yyyy-MM-dd")
             red_plate_editor.set_received_date(selected_date)
         description_stack.addWidget(red_plate_editor)
+        structured_editors = {}
+        for form_key in STRUCTURED_FORM_SPECS:
+            editor = StructuredLogForm(form_key, dialog)
+            if form_key == original_form_key:
+                editor.set_values(original_form_data)
+            else:
+                editor.reset(QDate.fromString(str(log[1]), "yyyy-MM-dd"))
+            structured_editors[form_key] = editor
+            description_stack.addWidget(editor)
         layout.addWidget(description_stack, 1)
 
         def edit_mode_changed(_index):
-            is_red = mode_selector.currentData() == "red_plate"
-            description_stack.setCurrentIndex(1 if is_red else 0)
-            dialog.resize(540, 580 if is_red else 375)
+            mode = mode_selector.currentData()
+            description_stack.setCurrentIndex(
+                ["general", "red_plate", *STRUCTURED_FORM_SPECS].index(mode)
+            )
+            dialog.resize(540, 585 if mode != "general" else 375)
 
         mode_selector.currentIndexChanged.connect(edit_mode_changed)
-        mode_selector.setCurrentIndex(1 if red_plate_data is not None else 0)
+        initial_mode = (
+            "red_plate" if red_plate_data is not None
+            else original_form_key if original_form_key else "general"
+        )
+        mode_selector.setCurrentIndex(
+            ["general", "red_plate", *STRUCTURED_FORM_SPECS].index(initial_mode)
+        )
         edit_mode_changed(mode_selector.currentIndex())
 
         button_layout = QHBoxLayout()
@@ -5206,6 +5228,15 @@ class DailyLog(QWidget):
                     QMessageBox.warning(
                         dialog, "แบบฟอร์มป้ายแดง", str(error)
                     )
+                    return
+            elif mode_selector.currentData() in STRUCTURED_FORM_SPECS:
+                mode = mode_selector.currentData()
+                try:
+                    new_description = serialize_structured_log(
+                        mode, structured_editors[mode].values()
+                    )
+                except ValueError as error:
+                    QMessageBox.warning(dialog, "แบบฟอร์ม", str(error))
                     return
             else:
                 new_description = with_log_plate(
@@ -5323,6 +5354,8 @@ class DailyLog(QWidget):
         self.log_form_selector = style_form_selector(QComboBox())
         self.log_form_selector.addItem("ทั่วไป", "general")
         self.log_form_selector.addItem("แบบฟอร์มป้ายแดง", "red_plate")
+        for form_key, spec in STRUCTURED_FORM_SPECS.items():
+            self.log_form_selector.addItem(spec["title"], form_key)
         self.log_form_selector.setToolTip(
             "เลือกชุดช่องกรอกสำหรับ Daily Log"
         )
@@ -5358,6 +5391,11 @@ class DailyLog(QWidget):
 
         self.red_plate_form = RedPlateForm()
         self.log_add_stack.addWidget(self.red_plate_form)
+        self.structured_forms = {}
+        for form_key in STRUCTURED_FORM_SPECS:
+            editor = StructuredLogForm(form_key)
+            self.structured_forms[form_key] = editor
+            self.log_add_stack.addWidget(editor)
         layout.addWidget(self.log_add_stack, 1)
 
         button_layout = QHBoxLayout()
@@ -5376,25 +5414,31 @@ class DailyLog(QWidget):
         return page
 
     def _add_form_changed(self, _index=0):
-        is_red = self.log_form_selector.currentData() == "red_plate"
-        self.log_add_stack.setCurrentIndex(1 if is_red else 0)
-        if is_red and not self.title_input.text().strip():
-            self.title_input.setText("รับป้ายแดง")
-        elif not is_red and self.title_input.text().strip() == "รับป้ายแดง":
-            # Do not carry the template's generated default title into a
-            # general log; preserve any title the employee customized.
-            self.title_input.clear()
+        mode = self.log_form_selector.currentData()
+        self.log_add_stack.setCurrentIndex(
+            ["general", "red_plate", *STRUCTURED_FORM_SPECS].index(mode)
+        )
+        defaults = {
+            "red_plate": "รับป้ายแดง",
+            **{
+                key: spec["title"]
+                for key, spec in STRUCTURED_FORM_SPECS.items()
+            },
+        }
+        title = self.title_input.text().strip()
+        if not title or title in defaults.values():
+            self.title_input.setText(defaults.get(mode, ""))
         if self.pages.currentWidget() is self.add_page:
             self._resize_add_form()
 
     def _resize_add_form(self):
         if self.is_collapsed:
             return
-        is_red = (
+        is_structured = (
             self.pages.currentWidget() is self.add_page
-            and self.log_form_selector.currentData() == "red_plate"
+            and self.log_form_selector.currentData() != "general"
         )
-        target = 550 if is_red else self.expanded_height
+        target = 590 if is_structured else self.expanded_height
         screen = QApplication.primaryScreen()
         if screen is not None:
             target = min(target, max(self.expanded_height, screen.availableGeometry().height() - 40))
@@ -5417,6 +5461,8 @@ class DailyLog(QWidget):
         self.plate_input.clear()
         self.description_input.clear()
         self.red_plate_form.reset(self.selected_date)
+        for editor in self.structured_forms.values():
+            editor.reset(self.selected_date)
         self.log_form_selector.setCurrentIndex(0)
 
         self.pages.setCurrentWidget(
@@ -5461,6 +5507,19 @@ class DailyLog(QWidget):
                 return
             if not title or title == "รับป้ายแดง":
                 title = "รับป้ายแดง - " + values["customer"]
+        elif self.log_form_selector.currentData() in STRUCTURED_FORM_SPECS:
+            mode = self.log_form_selector.currentData()
+            form_spec = STRUCTURED_FORM_SPECS[mode]
+            try:
+                values = self.structured_forms[mode].values()
+                description = serialize_structured_log(mode, values)
+            except ValueError as error:
+                QMessageBox.warning(self, "แบบฟอร์ม", str(error))
+                return
+            if not title or title == form_spec["title"]:
+                title = form_spec["title"] + " - " + (
+                    values.get("customer") or values.get("ro") or ""
+                )
         else:
             description = with_log_plate(
                 self.description_input.toPlainText().strip(),
