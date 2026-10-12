@@ -13,8 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtCore import QDate
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QStackedWidget, QWidget, QPushButton
-from dailylog_finance import settlement_3_percent, WithholdingCalculator
-from dailylog_forms import RED_PLATE_HEADER, RedPlateForm, serialize_red_plate, parse_red_plate
+from dailylog_finance import invoice_withholding_3_percent, settlement_3_percent, WithholdingCalculator
+from dailylog_forms import RED_PLATE_HEADER, RedPlateForm, serialize_red_plate, parse_red_plate, split_log_plate, with_log_plate
 from main import DailyLog
 
 
@@ -33,13 +33,27 @@ def test_finance(app):
             pass
         else:
             raise AssertionError(f"Invalid amount accepted: {illegal}")
+    gross = invoice_withholding_3_percent("5,000")
+    assert gross["gross"] == Decimal("5000.00")
+    assert gross["tax_base"] == Decimal("4672.90")
+    assert gross["vat"] == Decimal("327.10")
+    assert gross["withheld"] == Decimal("140.19")
+    assert gross["net"] == Decimal("4859.81")
+    assert gross["remaining"] == Decimal("4859.81")
+    assert gross["tax_base"] + gross["vat"] == gross["gross"]
+    negative = invoice_withholding_3_percent("5000", "5001")
+    assert negative["balance"] == Decimal("-141.19")
+    assert negative["overpaid"] == Decimal("141.19")
     calc = WithholdingCalculator()
-    calc.tax_base.setText("10,000.00")
-    calc.invoice.setText("10,700")
-    calc.paid.setText("4,000")
-    assert "6,400.00 บาท" in calc.answer.toPlainText()
+    assert calc.width() <= 450
+    calc.gross_input.setText("5,000.00")
+    assert "4,859.81" in calc.answer.toPlainText()
+    assert "#fde047" in calc.answer.toHtml().lower()
+    calc.paid_input.setText("5,001")
+    assert "-141.19" in calc.answer.toPlainText()
+    assert "#ff5252" in calc.answer.toHtml().lower()
     calc.copy_result()
-    assert "300.00 บาท" in app.clipboard().text()
+    assert "140.19 บาท" in app.clipboard().text()
     calc.clear()
     assert not calc.copy_button.isEnabled()
     calc.close()
@@ -49,6 +63,7 @@ def example():
     return {
         "customer": "คุณตัวอย่าง",
         "vin": "lmgna000000100010",
+        "plate": "6 ขอ 7577",
         "received_date": "2026-10-10",
         "returned_date": "",
         "sc_name": "SC Sathorn",
@@ -65,6 +80,7 @@ def test_red_plate_serialization(app):
     parsed = parse_red_plate(text)
     assert parsed["customer"] == data["customer"]
     assert parsed["vin"] == data["vin"].upper()
+    assert parsed["plate"] == "6 ขอ 7577"
     assert parsed["returned_date"] == ""
     assert parsed["notes"] == data["notes"]
     assert parse_red_plate("Ordinary Daily Log details") is None
@@ -79,6 +95,13 @@ def test_red_plate_serialization(app):
     editor.set_values(parsed)
     assert editor.not_returned.isChecked()
     assert editor.values()["notes"] == data["notes"]
+    assert "2026" in editor.received_date.text()
+    assert all(char not in editor.received_date.text() for char in "๐๑๒๓๔๕๖๗๘๙")
+    assert "#ffffff" in editor.not_returned.styleSheet().lower()
+    assert split_log_plate("บันทึกเดิม") == ("", "บันทึกเดิม")
+    assert split_log_plate(with_log_plate("รายละเอียด", "กข 1234")) == (
+        "กข 1234", "รายละเอียด"
+    )
     editor.reset(QDate(2026, 11, 2))
     assert editor.received_date.date() == QDate(2026, 11, 2)
     assert not editor.customer.text()
@@ -115,6 +138,8 @@ def test_main_add_and_edit(app):
     owner.open_add_page()
     assert owner.log_form_selector.currentData() == "general"
     assert owner.log_add_stack.currentIndex() == 0
+    assert owner.log_form_selector.objectName() == "dailyLogFormSelector"
+    assert "#ffffff" in owner.log_form_selector.styleSheet().lower()
 
     # Existing general logs keep their free-text form and storage format.
     owner.title_input.setText("งานทั่วไป")
@@ -127,12 +152,14 @@ def test_main_add_and_edit(app):
     assert owner.log_add_stack.currentIndex() == 1
     assert owner.height() > owner.expanded_height
     owner.red_plate_form.set_values(example())
+    owner.plate_input.setText("6 ขอ 7577")
     owner.title_input.setText("รับป้ายแดง")
     owner.save_log()
     saved = owner.cloud.added[-1]
     assert saved[0] == "2026-10-10"
     assert saved[2] == "รับป้ายแดง - คุณตัวอย่าง"
     assert parse_red_plate(saved[3])["customer"] == "คุณตัวอย่าง"
+    assert parse_red_plate(saved[3])["plate"] == "6 ขอ 7577"
 
     log = (33, "2026-10-10", "10:00:00", saved[2], saved[3], "sc")
     owner._open_edit_dialog(33, log)
@@ -144,6 +171,12 @@ def test_main_add_and_edit(app):
     editor = edit_dialog.findChild(RedPlateForm)
     assert editor is not None
     assert editor.customer.text() == "คุณตัวอย่าง"
+    edit_selector = next(
+        combo for combo in edit_dialog.findChildren(QComboBox)
+        if combo.objectName() == "dailyLogFormSelector"
+    )
+    assert edit_selector.currentData() == "red_plate"
+    assert "#ffffff" in edit_selector.styleSheet().lower()
     editor.sc_name.setText("SC Srinakarin")
     save_btn = next(
         b for b in edit_dialog.findChildren(QPushButton)
@@ -152,6 +185,7 @@ def test_main_add_and_edit(app):
     save_btn.click()
     assert owner.cloud.updated
     assert parse_red_plate(owner.cloud.updated[-1][2])["sc_name"] == "SC Srinakarin"
+    assert parse_red_plate(owner.cloud.updated[-1][2])["plate"] == "6 ขอ 7577"
     edit_dialog.close()
     # This intentionally partial QWidget only initializes Add/Edit dependencies;
     # don't invoke DailyLog.closeEvent, which belongs to the full app and
@@ -166,4 +200,4 @@ if __name__ == "__main__":
     test_finance(app)
     test_red_plate_serialization(app)
     test_main_add_and_edit(app)
-    print("PASS: Decimal WHT, red-plate form serialization, real Add/Edit UI, legacy general logs.")
+    print("PASS: VAT-included invoice, WHT/negative styling, red-plate Add/Edit, Arabic dates, selectable form.")
