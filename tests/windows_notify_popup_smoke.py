@@ -19,7 +19,7 @@ class SpyHistory:
     def __init__(self):
         self.items = []
 
-    def add(self, source, title, message, source_key=""):
+    def add(self, source, title, message, source_key="", event_created_at=""):
         self.items.append(dict(
             source=source, title=title, message=message,
             source_key=source_key,
