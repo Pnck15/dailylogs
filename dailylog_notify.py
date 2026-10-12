@@ -1,10 +1,11 @@
 import hashlib
+import html
 import os
 import re
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QDialog,
+    QInputDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -37,7 +39,7 @@ from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.10"
+APP_VERSION = "1.5.11"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
@@ -83,8 +85,34 @@ def clean_sa_notification_message(message):
             continue
         # Inherited D still matters, but the popup needs no merge internals.
         line = re.sub(r"\s*\(Merged D\)", "", line, flags=re.IGNORECASE)
+        line = re.sub(r"\s*\(Column\s+D\)", "", line, flags=re.IGNORECASE)
         lines.append(line)
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def popup_content_html(message):
+    """Rich display only: keep cell values a legible navy blue."""
+    fragments = []
+    for raw in str(message or "").splitlines():
+        if ":" in raw:
+            prefix, value = raw.split(":", 1)
+            if value.strip():
+                fragments.append(
+                    '<span style="color:#334155;">'
+                    + html.escape(prefix) + ':</span>'
+                    + '<span style="color:#1E3A8A;font-weight:600;">'
+                    + html.escape(value) + '</span>'
+                )
+                continue
+        fragments.append(
+            '<span style="color:#1E3A8A;font-weight:600;">'
+            + html.escape(raw) + '</span>'
+        )
+    return (
+        '<html><body style="background-color:#EFF6FF;font-family:Segoe UI;">'
+        + '<p style="white-space:pre-wrap;margin:0;">'
+        + '<br/>'.join(fragments) + '</p></body></html>'
+    )
 
 
 def claim_single_notify_instance(startup=False, instance_name=None):
@@ -620,11 +648,11 @@ class NotifyPopup(QDialog):
                 color: #111827;
             }
             QTextEdit {
-                background: #F9FAFB;
-                border: 1px solid #E5E7EB;
+                background: #EFF6FF;
+                border: 1px solid #93C5FD;
                 border-radius: 6px;
                 padding: 6px;
-                color: #111827;
+                color: #1E3A8A;
             }
             QPushButton {
                 min-height: 24px;
@@ -733,9 +761,8 @@ class NotifyPopup(QDialog):
         self.message_box.setReadOnly(
             True
         )
-        self.message_box.setPlainText(
-            str(message or "")
-        )
+        self._raw_message = str(message or "")
+        self.message_box.setHtml(popup_content_html(self._raw_message))
         self.message_box.setMinimumHeight(
             75
         )
@@ -824,7 +851,7 @@ class NotifyPopup(QDialog):
 
     def copy_all(self):
         QApplication.clipboard().setText(
-            self.message_box.toPlainText()
+            self._raw_message
         )
 
 
@@ -837,6 +864,7 @@ class NotifyApp(QWidget):
             APP,
         )
         self.history = NotificationHistory()
+        self._history_dialog = None
         self.receiver = None
         self._notify_popups = []
         self.source_options = [
@@ -1071,6 +1099,9 @@ class NotifyApp(QWidget):
 
             self.receiver.event.connect(
                 self.notify
+            )
+            self.receiver.history_purge.connect(
+                self._apply_central_history_purge
             )
             self.receiver.source_list_changed.connect(
                 self._source_list_changed
@@ -1780,11 +1811,33 @@ class NotifyApp(QWidget):
         ).exec()
 
     def open_history(self):
-        HistoryDialog(
+        dialog = HistoryDialog(
             self.history,
             source_allowed=self._source_allowed,
             parent=self,
-        ).exec()
+        )
+        self._history_dialog = dialog
+        try:
+            dialog.exec()
+        finally:
+            self._history_dialog = None
+
+    def _apply_central_history_purge(self, payload):
+        """Purge markers synchronize the local SQLite cache between PCs."""
+        if not isinstance(payload, dict):
+            return
+        if payload.get("scope") not in ("yesterday", "last_7_days", "all"):
+            return
+        try:
+            deleted = self.history.clear_period(
+                payload.get("start"), payload.get("end")
+            )
+        except (OSError, ValueError, RuntimeError) as error:
+            print("[Notify Central Purge] Failed:", type(error).__name__)
+            return
+        if self._history_dialog is not None:
+            self._history_dialog.reload()
+        print(f"[Notify Central Purge] Removed {deleted} local items")
 
     def notify(
         self,
@@ -1793,6 +1846,7 @@ class NotifyApp(QWidget):
         message,
         show_popup=True,
         source_key="",
+        event_created_at="",
     ):
         # This PC receives only sources selected locally AND currently
         # published by Admin through Central.
@@ -1816,6 +1870,7 @@ class NotifyApp(QWidget):
             title,
             message,
             source_key=source_key,
+            event_created_at=event_created_at,
         )
 
         # Only current-day events create a popup, but the popup is
