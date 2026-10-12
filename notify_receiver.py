@@ -329,6 +329,25 @@ class _PollJob(QRunnable):
             self.signals.error.emit(str(exc))
 
 
+class _CentralHistoryPurgeJob(QRunnable):
+    """Admin cleanup on the receiver's serial network thread."""
+    def __init__(self, client, scope):
+        super().__init__()
+        self.client = client
+        self.scope = scope
+        self.signals = _Signals()
+
+    @Slot()
+    def run(self):
+        try:
+            reply = self.client.rpc(
+                "purge_notification_history", {"p_scope": self.scope}
+            ).execute()
+            self.signals.done.emit(reply.data or {})
+        except Exception as error:
+            self.signals.error.emit(str(error))
+
+
 class CentralNotifyReceiver(QObject):
     event = Signal(
         str,
@@ -339,6 +358,8 @@ class CentralNotifyReceiver(QObject):
         str,  # Original Central event created_at, for global retention
     )
     history_purge = Signal(object)
+    global_purge_success = Signal(object)
+    global_purge_error = Signal(str)
     source_list_changed = Signal(object)
     status_changed = Signal(str)
     login_success = Signal(str)
@@ -998,6 +1019,35 @@ class CentralNotifyReceiver(QObject):
         job.signals.done.connect(self._poll_done)
         job.signals.error.connect(self._poll_error)
         self._start_job(job)
+
+    @Slot(object)
+    def _on_global_purge_done(self, value):
+        self.global_purge_success.emit(value if isinstance(value, dict) else {})
+        # Fetch the Central marker now instead of waiting for next poll.
+        self.poll()
+
+    @Slot(str)
+    def _on_global_purge_error(self, message):
+        self.global_purge_error.emit(str(message))
+
+    def purge_notification_history(self, scope):
+        if scope not in ("yesterday", "last_7_days", "all"):
+            self.global_purge_error.emit("ช่วงเวลาล้างประวัติไม่ถูกต้อง")
+            return False
+        if (
+            self.client is None
+            or not self.workspace_id
+            or str(self.role or "").strip().lower() != "admin"
+        ):
+            self.global_purge_error.emit(
+                "ต้อง Login ด้วยบัญชี Admin ของ Workspace ก่อน"
+            )
+            return False
+        job = _CentralHistoryPurgeJob(self.client, scope)
+        job.signals.done.connect(self._on_global_purge_done)
+        job.signals.error.connect(self._on_global_purge_error)
+        self._start_job(job)
+        return True
 
     @Slot(object)
     def _poll_done(self, rows):
