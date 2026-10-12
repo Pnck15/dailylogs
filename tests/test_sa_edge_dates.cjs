@@ -28,7 +28,7 @@ function loadFunctions(relativePath, names) {
 
 const monitor = loadFunctions(
   "supabase/functions/dailylog-monitor-worker/index.ts",
-  ["normalizeSaRowDate", "diffSaFullRow", "saRowSignature", "formatSaFullRow", "displaySaChanges"]
+  ["normalizeSaRowDate", "diffSaFullRow", "saRowSignature", "formatSaFullRow", "displaySaChanges", "saScheduleContext"]
 );
 const reminder = loadFunctions(
   "supabase/functions/dailylog-sa-reminder-worker/index.ts",
@@ -128,4 +128,41 @@ assert.ok(
   "merged D range must never be user-visible"
 );
 
-console.log("PASS: SA BE69/AD2026 reminder schedule date and safe snapshot normalization.");
+const mergedChild = monitor.normalizeSaRowDate({
+  ...displayRow,
+  row: 95,
+  sheet: "10.2026",
+  appointment_date: "2069-10-10",
+  group_date: "2069-10-10",
+  appointment_time: "13:30",
+  merged_range: "D89:D97",
+  in_merged_date_group: true,
+});
+const scheduleText = monitor.saScheduleContext(mergedChild);
+assert.ok(scheduleText.includes("วันที่นัดหมาย (Column D): 2026-10-10"),
+  "inherited merged D date must be visible even when physical row D is blank");
+assert.ok(scheduleText.includes("เวลานัดหมาย: 13:30"),
+  "time for the changed row must accompany the group date");
+assert.ok(!scheduleText.includes("D89:D97"),
+  "internal merged range must not be included in the popup");
+const movedDay = {...mergedChild, group_date: "2026-10-11",
+  appointment_date: "2026-10-11", appointment_time: "14:00"};
+const moved = monitor.saScheduleContext(movedDay, mergedChild);
+assert.ok(moved.includes("2026-10-10 → 2026-10-11"),
+  "changes to inherited group date show old and new date");
+assert.ok(moved.includes("13:30 → 14:00"),
+  "changes to time show old and new time");
+const edgeSource = fs.readFileSync(
+  path.join(__dirname, "..", "supabase/functions/dailylog-monitor-worker/index.ts"),
+  "utf8"
+);
+for (const expr of [
+  "+ saScheduleContext(row, old)",
+  "+ saScheduleContext(row)",
+  "+ saScheduleContext(old)",
+]) {
+  assert.ok(edgeSource.includes(expr),
+    "SA edit/new/delete must all include date context: " + expr);
+}
+
+console.log("PASS: SA merged-D date and row time in edit/new/delete; no range leak.");
