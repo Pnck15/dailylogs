@@ -5,8 +5,36 @@ is a human-readable form identifier; all fields remain searchable and editable.
 """
 from PySide6.QtCore import QDate, QLocale
 from PySide6.QtWidgets import (
-    QCheckBox, QDateEdit, QFormLayout, QLabel, QLineEdit, QTextEdit, QWidget,
+    QCheckBox, QComboBox, QDateEdit, QFormLayout, QLabel, QLineEdit, QTextEdit, QWidget,
 )
+
+def style_form_selector(selector: QComboBox):
+    """Readable button-like form selector for both Add and Edit screens."""
+    selector.setObjectName("dailyLogFormSelector")
+    selector.setMinimumWidth(152)
+    selector.setStyleSheet("""
+        QComboBox#dailyLogFormSelector {
+            background: #1E293B;
+            color: #FFFFFF;
+            border: 2px solid #93C5FD;
+            border-radius: 6px;
+            padding: 5px 10px;
+            font-weight: 600;
+        }
+        QComboBox#dailyLogFormSelector:hover,
+        QComboBox#dailyLogFormSelector:focus {
+            border-color: #FDE047;
+            background-color: #334155;
+        }
+        QComboBox#dailyLogFormSelector QAbstractItemView {
+            background-color: #1E293B;
+            color: #FFFFFF;
+            selection-background-color: #2563EB;
+            selection-color: #FFFFFF;
+        }
+    """)
+    return selector
+
 
 RED_PLATE_HEADER = "แบบฟอร์ม: ป้ายแดง"
 RED_PLATE_FIELDS = (
