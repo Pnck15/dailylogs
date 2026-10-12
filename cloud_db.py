@@ -476,6 +476,21 @@ class CloudDB:
 
         return response.data
 
+    def purge_notification_history(self, scope: str):
+        """Admin-only Central cleanup. The RPC emits a sync marker for PCs."""
+        self._require_login()
+        if str(self.role or "").lower() != "admin":
+            raise PermissionError(
+                "เฉพาะ Admin เท่านั้นที่ล้างประวัติ Central ทุกเครื่องได้"
+            )
+        if scope not in ("yesterday", "last_7_days", "all"):
+            raise ValueError("ตัวเลือกช่วงเวลาล้างประวัติไม่ถูกต้อง")
+        result = self.client.rpc(
+            "purge_notification_history",
+            {"p_scope": scope},
+        ).execute()
+        return result.data or {}
+
     def list_notify_sessions(self):
         self._require_login()
 
