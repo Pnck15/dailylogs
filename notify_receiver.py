@@ -382,6 +382,7 @@ class CentralNotifyReceiver(QObject):
         # Keep QRunnables and their _Signals alive until all queued Qt
         # signal handlers have finished; auto-delete used to race the GUI.
         self._active_jobs = set()
+        self._job_by_signals = {}
 
         self.client = None
         self.workspace_id = ""
@@ -465,22 +466,34 @@ class CentralNotifyReceiver(QObject):
         self.url, self.key = load_notify_config()
 
     def _start_job(self, job):
-        # QThreadPool auto-delete could destroy job.signals just after
-        # done.emit() in the worker but BEFORE Qt delivered it to the GUI.
-        # This left signed-in sessions without _login_done/heartbeat.
+        # Keep each QRunnable and Qt signal sender alive until the GUI thread
+        # has processed its result. A lambda without QObject context can run
+        # immediately on the network thread, before UI signal handlers.
         job.setAutoDelete(False)
         self._active_jobs.add(job)
-
-        def release(_result):
-            self._active_jobs.discard(job)
-
-        job.signals.done.connect(release)
-        job.signals.error.connect(release)
+        self._job_by_signals[job.signals] = job
+        job.signals.done.connect(self._job_finished)
+        job.signals.error.connect(self._job_failed)
         try:
             self.pool.start(job)
         except Exception:
+            self._job_by_signals.pop(job.signals, None)
             self._active_jobs.discard(job)
             raise
+
+    @Slot(object)
+    def _job_finished(self, _result):
+        self._release_job_on_gui_thread()
+
+    @Slot(str)
+    def _job_failed(self, _error):
+        self._release_job_on_gui_thread()
+
+    def _release_job_on_gui_thread(self):
+        sender = self.sender()
+        job = self._job_by_signals.pop(sender, None)
+        if job is not None:
+            self._active_jobs.discard(job)
 
     def has_saved_credentials(self):
         email = str(
