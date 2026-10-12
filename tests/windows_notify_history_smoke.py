@@ -63,15 +63,21 @@ def run_history_smoke(app):
                     assert "must stay hidden from export" not in sheet
 
                 # Cancel must preserve everything, including hidden sources.
-                with patch("dailylog_notify.QMessageBox.question",
-                           return_value=QMessageBox.StandardButton.No):
+                with patch(
+                    "dailylog_notify.QInputDialog.getItem",
+                    return_value=("ล้างทั้งหมด", True),
+                ), patch("dailylog_notify.QMessageBox.question",
+                         return_value=QMessageBox.StandardButton.No):
                     window.clear_history()
                 assert len(history.all()) == 2
                 assert len(window.visible_rows) == 1
 
                 # Yes deletes only this PC's SQLite rows, preserving schema.
-                with patch("dailylog_notify.QMessageBox.question",
-                           return_value=QMessageBox.StandardButton.Yes):
+                with patch(
+                    "dailylog_notify.QInputDialog.getItem",
+                    return_value=("ล้างทั้งหมด", True),
+                ), patch("dailylog_notify.QMessageBox.question",
+                         return_value=QMessageBox.StandardButton.Yes):
                     window.clear_history()
                 assert history.all() == []
                 assert window.visible_rows == []
