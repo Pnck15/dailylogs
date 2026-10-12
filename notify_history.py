@@ -75,3 +75,12 @@ class NotificationHistory:
         return self.recent(
             limit=None
         )
+
+    def clear_all(self):
+        """Delete this PC's local history only, after UI confirmation.
+
+        Never unlink the SQLite file or touch Central/Supabase history.
+        """
+        with closing(sqlite3.connect(self.path)) as db, db:
+            cursor = db.execute("DELETE FROM notifications")
+            return max(cursor.rowcount, 0)
