@@ -75,7 +75,7 @@ def test_popup(app):
     timers = popup.findChildren(QTimer)
     assert len(timers) == 1
     timer = timers[0]
-    assert timer.interval() == 20000, timer.interval()
+    assert timer.interval() == 23000, timer.interval()
     assert timer.isSingleShot() and timer.isActive()
 
     red_x = popup.findChild(QPushButton, "notifyPopupCloseButton")
@@ -84,7 +84,7 @@ def test_popup(app):
     assert "background-color: #DC2626" in red_x.styleSheet()
 
     labels = [label.text() for label in popup.findChildren(QLabel)]
-    assert any("ปิดอัตโนมัติใน 20 วินาที" in text for text in labels)
+    assert any("ปิดอัตโนมัติใน 23 วินาที" in text for text in labels)
     assert not any("Ctrl+C" in text for text in labels)
     assert not any("3 นาที" in text for text in labels)
 
@@ -154,18 +154,18 @@ def test_source_only_history():
     window = HistoryDialog(
         client.history, source_allowed=client._source_allowed
     )
-    assert window.list_widget.count() == 2, (
+    assert len(window.visible_rows) == 2, (
         "SA selection includes SA legacy events, not Sale"
     )
 
     client.selected = {"sale_sathorn"}
     window.reload()
-    assert window.list_widget.count() == 1, (
+    assert len(window.visible_rows) == 1, (
         "History must reflect the currently checked source"
     )
     client.selected.clear()
     window.reload()
-    assert window.list_widget.count() == 0
+    assert len(window.visible_rows) == 0
     # Records remain unchanged: source toggles must never erase old history.
     assert len(client.history.items) == 3
     window.close()
@@ -177,7 +177,7 @@ def main():
     test_popup(app)
     test_source_only_history()
     print(
-        "PASS: real X click, 20-sec auto-dismiss, "
+        "PASS: real X click, 23-sec auto-dismiss, "
         "checked-source-only history and non-destructive filtering"
     )
 
