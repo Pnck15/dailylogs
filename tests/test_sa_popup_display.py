@@ -38,6 +38,13 @@ class SaMessageCleanerTests(unittest.TestCase):
         self.assertIn("F - ทะเบียน: 6 ขอ 7577", result)
         self.assertIn("E - ลูกค้า:", result)
 
+    def test_date_label_hides_column_d_technical_name(self):
+        message = "วันที่นัดหมาย (Column D): 2026-10-12\nเวลานัดหมาย: 13:30"
+        clean_message = clean(message)
+        self.assertIn("วันที่นัดหมาย: 2026-10-12", clean_message)
+        self.assertIn("เวลานัดหมาย: 13:30", clean_message)
+        self.assertNotIn("(Column D)", clean_message)
+
     def test_old_merged_date_label_is_simplified(self):
         result = clean(
             "D - วันที่นัดหมาย (Merged D): 2026-10-09 → 2026-10-10"
