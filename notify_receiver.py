@@ -1044,7 +1044,7 @@ class CentralNotifyReceiver(QObject):
         self.global_purge_error.emit(str(message))
 
     def purge_notification_history(self, scope):
-        if scope not in ("yesterday", "last_7_days", "all"):
+        if scope not in ("yesterday", "last_7_days", "older_than_7_days", "older_than_30_days", "all"):
             self.global_purge_error.emit("ช่วงเวลาล้างประวัติไม่ถูกต้อง")
             return False
         if (
@@ -1095,7 +1095,7 @@ class CentralNotifyReceiver(QObject):
                     payload = json.loads(message)
                     if (
                         isinstance(payload, dict)
-                        and payload.get("scope") in ("yesterday", "last_7_days", "all")
+                        and payload.get("scope") in ("yesterday", "last_7_days", "older_than_7_days", "older_than_30_days", "all")
                         and payload.get("end")
                     ):
                         self.history_purge.emit(payload)
