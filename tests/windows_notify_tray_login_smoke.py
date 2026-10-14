@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, QSettings, QRunnable, Signal
-from PySide6.QtWidgets import QApplication, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QComboBox, QSystemTrayIcon
 
 from dailylog_notify import LoginDialog, NotifyApp
 from notify_receiver import CentralNotifyReceiver, _LoginJob, _Signals
@@ -88,6 +88,62 @@ def check_main_window_x(app, settings):
             assert window.isVisible(), "Missing tray must leave taskbar window"
             assert window.isMinimized(), "Missing tray should minimize window"
     finally:
+        window.hide()
+        window.deleteLater()
+
+
+def check_popup_display_modes(app, settings):
+    """Persistence, left/right placement, native-only Windows toast mode."""
+    with patch("dailylog_notify.NotificationHistory", FakeHistory), patch(
+        "dailylog_notify.CentralNotifyReceiver", FakeReceiver
+    ), patch("dailylog_notify.QSettings", return_value=settings):
+        window = NotifyApp()
+    try:
+        selector = window.findChild(QComboBox, "notifyDisplayMode")
+        assert selector is not None
+        selector.setCurrentIndex(1)
+        assert window.popup_mode == "bottom_left"
+        assert settings.value("display/notification_mode") == "bottom_left"
+        window._show_notify_popup("Test", "วันที่นัดหมาย: 2026-10-14")
+        app.processEvents()
+        assert len(window._notify_popups) == 1
+        popup = window._notify_popups[0]
+        geom = app.primaryScreen().availableGeometry()
+        assert popup.x() < geom.center().x(), "Left mode must appear at left"
+        popup.dismiss()
+        app.processEvents()
+        window._recent_popup_requests = []
+        selector.setCurrentIndex(0)
+        window._show_notify_popup("Test", "วันที่นัดหมาย: 2026-10-14")
+        app.processEvents()
+        assert len(window._notify_popups) == 1
+        popup = window._notify_popups[0]
+        assert popup.x() > geom.center().x(), "Right mode must appear at right"
+        popup.dismiss()
+        app.processEvents()
+
+        class FakeWindowsTray:
+            def __init__(self):
+                self.shown = []
+            def showMessage(self, *args):
+                self.shown.append(args)
+        real_tray = window.tray
+        fake_tray = FakeWindowsTray()
+        selector.setCurrentIndex(2)
+        window.tray = fake_tray
+        with patch.object(window, "_tray_available", return_value=True):
+            window._show_notify_popup("Test native", "VIN: LMH123")
+        assert window.popup_mode == "windows"
+        assert settings.value("display/notification_mode") == "windows"
+        assert len(fake_tray.shown) == 1
+        assert not window._notify_popups, (
+            "Windows Notification mode must never create custom Qt popups"
+        )
+        window.tray = real_tray
+        assert "Windows Notification" in window.info.text()
+    finally:
+        for popup in list(window._notify_popups):
+            popup.dismiss()
         window.hide()
         window.deleteLater()
 
@@ -198,6 +254,7 @@ def main():
             str(Path(folder) / "user-settings.ini"), QSettings.Format.IniFormat
         )
         check_main_window_x(app, settings)
+        check_popup_display_modes(app, settings)
         check_busy_login_dialog(app, settings)
         check_authenticated_queries()
         check_signal_lifetime(app, settings)
