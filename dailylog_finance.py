@@ -132,7 +132,7 @@ class WithholdingCalculator(QDialog):
         self.setWindowFlag(Qt.WindowType.Window, True)
         self.setModal(False)
         self.setWindowTitle("เครื่องคิดเลข VAT 7% / หัก ณ ที่จ่าย 3%")
-        self.resize(455, 415)
+        self.resize(440, 415)
         self.setMinimumWidth(415)
         self.setStyleSheet(
             "QDialog { background: #111827; color: white; } "
