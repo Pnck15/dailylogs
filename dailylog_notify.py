@@ -9,12 +9,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
-from PySide6.QtCore import QLockFile, QSettings, QTimer, Qt
+from PySide6.QtCore import QEvent, QLockFile, QSettings, QTimer, Qt
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QDialog,
     QInputDialog,
     QFileDialog,
@@ -98,7 +99,7 @@ def popup_content_html(message):
             prefix, value = raw.split(":", 1)
             if value.strip():
                 fragments.append(
-                    '<span style="color:#334155;">'
+                    '<span style="color:#111827;">'
                     + html.escape(prefix) + ':</span>'
                     + '<span style="color:#1E3A8A;font-weight:600;">'
                     + html.escape(value) + '</span>'
@@ -109,7 +110,7 @@ def popup_content_html(message):
             + html.escape(raw) + '</span>'
         )
     return (
-        '<html><body style="background-color:#EFF6FF;font-family:Segoe UI;">'
+        '<html><body style="background-color:#FFFFFF;font-family:Segoe UI;">'
         + '<p style="white-space:pre-wrap;margin:0;">'
         + '<br/>'.join(fragments) + '</p></body></html>'
     )
@@ -652,7 +653,7 @@ class NotifyPopup(QDialog):
 
     This popup does not depend on Windows Notification settings.
     Text can be selected/copied, the user can close it with X,
-    and each popup closes automatically after 20 seconds.
+    and each popup closes automatically after 26 seconds of inactivity.
     """
 
     def __init__(
@@ -675,6 +676,7 @@ class NotifyPopup(QDialog):
         )
 
         self.setModal(False)
+        self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
 
         self.history_callback = (
             history_callback
@@ -694,11 +696,11 @@ class NotifyPopup(QDialog):
                 color: #111827;
             }
             QTextEdit {
-                background: #EFF6FF;
-                border: 1px solid #93C5FD;
+                background: #FFFFFF;
+                border: 1px solid #E5E7EB;
                 border-radius: 6px;
                 padding: 6px;
-                color: #1E3A8A;
+                color: #111827;
             }
             QPushButton {
                 min-height: 24px;
@@ -813,7 +815,7 @@ class NotifyPopup(QDialog):
             75
         )
         self.message_box.setMaximumHeight(
-            150
+            200
         )
         self.message_box.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
@@ -822,15 +824,14 @@ class NotifyPopup(QDialog):
         root.addWidget(
             self.message_box
         )
+        # Mouse selection, keyboard copy and wheel scrolling may exceed the
+        # nominal 26 second display lifetime. Suspend the timer while the
+        # person is using the message area, resume when the pointer leaves.
+        self.message_box.installEventFilter(self)
+        self.message_box.viewport().installEventFilter(self)
+        self.message_box.verticalScrollBar().installEventFilter(self)
 
         footer = QHBoxLayout()
-
-        hint = QLabel(
-            "ปิดอัตโนมัติใน 23 วินาที"
-        )
-        hint.setStyleSheet(
-            "color: #6B7280; font-size: 10px;"
-        )
 
         copy_button = QPushButton(
             "Copy All"
@@ -839,9 +840,6 @@ class NotifyPopup(QDialog):
             self.copy_all
         )
 
-        footer.addWidget(
-            hint
-        )
         footer.addStretch()
         footer.addWidget(
             copy_button
@@ -866,7 +864,7 @@ class NotifyPopup(QDialog):
 
         self.resize(
             400,
-            255,
+            285,
         )
 
         self._auto_close_timer = QTimer(
@@ -876,12 +874,32 @@ class NotifyPopup(QDialog):
             True
         )
         self._auto_close_timer.setInterval(
-            23 * 1000
+            26 * 1000
         )
         self._auto_close_timer.timeout.connect(
             self.dismiss
         )
         self._auto_close_timer.start()
+
+    def eventFilter(self, watched, event):
+        if hasattr(self, "_auto_close_timer"):
+            watched_items = (
+                self.message_box,
+                self.message_box.viewport(),
+                self.message_box.verticalScrollBar(),
+            )
+            if watched in watched_items:
+                kind = event.type()
+                if kind in (
+                    QEvent.Type.Enter, QEvent.Type.MouseButtonPress,
+                    QEvent.Type.MouseMove, QEvent.Type.Wheel,
+                    QEvent.Type.KeyPress, QEvent.Type.FocusIn,
+                ):
+                    self._auto_close_timer.stop()
+                elif kind in (QEvent.Type.Leave, QEvent.Type.FocusOut):
+                    if not self._auto_close_timer.isActive():
+                        self._auto_close_timer.start()
+        return super().eventFilter(watched, event)
 
     def dismiss(self):
         """Close on X or timeout, signalling finished for popup cleanup."""
@@ -1962,9 +1980,9 @@ class NotifyApp(QWidget):
         self._show_notify_popup(
             "DailyLogNotify - Test",
             (
-                "ทดสอบ Popup ของ DailyLogNotify\n"
-                "หน้าต่างนี้ไม่ใช้ Windows Notification\n"
-                "ปิดอัตโนมัติใน 23 วินาที"
+                "ทดสอบการแจ้งเตือน DailyLogNotify\n"
+                "ตัวอย่างข้อมูลจากเซลล์: 12345\n"
+                "คลิกและลากเลือกข้อความ หรือเลื่อนอ่านข้อความได้"
             ),
         )
 
@@ -2278,8 +2296,8 @@ class NotifyApp(QWidget):
         )
 
     def closeEvent(self, event):
-        # Keep the application reachable even on PCs whose Windows tray
-        # is not available (Explorer crash, policy, remote desktop etc.).
+        # X must NEVER exit or terminate the Central receiver. Only the
+        # explicitly named Tray > Exit command terminates this process.
         event.ignore()
         if self._tray_available():
             self.hide()
