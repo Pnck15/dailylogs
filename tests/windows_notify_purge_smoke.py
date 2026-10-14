@@ -118,10 +118,17 @@ def verify_purge(app):
         "Merged D: D89:D97\nC - ลำดับ: 5"
     )
     assert "(Column D)" not in msg
-    assert "วันที่นัดหมาย: 2026-10-12" in msg
+    assert "วันที่นัดหมาย: 2026-10-12    เวลานัดหมาย: 13:30" in msg
     assert "Merged D:" not in msg
     rendered = popup_content_html(msg)
     assert "color:#1E3A8A" in rendered
+    assert "background-color:#FFFFFF" in rendered
+    assert rendered.count('<span style="color:#111827;">') >= 2, (
+        "Date and time column labels must both be black"
+    )
+    assert rendered.count('<span style="color:#1E3A8A;font-weight:600;">') >= 2, (
+        "Date and time cell values must both be navy blue"
+    )
     assert "ตัวอย่าง" in rendered
     assert "<script>" not in popup_content_html("<script>do not execute</script>")
     sql = Path(__file__).resolve().parents[1] / "supabase/central_notification_retention.sql"
