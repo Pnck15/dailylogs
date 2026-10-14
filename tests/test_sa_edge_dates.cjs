@@ -141,7 +141,7 @@ const mergedChild = monitor.normalizeSaRowDate({
 const scheduleText = monitor.saScheduleContext(mergedChild);
 assert.ok(scheduleText.includes("วันที่นัดหมาย: 2026-10-10"),
   "inherited merged D date must be visible even when physical row D is blank");
-assert.ok(scheduleText.includes("เวลานัดหมาย: 13:30"),
+assert.ok(scheduleText.includes("    เวลานัดหมาย: 13:30"),
   "time for the changed row must accompany the group date");
 assert.ok(!scheduleText.includes("D89:D97"),
   "internal merged range must not be included in the popup");
