@@ -104,8 +104,36 @@ def base_plus_vat_withholding_3_percent(base_before_vat, already_paid=0):
     }
 
 
+
+def three_percent_adjustments(value):
+    """Separate +3%, removing an included 3%, and WHT gross-up.
+
+    Adding 3%: input * 1.03.
+    Extracting included 3%: input / 1.03.
+    Recovering gross prior to 3% withholding: input / 0.97.
+    All amounts use Decimal and ROUND_HALF_UP.
+    """
+    entered = amount(value)
+    added = (entered * WHT_RATE).quantize(SATANG, rounding=ROUND_HALF_UP)
+    included_base = (entered / (Decimal("1") + WHT_RATE)).quantize(
+        SATANG, rounding=ROUND_HALF_UP
+    )
+    gross_up = (entered / (Decimal("1") - WHT_RATE)).quantize(
+        SATANG, rounding=ROUND_HALF_UP
+    )
+    return {
+        "entered": entered,
+        "added_tax": added,
+        "plus_total": entered + added,
+        "included_base": included_base,
+        "included_tax": entered - included_base,
+        "gross_up": gross_up,
+        "gross_up_withheld": gross_up - entered,
+    }
+
+
 class WithholdingCalculator(QDialog):
-    """Two-tab invoice calculator, independent from DailyLog's other windows.
+    """Three-tab invoice calculator, independent from DailyLog's other windows.
 
     Tab 1: The customer's invoice total already includes 7% VAT. Extract the
     pre-VAT base (divide by 1.07) and withhold 3% of that base.
@@ -113,7 +141,7 @@ class WithholdingCalculator(QDialog):
     Tab 2: Start with the pre-VAT base. Add 7% VAT (rounded to satang) and
     then withhold 3% of the SAME pre-VAT base.
 
-    Neither tab makes a cloud request or touches saved Daily Logs.
+    Tab 3: +3%, extracting included 3%, and grossing up a net amount.\n\n    No tab makes a cloud request or touches saved Daily Logs.
     """
     LABELS = (
         ("gross", "ยอดรวมบิล (รวม VAT 7%)"),
@@ -192,7 +220,7 @@ class WithholdingCalculator(QDialog):
         existing_buttons.addWidget(self.copy_button)
         existing_buttons.addWidget(close_existing)
         existing_layout.addLayout(existing_buttons)
-        self.tabs.addTab(existing, "1. บิลรวม VAT แล้ว")
+        self.tabs.addTab(existing, "1. บิลรวม VAT")
 
         # ----- Partition 2: compute VAT 7% then withhold 3% -----
         forward = QWidget(self.tabs)
@@ -229,8 +257,45 @@ class WithholdingCalculator(QDialog):
         forward_buttons.addWidget(self.forward_copy_button)
         forward_buttons.addWidget(close_forward)
         forward_layout.addLayout(forward_buttons)
-        self.tabs.addTab(forward, "2. เพิ่ม VAT แล้วหัก 3%")
+        self.tabs.addTab(forward, "2. เพิ่ม VAT / หัก 3%")
 
+        # Tab 3 includes both meanings of "ถอด 3%" so users do not
+        # confuse extracting included 3% (÷1.03) with net WHT (÷0.97).
+        adjustment = QWidget(self.tabs)
+        adjustment.setObjectName("calculatorTab")
+        adjustment_layout = QVBoxLayout(adjustment)
+        adjustment_layout.setSpacing(7)
+        adjust_note = QLabel(
+            "ส่วนที่ 3: คำนวณบวก 3%, ถอด 3% ในยอดรวม "
+            "และย้อนยอดก่อนถูกหัก ณ ที่จ่าย 3% (ไม่เกี่ยวกับ VAT 7%)"
+        )
+        adjust_note.setWordWrap(True)
+        adjustment_layout.addWidget(adjust_note)
+        adjustment_form = QFormLayout()
+        self.adjust_input = QLineEdit()
+        self.adjust_input.setObjectName("threePercentAmount")
+        self.adjust_input.setPlaceholderText("เช่น 1,000.00")
+        adjustment_form.addRow("ยอดเงิน:", self.adjust_input)
+        adjustment_layout.addLayout(adjustment_form)
+        self.adjust_answer = self._make_result_area("threePercentSummary")
+        self.adjust_answer.setMinimumHeight(200)
+        adjustment_layout.addWidget(self.adjust_answer, 1)
+        adjustment_buttons = QHBoxLayout()
+        self.adjust_copy_button = QPushButton("คัดลอก")
+        self.adjust_clear_button = QPushButton("ล้างค่า")
+        adjust_close = QPushButton("ปิด")
+        self.adjust_copy_button.clicked.connect(self.copy_adjust_result)
+        self.adjust_clear_button.clicked.connect(self.clear_adjust)
+        adjust_close.clicked.connect(self.accept)
+        adjustment_buttons.addWidget(self.adjust_clear_button)
+        adjustment_buttons.addStretch()
+        adjustment_buttons.addWidget(self.adjust_copy_button)
+        adjustment_buttons.addWidget(adjust_close)
+        adjustment_layout.addLayout(adjustment_buttons)
+        self.tabs.addTab(adjustment, "3. บวก / ถอด 3%")
+
+        self._adjust_result = None
+        self._adjust_plain_result = ""
         self._plain_result = ""
         self._result = None
         self._forward_plain_result = ""
@@ -239,8 +304,10 @@ class WithholdingCalculator(QDialog):
         self.paid_input.textChanged.connect(self.recalculate)
         self.base_input.textChanged.connect(self.recalculate_forward)
         self.forward_paid_input.textChanged.connect(self.recalculate_forward)
+        self.adjust_input.textChanged.connect(self.recalculate_adjust)
         self.recalculate()
         self.recalculate_forward()
+        self.recalculate_adjust()
 
     @staticmethod
     def _make_result_area(name):
@@ -324,6 +391,74 @@ class WithholdingCalculator(QDialog):
         self._forward_plain_result = self._format_summary(
             self.forward_answer, data
         )
+
+    def recalculate_adjust(self):
+        """Tab 3: +3%, included 3% and WHT gross-up without any VAT."""
+        if not self.adjust_input.text().strip():
+            self._adjust_result = None
+            self._adjust_plain_result = ""
+            self.adjust_copy_button.setEnabled(False)
+            self.adjust_answer.setPlainText(
+                "กรอกยอดเงิน เช่น 1,000 บาท เพื่อคำนวณบวกหรือถอด 3%"
+            )
+            return
+        try:
+            data = three_percent_adjustments(self.adjust_input.text())
+        except ValueError as error:
+            self._adjust_result = None
+            self._adjust_plain_result = ""
+            self.adjust_copy_button.setEnabled(False)
+            self.adjust_answer.setPlainText(str(error))
+            return
+        self._adjust_result = data
+        self.adjust_copy_button.setEnabled(True)
+        sections = (
+            ("ยอดตั้งต้น", (("entered", "ยอดเงินที่กรอก"),)),
+            ("บวก 3% (คูณ 1.03)", (
+                ("added_tax", "จำนวนเงิน 3%"),
+                ("plus_total", "ยอดรวมหลังบวก 3%"),
+            )),
+            ("ถอด 3% ที่รวมแล้ว (หาร 1.03)", (
+                ("included_base", "ฐานก่อนบวก 3%"),
+                ("included_tax", "ยอด 3% ที่รวมอยู่"),
+            )),
+            ("ย้อนยอดก่อนหัก ณ ที่จ่าย 3% (หาร 0.97)", (
+                ("gross_up", "ยอดก่อนถูกหัก 3%"),
+                ("gross_up_withheld", "จำนวนภาษีที่ถูกหัก 3%"),
+            )),
+        )
+        plain_lines = []
+        html_lines = []
+        for heading, entries in sections:
+            plain_lines.append(heading)
+            html_lines.append(
+                '<div style="color:#FFFFFF;font-weight:700;margin:5px 0 1px 0;">'
+                + escape(heading) + '</div>'
+            )
+            for key, label in entries:
+                value = data[key]
+                plain_lines.append(f"  {label}: {baht(value)}")
+                color = "#FF5252" if value < 0 else "#FDE047"
+                html_lines.append(
+                    '<div style="margin:1px 0;">'
+                    f'<span style="color:#F9FAFB;">{escape(label)}:</span> '
+                    f'<b style="color:{color};">{escape(baht(value))}</b>'
+                    '</div>'
+                )
+            plain_lines.append("")
+        self._adjust_plain_result = "\n".join(plain_lines).strip()
+        self.adjust_answer.setHtml(
+            '<html><body style="font-size:10pt;background:#18212E;">'
+            + "".join(html_lines) + '</body></html>'
+        )
+
+    def copy_adjust_result(self):
+        if self._adjust_result is not None:
+            QApplication.clipboard().setText(self._adjust_plain_result)
+
+    def clear_adjust(self):
+        self.adjust_input.clear()
+        self.adjust_input.setFocus()
 
     def copy_result(self):
         if self._result is not None:
