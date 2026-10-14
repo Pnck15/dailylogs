@@ -333,6 +333,8 @@ class HistoryDialog(QDialog):
         choices = {
             "ล้างเมื่อวาน": "yesterday",
             "ล้างย้อนหลัง 7 วัน (ไม่รวมวันนี้)": "last_7_days",
+            "ล้างรายการเก่ากว่า 7 วัน": "older_than_7_days",
+            "ล้างรายการเก่ากว่า 30 วัน": "older_than_30_days",
             "ล้างทั้งหมด": "all",
         }
         selected, ok = QInputDialog.getItem(
@@ -353,6 +355,12 @@ class HistoryDialog(QDialog):
         elif scope == "last_7_days":
             start = today_start - timedelta(days=7)
             end = today_start
+        elif scope == "older_than_7_days":
+            start = None
+            end = today_start - timedelta(days=7)
+        elif scope == "older_than_30_days":
+            start = None
+            end = today_start - timedelta(days=30)
         else:
             start = None
             end = now_bkk + timedelta(microseconds=1)
@@ -1206,12 +1214,6 @@ class NotifyApp(QWidget):
             self.receiver.history_purge.connect(
                 self._apply_central_history_purge
             )
-            self.receiver.global_purge_success.connect(
-                self._central_purge_success
-            )
-            self.receiver.global_purge_error.connect(
-                self._central_purge_error
-            )
             self.receiver.source_list_changed.connect(
                 self._source_list_changed
             )
@@ -1953,29 +1955,14 @@ class NotifyApp(QWidget):
                 self._history_batch_timer.stop()
             self._history_batch_timer.start(1500)
 
-    def _request_global_purge(self, scope):
-        if self.receiver is not None:
-            self.receiver.purge_notification_history(scope)
-
-    def _central_purge_success(self, data):
-        deleted = data.get("deleted_events", 0) if isinstance(data, dict) else 0
-        QMessageBox.information(
-            self, "Central History Cleanup",
-            f"ลบ Central Notification Events {deleted} รายการแล้ว\n"
-            "เครื่องอื่นจะล้างประวัติที่ตรงช่วงวันที่เมื่อรับสัญญาณ Central",
-        )
-
-    def _central_purge_error(self, message):
-        QMessageBox.critical(
-            self, "Central History Cleanup",
-            "ล้างประวัติทุกเครื่องไม่สำเร็จ\n" + str(message),
-        )
-
     def _apply_central_history_purge(self, payload):
         """Purge markers synchronize the local SQLite cache between PCs."""
         if not isinstance(payload, dict):
             return
-        if payload.get("scope") not in ("yesterday", "last_7_days", "all"):
+        if payload.get("scope") not in (
+            "yesterday", "last_7_days",
+            "older_than_7_days", "older_than_30_days", "all",
+        ):
             return
         self._flush_history_batch()
         try:
