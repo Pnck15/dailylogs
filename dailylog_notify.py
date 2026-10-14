@@ -933,10 +933,12 @@ class NotifyPopup(QDialog):
         self.reject()
 
     def open_history(self):
-        if callable(
-            self.history_callback
-        ):
-            self.history_callback()
+        callback = self.history_callback
+        if callable(callback):
+            # An always-on-top popup must never cover a modal History window.
+            # Schedule from the main event loop, not inside this button click.
+            QTimer.singleShot(0, callback)
+            self.dismiss()
 
     def copy_all(self):
         QApplication.clipboard().setText(
@@ -1939,6 +1941,13 @@ class NotifyApp(QWidget):
         ).exec()
 
     def open_history(self):
+        # A stacked always-on-top notification can otherwise cover the History
+        # dialog, making its Copy and scrollbar appear unresponsive.
+        for popup in tuple(self._notify_popups):
+            try:
+                popup.dismiss()
+            except RuntimeError:
+                pass
         self._flush_history_batch()
         dialog = HistoryDialog(
             self.history,
