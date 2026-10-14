@@ -927,6 +927,13 @@ class NotifyApp(QWidget):
             ORG,
             APP,
         )
+        self.popup_mode = str(
+            self.settings.value("display/notification_mode", "bottom_right")
+            or "bottom_right"
+        )
+        if self.popup_mode not in ("bottom_right", "bottom_left", "windows"):
+            self.popup_mode = "bottom_right"
+        self._recent_popup_requests = []
         self.history = NotificationHistory()
         self._history_dialog = None
         self.receiver = None
@@ -943,9 +950,14 @@ class NotifyApp(QWidget):
             make_tray_icon()
         )
         self.setFixedSize(
-            430,
-            200,
+            480,
+            258,
         )
+        # Keep the receiver running even if every popup or main window closes.
+        self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+        app = QApplication.instance()
+        if app is not None:
+            app.setQuitOnLastWindowClosed(False)
 
         layout = QVBoxLayout(self)
 
@@ -955,8 +967,7 @@ class NotifyApp(QWidget):
         self.status.setWordWrap(True)
 
         self.info = QLabel(
-            "รับ Notification จาก DailyLog Central\n"
-            "แสดง Popup ของ DailyLogNotify เอง ไม่ใช้ Windows Notification"
+            "รับ Notification จาก DailyLog Central"
         )
         self.info.setWordWrap(True)
 
@@ -995,6 +1006,25 @@ class NotifyApp(QWidget):
             self.sources_label
         )
 
+        popup_row = QHBoxLayout()
+        popup_row.addWidget(QLabel("ตำแหน่งแจ้งเตือน:"))
+        self.popup_mode_selector = QComboBox(self)
+        self.popup_mode_selector.setObjectName("notifyDisplayMode")
+        self.popup_mode_selector.addItem("มุมขวาล่าง", "bottom_right")
+        self.popup_mode_selector.addItem("มุมซ้ายล่าง", "bottom_left")
+        self.popup_mode_selector.addItem("Windows Notification", "windows")
+        self.popup_mode_selector.setCurrentIndex(
+            {"bottom_right": 0, "bottom_left": 1, "windows": 2}[self.popup_mode]
+        )
+        self.popup_mode_selector.setToolTip(
+            "Windows Notification ขึ้นอยู่กับการตั้งค่าแจ้งเตือนของ Windows"
+        )
+        popup_row.addWidget(self.popup_mode_selector, 1)
+        layout.addLayout(popup_row)
+        self.popup_mode_selector.currentIndexChanged.connect(
+            self._change_popup_mode
+        )
+
         layout.addLayout(
             buttons
         )
@@ -1030,6 +1060,7 @@ class NotifyApp(QWidget):
         )
 
         self.update_sources_label()
+        self._change_popup_mode()
 
         # -----------------------------------------
         # Tray
@@ -1991,6 +2022,37 @@ class NotifyApp(QWidget):
         title,
         message,
     ):
+        # System mode never constructs a DailyLogNotify popup.
+        if self.popup_mode == "windows":
+            if self._tray_available():
+                try:
+                    self.tray.showMessage(
+                        str(title or "DailyLogNotify"),
+                        str(message or "")[:1200],
+                        QSystemTrayIcon.MessageIcon.Information,
+                        26000,
+                    )
+                except (RuntimeError, OSError) as error:
+                    print("[Notify Windows Notification]", type(error).__name__)
+            return
+
+        # A GAS burst can carry hundreds of events in a minute. Persist
+        # every selected event in SQLite, but cap GUI toast construction.
+        now = time.monotonic()
+        self._recent_popup_requests = [
+            stamp for stamp in self._recent_popup_requests
+            if now - stamp < 10.0
+        ]
+        if len(self._recent_popup_requests) >= 4:
+            return
+        self._recent_popup_requests.append(now)
+        while len(self._notify_popups) >= 3:
+            old = self._notify_popups[0]
+            old.dismiss()
+            # finished() normally removes it synchronously; guard races.
+            if self._notify_popups and self._notify_popups[0] is old:
+                self._notify_popups.pop(0)
+
         popup = NotifyPopup(
             title,
             message,
@@ -2060,12 +2122,10 @@ class NotifyApp(QWidget):
 
             width = popup.width()
             height = popup.height()
-            x = (
-                area.right()
-                - width
-                - margin
-                + 1
-            )
+            if self.popup_mode == "bottom_left":
+                x = area.left() + margin
+            else:
+                x = area.right() - width - margin + 1
             y = (
                 y
                 - height
@@ -2077,6 +2137,24 @@ class NotifyApp(QWidget):
             )
 
             y -= spacing
+
+    def _change_popup_mode(self, _index=0):
+        mode = self.popup_mode_selector.currentData()
+        if mode not in ("bottom_right", "bottom_left", "windows"):
+            return
+        self.popup_mode = mode
+        self.settings.setValue("display/notification_mode", mode)
+        self.settings.sync()
+        if mode == "windows":
+            self.info.setText(
+                "โหมด Windows Notification (ตั้งค่าเปิดแจ้งเตือนที่ Windows)"
+            )
+        else:
+            self.info.setText(
+                "โหมด Popup ของโปรแกรม — "
+                + ("มุมซ้ายล่าง" if mode == "bottom_left" else "มุมขวาล่าง")
+            )
+            self._position_notify_popups()
 
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
