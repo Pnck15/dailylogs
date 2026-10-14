@@ -109,7 +109,7 @@ def check_popup_display_modes(app, settings):
         assert len(window._notify_popups) == 1
         popup = window._notify_popups[0]
         geom = app.primaryScreen().availableGeometry()
-        assert popup.x() < geom.center().x(), "Left mode must appear at left"
+        assert popup.x() == geom.left() + 16, "Left mode must align to screen left"
         popup.dismiss()
         app.processEvents()
         window._recent_popup_requests = []
@@ -118,7 +118,7 @@ def check_popup_display_modes(app, settings):
         app.processEvents()
         assert len(window._notify_popups) == 1
         popup = window._notify_popups[0]
-        assert popup.x() > geom.center().x(), "Right mode must appear at right"
+        assert popup.x() + popup.width() - 1 == geom.right() - 16, ("Right mode must align to screen right")
         popup.dismiss()
         app.processEvents()
 
