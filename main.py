@@ -64,7 +64,7 @@ APP_NAME = "DailyLog"
 APP_DISPLAY_NAME = "GAC日記"
 
 DEFAULT_ACCENT = "#2563EB"
-APP_VERSION = "1.2.9"
+APP_VERSION = "1.2.10"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 
 UPDATE_CHECK_DELAY_MS = 2500
@@ -385,10 +385,10 @@ class DailyLog(QWidget):
         self.multi_notify_button.clicked.connect(
             self.open_multi_notify
         )
-        self.calculator_shortcut_button = QPushButton("🧮 3%")
+        self.calculator_shortcut_button = QPushButton("🧮 คิด VAT / 3%")
         self.calculator_shortcut_button.setObjectName("quickWithholdingCalculatorButton")
         self.calculator_shortcut_button.setToolTip(
-            "เปิดเครื่องคิดเลข VAT 7% / หัก ณ ที่จ่าย 3%"
+            "เครื่องคิดเลข 2 แบบ: บิลรวม VAT 7% แล้ว และเพิ่ม VAT 7% ก่อนหัก 3%"
         )
         self.calculator_shortcut_button.clicked.connect(
             self.open_withholding_calculator
@@ -450,23 +450,6 @@ class DailyLog(QWidget):
             self.show_settings_menu
         )
 
-        self.save_background_button = QPushButton(
-            "💾"
-        )
-
-        self.save_background_button.setToolTip(
-            "Save Background"
-        )
-
-        self.save_background_button.setFixedSize(
-            32,
-            28,
-        )
-
-        self.save_background_button.clicked.connect(
-            self.save_background
-        )
-
         self.collapse_button = QPushButton("−")
 
         self.collapse_button.setFixedSize(
@@ -506,7 +489,8 @@ class DailyLog(QWidget):
         # Keep enough width for the status dot + "SA Sathorn".
         self.sa_notify_button.setFixedWidth(86)
         self.multi_notify_button.setFixedWidth(112)
-        self.calculator_shortcut_button.setFixedWidth(53)
+        # Reclaim disk-save shortcut space for this dedicated calculator.
+        self.calculator_shortcut_button.setFixedWidth(112)
 
         header.addWidget(self.sale_alert_button)
         header.addWidget(self.sale_alert_button_srinakarin)
@@ -515,10 +499,6 @@ class DailyLog(QWidget):
         header.addWidget(self.calculator_shortcut_button)
 
         header.addStretch()
-
-        header.addWidget(
-            self.save_background_button
-        )
 
         header.addWidget(
             self.menu_button
@@ -1815,8 +1795,19 @@ class DailyLog(QWidget):
             dialog._multi_list.setCurrentRow(0)
 
     def open_withholding_calculator(self):
-        dialog = WithholdingCalculator(self)
-        dialog.exec()
+        # Non-modal, independent top-level window: the user can still
+        # search, add/edit logs and interact with the DailyLog calendar.
+        # Reuse it if opened twice, instead of stacking duplicate dialogs.
+        dialog = getattr(self, "_calculator_dialog", None)
+        if dialog is None:
+            dialog = WithholdingCalculator()
+            self._calculator_dialog = dialog
+        if dialog.isMinimized():
+            dialog.showNormal()
+        else:
+            dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     # =========================================
     # DailyLogNotify Devices / Sessions
