@@ -5,6 +5,8 @@
 -- Scopes use Asia/Bangkok calendar boundaries:
 --   yesterday = yesterday 00:00 up to today 00:00
 --   last_7_days = past seven completed days, excludes today
+--   older_than_7_days = only notifications older than 7 full Bangkok days
+--   older_than_30_days = only notifications older than 30 full Bangkok days
 --   all = every existing notification event before the request
 --
 -- We leave a dedicated marker event after deletion. Every connected or
@@ -29,7 +31,7 @@ DECLARE
     v_scope text := trim(coalesce(p_scope, ''));
     v_payload jsonb;
 BEGIN
-    IF v_scope NOT IN ('yesterday', 'last_7_days', 'all') THEN
+    IF v_scope NOT IN ('yesterday', 'last_7_days', 'older_than_7_days', 'older_than_30_days', 'all') THEN
         RAISE EXCEPTION 'Invalid history retention scope' USING ERRCODE = '22023';
     END IF;
     IF v_uid IS NULL THEN
@@ -68,6 +70,12 @@ BEGIN
     ELSIF v_scope = 'last_7_days' THEN
         v_from := v_today_start - interval '7 days';
         v_to := v_today_start;
+    ELSIF v_scope = 'older_than_7_days' THEN
+        v_from := NULL;
+        v_to := v_today_start - interval '7 days';
+    ELSIF v_scope = 'older_than_30_days' THEN
+        v_from := NULL;
+        v_to := v_today_start - interval '30 days';
     ELSE
         v_from := NULL;
         v_to := v_now;
