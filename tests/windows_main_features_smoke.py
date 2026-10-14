@@ -5,14 +5,17 @@ Never connects Supabase or changes the user's data.
 """
 import os
 import sys
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import patch
 from decimal import Decimal
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import QDate
-from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QStackedWidget, QWidget, QPushButton, QLineEdit
+from PySide6.QtCore import QDate, Qt
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QStackedWidget, QWidget, QPushButton, QLineEdit, QLabel, QListWidget, QTextEdit, QMessageBox
 from dailylog_finance import invoice_withholding_3_percent, settlement_3_percent, WithholdingCalculator
 from dailylog_forms import RED_PLATE_HEADER, RedPlateForm, serialize_red_plate, parse_red_plate, split_log_plate, with_log_plate, STRUCTURED_FORM_SPECS, StructuredLogForm, serialize_structured_log, parse_structured_log
 from main import DailyLog
@@ -337,6 +340,103 @@ def test_admin_central_history_guard():
     ]
 
 
+def test_multi_notify_and_retention_ui(app):
+    owner = DailyLog.__new__(DailyLog)
+    QWidget.__init__(owner)
+    dialog = QDialog(owner)
+    dialog._multi_list = QListWidget(dialog)
+    dialog._multi_details = QTextEdit(dialog)
+    dialog._multi_status = QLabel(dialog)
+    dialog._multi_rows = {}
+    dialog.show()
+    app.processEvents()
+    fresh = datetime.now(timezone.utc).isoformat()
+    owner._render_multi_notify(dialog, [
+        {
+            "source_key": "sa_sathorn",
+            "source_name": "SA Sathorn",
+            "enabled": True,
+            "last_success_at": fresh,
+            "last_error": None,
+        },
+        {
+            "source_key": "sale_sathorn",
+            "source_name": "Sale Deli Sathorn",
+            "enabled": True,
+            "last_success_at": fresh,
+            "last_error": "GAS timeout",
+        },
+        {
+            "source_key": "extra",
+            "source_name": "Extra Source",
+            "enabled": False,
+            "last_success_at": None,
+            "last_error": None,
+        },
+    ])
+    assert dialog._multi_list.count() == 3
+    assert dialog._multi_list.item(0).text().startswith("🟢")
+    assert dialog._multi_list.item(1).text().startswith("🔴")
+    assert dialog._multi_list.item(2).text().startswith("⚪")
+    assert "GAS timeout" in dialog._multi_rows["sale_sathorn"]["last_error"]
+    dialog.close()
+
+    class FakeCloud:
+        def __init__(self):
+            self.calls = []
+        def call(self, name, *args):
+            self.calls.append((name, *args))
+            return 8
+    owner.cloud = FakeCloud()
+    owner._cloud_pending = {}
+    with patch(
+        "main.QInputDialog.getItem",
+        return_value=("ล้างประวัติแจ้งเตือนเก่ากว่า 30 วัน", True),
+    ), patch(
+        "main.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ):
+        owner.open_central_history_cleanup()
+    assert owner.cloud.calls == [
+        ("purge_notification_history", "older_than_30_days")
+    ]
+    assert owner._cloud_pending[8] == (
+        "central_history_purge", "older_than_30_days"
+    )
+    with patch(
+        "main.QInputDialog.getItem",
+        return_value=("ล้างประวัติแจ้งเตือนเก่ากว่า 7 วัน", True),
+    ), patch(
+        "main.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.No,
+    ):
+        owner.open_central_history_cleanup()
+    assert len(owner.cloud.calls) == 1, "Cancel must not call deletion RPC"
+
+    import inspect
+    collapse = inspect.getsource(DailyLog.toggle_window)
+    for forbidden in (
+        "self.sale_alert_button.hide()",
+        "self.sa_notify_button.hide()",
+        "self.menu_button.hide()",
+        "self.multi_notify_button.hide()",
+        "self.calculator_shortcut_button.hide()",
+    ):
+        assert forbidden not in collapse, "Collapsed header must remain usable"
+    import pathlib
+    sql = (
+        pathlib.Path(__file__).resolve().parents[1] /
+        "supabase/central_notification_retention.sql"
+    ).read_text(encoding="utf-8")
+    assert "DELETE FROM public.notification_events" in sql
+    assert "DELETE FROM public.logs" not in sql
+    assert "TRUNCATE public.logs" not in sql
+    assert "older_than_30_days" in sql
+    assert "older_than_7_days" in sql
+    owner.hide()
+    owner.deleteLater()
+
+
 if __name__ == "__main__":
     app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
@@ -345,4 +445,5 @@ if __name__ == "__main__":
     test_new_form_serialization(app)
     test_main_add_and_edit(app)
     test_admin_central_history_guard()
+    test_multi_notify_and_retention_ui(app)
     print("PASS: VAT invoice, Add/Edit of red plate, vehicle receipt and customer payment templates.")
