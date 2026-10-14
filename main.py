@@ -377,7 +377,7 @@ class DailyLog(QWidget):
         # notification-channel settings; never render it in the header.
         self.line_status_button = QPushButton("LINE (legacy)", self)
         self.line_status_button.hide()
-        self.multi_notify_button = QPushButton("🟢 Multi-Notify")
+        self.multi_notify_button = QPushButton("🔔 Multi-Notify")
         self.multi_notify_button.setObjectName("multiNotifyButton")
         self.multi_notify_button.setToolTip(
             "ตรวจสถานะ Central Scan ของ Sources ทั้งหมด"
@@ -1595,15 +1595,7 @@ class DailyLog(QWidget):
 
         menu.addSeparator()
 
-        calculator_action = menu.addAction(
-            "🧮 เครื่องคิดเลขหัก ณ ที่จ่าย 3% / ส่วนต่างยอดลูกค้า"
-        )
-        calculator_action.triggered.connect(
-            self.open_withholding_calculator
-        )
-
-        menu.addSeparator()
-
+        # The calculator now has a permanent one-click header shortcut.
         notify_menu = menu.addMenu(
             "🔔 Notification System Settings"
         )
