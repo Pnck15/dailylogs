@@ -199,14 +199,12 @@ def make_tray_icon():
 
 class HistoryDialog(QDialog):
     """Selectable text, context-menu Copy, Excel export and confirmed delete."""
-    def __init__(self, history, source_allowed=None, parent=None,
-                 central_purge_callback=None, is_admin=False):
+    def __init__(self, history, source_allowed=None, parent=None):
         super().__init__(parent)
         self.history = history
         self.source_allowed = source_allowed
-        self.central_purge_callback = central_purge_callback
-        self.is_admin = bool(is_admin)
         self.visible_rows = []
+        self._history_limit = 300
         self.setWindowTitle("DailyLogNotify - ประวัติแจ้งเตือนทั้งหมด")
         self.resize(700, 490)
 
@@ -230,16 +228,13 @@ class HistoryDialog(QDialog):
         )
         self.text_area.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         root.addWidget(self.text_area, 1)
+        self.load_more_button = QPushButton("แสดงรายการก่อนหน้าอีก 300")
+        self.load_more_button.setObjectName("loadOlderNotifyHistory")
+        self.load_more_button.clicked.connect(self.load_more_history)
+        root.addWidget(self.load_more_button)
 
         self.count_label = QLabel("")
         root.addWidget(self.count_label)
-        central_note = QLabel(
-            "ต้องการให้ทุกเครื่องหายพร้อมกัน? ใช้เมนู "
-            "DailyLog → Notification System Settings → "
-            "ล้างประวัติ Central / ทุกเครื่อง (เฉพาะ Admin)"
-        )
-        central_note.setWordWrap(True)
-        root.addWidget(central_note)
         bottom = QHBoxLayout()
         self.export_button = QPushButton("ส่งออกเป็น .excel")
         self.export_button.setObjectName("exportHistoryExcelButton")
@@ -249,30 +244,30 @@ class HistoryDialog(QDialog):
             "QPushButton { background-color: #B91C1C; color: #FFFFFF; "
             "border-radius: 5px; padding: 6px; }"
         )
-        self.central_button = QPushButton("ล้างทุกเครื่อง (Admin)")
-        self.central_button.setObjectName("globalHistoryPurgeButton")
-        self.central_button.setEnabled(
-            self.is_admin and callable(self.central_purge_callback)
-        )
-        self.central_button.setToolTip(
-            "ต้องใช้บัญชี Admin และเชื่อมต่อ Supabase Central"
-        )
         close_button = QPushButton("Close")
-        self.central_button.clicked.connect(self.clear_history_everywhere)
         self.export_button.clicked.connect(self.export_excel)
         self.clear_button.clicked.connect(self.clear_history)
         close_button.clicked.connect(self.close)
         bottom.addWidget(self.export_button)
         bottom.addWidget(self.clear_button)
-        bottom.addWidget(self.central_button)
         bottom.addStretch()
         bottom.addWidget(close_button)
         root.addLayout(bottom)
         self.reload()
 
+    def load_more_history(self):
+        self._history_limit += 300
+        self.reload()
+
     def reload(self):
+        # Bound the amount of SQLite text loaded into the GUI event loop.
+        # Employees can page older rows while keeping selection and scrolling.
+        if hasattr(self.history, "recent"):
+            rows = self.history.recent(limit=self._history_limit)
+        else:
+            rows = self.history.all()[:self._history_limit]
         self.visible_rows = [
-            item for item in self.history.all()
+            item for item in rows
             if (
                 not callable(self.source_allowed)
                 or self.source_allowed(
@@ -280,6 +275,7 @@ class HistoryDialog(QDialog):
                 )
             )
         ]
+        self.load_more_button.setEnabled(len(rows) >= self._history_limit)
         blocks = []
         for item in self.visible_rows:
             blocks.append(
@@ -297,6 +293,7 @@ class HistoryDialog(QDialog):
         )
         self.count_label.setText(
             f"แสดง {len(self.visible_rows)} รายการตาม Source ที่เลือก"
+            f" (โหลดประวัติล่าสุดไม่เกิน {self._history_limit} รายการ)"
         )
         self.export_button.setEnabled(bool(self.visible_rows))
 
@@ -330,35 +327,6 @@ class HistoryDialog(QDialog):
             self, "ส่งออกสำเร็จ",
             f"บันทึก {count} รายการลง Excel แล้ว\n{path}"
         )
-
-    def clear_history_everywhere(self):
-        """Admin-only action; local cache is cleared after Central marker."""
-        if not self.is_admin or not callable(self.central_purge_callback):
-            return
-        scope_by_label = {
-            "ล้างเมื่อวาน": "yesterday",
-            "ล้างย้อนหลัง 7 วัน (ไม่รวมวันนี้)": "last_7_days",
-            "ล้างทั้งหมด": "all",
-        }
-        selected, ok = QInputDialog.getItem(
-            self, "ล้างประวัติทั้ง Central และทุกเครื่อง",
-            "เลือกช่วงวันที่ (เวลาไทย):", list(scope_by_label), 0, False,
-        )
-        if not ok or selected not in scope_by_label:
-            return
-        scope = scope_by_label[selected]
-        answer = QMessageBox.question(
-            self, "ยืนยันล้างประวัติทุกเครื่อง",
-            f"ยืนยันล้าง {selected} จาก Supabase Central และ "
-            "ให้ DailyLogNotify ทุกเครื่องล้างประวัติตามนี้หรือไม่?\n\n"
-            "เครื่องออฟไลน์จะล้างเมื่อกลับมาเชื่อมต่อ \n"
-            "บันทึก Daily Logs และ Google Sheets จะไม่ถูกลบ\n"
-            "ไม่สามารถกู้ Notification Events ที่ลบแล้วได้",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer == QMessageBox.StandardButton.Yes:
-            self.central_purge_callback(scope)
 
     def clear_history(self):
         choices = {
