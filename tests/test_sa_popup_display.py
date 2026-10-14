@@ -58,9 +58,9 @@ class SaMessageCleanerTests(unittest.TestCase):
         self.assertIn("message = clean_sa_notification_message(message)", SOURCE)
         self.assertIn("if (\n            str(source_key or \"\").strip().lower()", SOURCE)
 
-    def test_popup_closes_in_twenty_three_seconds(self):
-        self.assertIn("23 * 1000", SOURCE)
-        self.assertIn("ปิดอัตโนมัติใน 23 วินาที", SOURCE)
+    def test_popup_closes_in_twenty_six_seconds(self):
+        self.assertIn("26 * 1000", SOURCE)
+        self.assertNotIn("ปิดอัตโนมัติใน 23 วินาที", SOURCE)
         self.assertNotIn("เลือกข้อความแล้ว Ctrl+C ได้", SOURCE)
         self.assertNotIn("ปิดอัตโนมัติใน 10 นาที", SOURCE)
         self.assertNotIn("ปิดอัตโนมัติใน 3 นาที", SOURCE)
