@@ -483,7 +483,7 @@ class CloudDB:
             raise PermissionError(
                 "เฉพาะ Admin เท่านั้นที่ล้างประวัติ Central ทุกเครื่องได้"
             )
-        if scope not in ("yesterday", "last_7_days", "all"):
+        if scope not in ("yesterday", "last_7_days", "older_than_7_days", "older_than_30_days", "all"):
             raise ValueError("ตัวเลือกช่วงเวลาล้างประวัติไม่ถูกต้อง")
         result = self.client.rpc(
             "purge_notification_history",
