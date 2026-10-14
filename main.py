@@ -64,7 +64,7 @@ APP_NAME = "DailyLog"
 APP_DISPLAY_NAME = "GAC日記"
 
 DEFAULT_ACCENT = "#2563EB"
-APP_VERSION = "1.2.10"
+APP_VERSION = "1.2.11"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 
 UPDATE_CHECK_DELAY_MS = 2500
@@ -388,7 +388,7 @@ class DailyLog(QWidget):
         self.calculator_shortcut_button = QPushButton("🧮 คิด VAT / 3%")
         self.calculator_shortcut_button.setObjectName("quickWithholdingCalculatorButton")
         self.calculator_shortcut_button.setToolTip(
-            "เครื่องคิดเลข 2 แบบ: บิลรวม VAT 7% แล้ว และเพิ่ม VAT 7% ก่อนหัก 3%"
+            "เครื่องคิดเลข 3 แท็บ: บิลรวม VAT, เพิ่ม VAT แล้วหัก 3%, บวก/ถอด 3%"
         )
         self.calculator_shortcut_button.clicked.connect(
             self.open_withholding_calculator
