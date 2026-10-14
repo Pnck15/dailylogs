@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtGui import QTextCursor
-from PySide6.QtWidgets import QApplication, QMessageBox, QTextEdit
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QTextEdit
 from dailylog_notify import HistoryDialog
 from notify_history import NotificationHistory
 
@@ -35,8 +35,8 @@ def run_history_smoke(app):
                 window.show()
                 app.processEvents()
                 assert len(window.visible_rows) == 1
-                assert not window.central_button.isEnabled(), (
-                    "Member cannot purge every PC"
+                assert not hasattr(window, "central_button"), (
+                    "History must not include a global purge button"
                 )
                 assert isinstance(window.text_area, QTextEdit)
                 assert window.text_area.isReadOnly()
@@ -88,23 +88,12 @@ def run_history_smoke(app):
                 with patch("notify_history.app_data_dir", return_value=folder):
                     assert NotificationHistory().all() == []
 
-                admin_scopes = []
-                admin_dialog = HistoryDialog(
-                    history,
-                    central_purge_callback=admin_scopes.append,
-                    is_admin=True,
+                assert not hasattr(window, "central_button")
+                assert "ต้องการให้ทุกเครื่องหายพร้อมกัน" not in (
+                    " ".join(
+                        label.text() for label in window.findChildren(QLabel)
+                    )
                 )
-                assert admin_dialog.central_button.isEnabled()
-                with patch(
-                    "dailylog_notify.QInputDialog.getItem",
-                    return_value=("ล้างเมื่อวาน", True),
-                ), patch(
-                    "dailylog_notify.QMessageBox.question",
-                    return_value=QMessageBox.StandardButton.Yes,
-                ):
-                    admin_dialog.clear_history_everywhere()
-                assert admin_scopes == ["yesterday"]
-                admin_dialog.close()
             finally:
                 window.close()
 
