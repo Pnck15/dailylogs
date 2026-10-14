@@ -12,9 +12,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, QSettings, QRunnable, Signal
-from PySide6.QtWidgets import QApplication, QComboBox, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QPushButton, QSystemTrayIcon
 
-from dailylog_notify import LoginDialog, NotifyApp
+from dailylog_notify import HistoryDialog, LoginDialog, NotifyApp
 from notify_receiver import CentralNotifyReceiver, _LoginJob, _Signals
 
 
@@ -78,6 +78,54 @@ def check_main_window_x(app, settings):
             window._tray_activated(QSystemTrayIcon.ActivationReason.DoubleClick)
             app.processEvents()
             assert window.isVisible(), "Tray double-click must restore UI"
+
+        # Regression: real main button and System Tray menu must open the
+        # current local-only HistoryDialog. An old central_purge_callback or
+        # is_admin constructor argument raises TypeError and fails this test.
+        opened_history = []
+        def assert_history_dialog_visible(history_dialog):
+            assert isinstance(history_dialog, HistoryDialog)
+            assert history_dialog.parent() is window
+            assert not hasattr(history_dialog, "central_button")
+            history_dialog.show()
+            app.processEvents()
+            assert history_dialog.isVisible()
+            assert history_dialog.text_area.isReadOnly()
+            opened_history.append(history_dialog.windowTitle())
+            history_dialog.reject()
+            return QDialog.DialogCode.Rejected
+
+        with patch.object(HistoryDialog, "exec", new=assert_history_dialog_visible):
+            buttons = [
+                b for b in window.findChildren(QPushButton)
+                if b.text() == "Notification History"
+            ]
+            assert len(buttons) == 1
+            buttons[0].click()
+            actions = [
+                a for a in window.tray_menu.actions()
+                if a.text() == "Notification History"
+            ]
+            assert len(actions) == 1
+            actions[0].trigger()
+            # Also exercise the history callback in a real popup.
+            window._recent_popup_requests = []
+            window._show_notify_popup("History regression", "VIN: TEST123")
+            app.processEvents()
+            assert len(window._notify_popups) == 1
+            popup = window._notify_popups[0]
+            popup_history = next(
+                b for b in popup.findChildren(QPushButton)
+                if "ประวัติแจ้งเตือน" in b.text()
+            )
+            popup_history.click()
+            app.processEvents()
+            assert not window._notify_popups, (
+                "Opening History from topmost popup must dismiss popup"
+            )
+        assert len(opened_history) == 3, (
+            "Main, tray, and popup must all open the local History dialog"
+        )
 
         # Simulate Windows Explorer tray unavailable: never disappear.
         with patch.object(window, "_tray_available", return_value=False):
