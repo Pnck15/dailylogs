@@ -109,6 +109,28 @@ def test_popup(app):
     app.processEvents()
     assert len(closed) == 1, "X click must emit finished immediately"
 
+    # Opening History through a topmost popup must first dismiss it;
+    # otherwise modal History may appear behind it and look frozen.
+    callback_calls = []
+    popup_with_history = NotifyPopup(
+        "History test", "VIN: XYZ",
+        history_callback=lambda: callback_calls.append("open"),
+    )
+    history_finished = []
+    popup_with_history.finished.connect(history_finished.append)
+    popup_with_history.show()
+    app.processEvents()
+    history_button = next(
+        button for button in popup_with_history.findChildren(QPushButton)
+        if "ประวัติแจ้งเตือน" in button.text()
+    )
+    QTest.mouseClick(history_button, Qt.MouseButton.LeftButton)
+    app.processEvents()
+    assert len(history_finished) == 1, (
+        "Popup must be dismissed before opening History"
+    )
+    assert callback_calls == ["open"]
+
     auto = NotifyPopup("Timer test", "test data")
     auto_closed = []
     auto.finished.connect(lambda code: auto_closed.append(code))
@@ -177,7 +199,7 @@ def main():
     test_popup(app)
     test_source_only_history()
     print(
-        "PASS: real X click, 23-sec auto-dismiss, "
+        "PASS: real X click, 26-sec auto-dismiss, topmost History safety, "
         "checked-source-only history and non-destructive filtering"
     )
 
