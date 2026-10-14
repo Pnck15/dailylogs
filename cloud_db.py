@@ -331,6 +331,33 @@ class CloudDB:
 
         return response.data or []
 
+    def list_multi_notify_health(self):
+        """Admin dashboard; last successful Central scan is not a live GAS ping."""
+        self._require_login()
+        if str(self.role or "").lower() != "admin":
+            raise PermissionError("เฉพาะ Admin ที่ดูสถานะ Multi-Notify ได้")
+        sources = (
+            self.client.table("monitor_sources")
+            .select("source_key,source_name,enabled,publish_to_notify")
+            .eq("workspace_id", self.workspace_id)
+            .order("source_name")
+            .execute()
+        ).data or []
+        states = (
+            self.client.table("monitor_state")
+            .select("source_key,last_checked_at,last_success_at,last_error")
+            .eq("workspace_id", self.workspace_id)
+            .execute()
+        ).data or []
+        by_key = {str(x.get("source_key") or ""): x for x in states}
+        return [
+            {**source, **{
+                key: by_key.get(str(source.get("source_key") or ""), {}).get(key)
+                for key in ("last_checked_at", "last_success_at", "last_error")
+            }}
+            for source in sources
+        ]
+
     def delete_monitor_source(
         self,
         source_key: str,
