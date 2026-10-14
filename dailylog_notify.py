@@ -342,7 +342,18 @@ class HistoryDialog(QDialog):
         if not path.lower().endswith(".xlsx"):
             path += ".xlsx"
         try:
-            count = make_history_xlsx(path, self.visible_rows)
+            # Pagination affects only on-screen rendering. Export must
+            # preserve the original feature: ALL history for checked Sources.
+            all_selected = [
+                item for item in self.history.all()
+                if (
+                    not callable(self.source_allowed)
+                    or self.source_allowed(
+                        item.get("source", ""), item.get("source_key", "")
+                    )
+                )
+            ]
+            count = make_history_xlsx(path, all_selected)
         except (OSError, ValueError, RuntimeError) as error:
             QMessageBox.critical(
                 self, "ส่งออก Excel ไม่สำเร็จ", str(error)
