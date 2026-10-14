@@ -3,7 +3,7 @@ import os
 import shutil
 import json
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 from PySide6.QtCore import (
     QTimer,
@@ -1705,6 +1705,122 @@ class DailyLog(QWidget):
                 self.menu_button.rect().bottomLeft()
             )
         )
+
+    def open_multi_notify(self):
+        """Status from recent Central Worker scans; never ping GAS in Qt UI."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Multi-Notify — สถานะ Sources")
+        dialog.resize(600, 430)
+        layout = QVBoxLayout(dialog)
+        info = QLabel(
+            "สถานะวงกลมอ้างอิงผลตรวจครั้งล่าสุดของ Central "
+            "(สีเขียว = สำเร็จภายใน 15 นาที, แดง = ผิดพลาด/เก่า, "
+            "เทา = ยังไม่มีผลตรวจ)"
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+        sources = QListWidget(dialog)
+        sources.setObjectName("multiNotifySources")
+        sources.setWordWrap(True)
+        layout.addWidget(sources, 1)
+        detail = QTextEdit(dialog)
+        detail.setReadOnly(True)
+        detail.setMaximumHeight(105)
+        detail.setPlaceholderText("เลือก Source เพื่อดูสถานะและเวลาตรวจล่าสุด")
+        layout.addWidget(detail)
+        status = QLabel("กำลังโหลดรายการ...")
+        status.setWordWrap(True)
+        layout.addWidget(status)
+        actions = QHBoxLayout()
+        refresh = QPushButton("Refresh")
+        close = QPushButton("Close")
+        actions.addWidget(refresh)
+        actions.addStretch()
+        actions.addWidget(close)
+        layout.addLayout(actions)
+        dialog._multi_list = sources
+        dialog._multi_details = detail
+        dialog._multi_status = status
+        dialog._multi_rows = {}
+        def update_detail(current, _previous=None):
+            row = dialog._multi_rows.get(
+                current.data(Qt.ItemDataRole.UserRole)
+                if current is not None else ""
+            )
+            if row is None:
+                detail.clear()
+                return
+            detail.setPlainText(
+                f"Source: {row.get('source_name', '')}\n"
+                f"เปิดตรวจ: {'Yes' if row.get('enabled') else 'No'}\n"
+                f"ตรวจล่าสุด: {row.get('last_checked_at') or '-'}\n"
+                f"สำเร็จล่าสุด: {row.get('last_success_at') or '-'}\n"
+                f"ข้อผิดพลาดล่าสุด: {row.get('last_error') or '-'}"
+            )
+        sources.currentItemChanged.connect(update_detail)
+        refresh.clicked.connect(lambda: self._load_multi_notify(dialog))
+        close.clicked.connect(dialog.close)
+        self._load_multi_notify(dialog)
+        dialog.exec()
+
+    def _load_multi_notify(self, dialog):
+        if dialog is None:
+            return
+        dialog._multi_status.setText("กำลังตรวจสถานะ Sources...")
+        dialog._multi_list.setEnabled(False)
+        req = self.cloud.call("list_multi_notify_health")
+        self._cloud_pending[req] = ("multi_notify_health", dialog)
+
+    def _render_multi_notify(self, dialog, rows):
+        if dialog is None or not dialog.isVisible():
+            return
+        dialog._multi_list.clear()
+        dialog._multi_rows = {}
+        now = datetime.now(timezone.utc)
+        count_green = count_red = 0
+        for row in rows or []:
+            key = str(row.get("source_key") or "").strip()
+            if not key:
+                continue
+            enabled = bool(row.get("enabled", False))
+            error = str(row.get("last_error") or "").strip()
+            success = str(row.get("last_success_at") or "").strip()
+            recent = False
+            if success:
+                try:
+                    stamp = datetime.fromisoformat(success.replace("Z", "+00:00"))
+                    if stamp.tzinfo is None:
+                        stamp = stamp.replace(tzinfo=timezone.utc)
+                    delta = (now - stamp.astimezone(timezone.utc)).total_seconds()
+                    recent = 0 <= delta <= 900
+                except ValueError:
+                    pass
+            if not enabled:
+                dot, state = "⚪", "Disabled"
+            elif error:
+                dot, state = "🔴", "Connection error"
+                count_red += 1
+            elif recent:
+                dot, state = "🟢", "Central Scan OK"
+                count_green += 1
+            elif success:
+                dot, state = "🔴", "Last scan stale"
+                count_red += 1
+            else:
+                dot, state = "⚪", "Awaiting first scan"
+            item = QListWidgetItem(
+                f"{dot} {row.get('source_name') or key}   — {state}"
+            )
+            item.setData(Qt.ItemDataRole.UserRole, key)
+            dialog._multi_list.addItem(item)
+            dialog._multi_rows[key] = row
+        dialog._multi_list.setEnabled(True)
+        dialog._multi_status.setText(
+            f"Sources {len(dialog._multi_rows)} | "
+            f"🟢 ล่าสุดสำเร็จ {count_green} | 🔴 ผิดพลาด/เก่า {count_red}"
+        )
+        if dialog._multi_list.count():
+            dialog._multi_list.setCurrentRow(0)
 
     def open_withholding_calculator(self):
         dialog = WithholdingCalculator(self)
@@ -4397,6 +4513,10 @@ class DailyLog(QWidget):
                     dialog
                 )
 
+        elif kind == "multi_notify_health":
+            if payload is not None and payload.isVisible():
+                self._render_multi_notify(payload, result or [])
+
         elif kind == "main_sources_load":
 
             dialog = payload
@@ -4634,6 +4754,13 @@ class DailyLog(QWidget):
                     bool(
                         dialog._session_list.currentItem()
                     )
+                )
+
+        elif kind == "multi_notify_health":
+            if payload is not None and payload.isVisible():
+                payload._multi_list.setEnabled(True)
+                payload._multi_status.setText(
+                    "โหลดสถานะ Sources ไม่สำเร็จ: " + str(message)
                 )
 
         elif kind in {
