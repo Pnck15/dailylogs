@@ -40,7 +40,7 @@ from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.13"
+APP_VERSION = "1.5.14"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
@@ -1967,16 +1967,13 @@ class NotifyApp(QWidget):
             except RuntimeError:
                 pass
         self._flush_history_batch()
+        # The History dialog is deliberately LOCAL only. Global purge is
+        # exclusively available to Admin in DailyLog.exe; passing the old
+        # global-purge arguments crashes HistoryDialog before it can open.
         dialog = HistoryDialog(
             self.history,
             source_allowed=self._source_allowed,
             parent=self,
-            central_purge_callback=self._request_global_purge,
-            is_admin=(
-                self.receiver is not None
-                and str(self.receiver.role or "").lower() == "admin"
-                and self.receiver.client is not None
-            ),
         )
         self._history_dialog = dialog
         try:
