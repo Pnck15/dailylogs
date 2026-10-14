@@ -92,9 +92,23 @@ def clean_sa_notification_message(message):
 
 
 def popup_content_html(message):
-    """Rich display only: keep cell values a legible navy blue."""
+    """White popup, black field names, navy cell values, safe escaped HTML."""
     fragments = []
     for raw in str(message or "").splitlines():
+        # The date and time must share one LINE while BOTH labels stay black.
+        if raw.strip().startswith("วันที่นัดหมาย:") and "เวลานัดหมาย:" in raw:
+            date_part, time_part = raw.split("เวลานัดหมาย:", 1)
+            _, date_value = date_part.split("วันที่นัดหมาย:", 1)
+            fragments.append(
+                '<span style="color:#111827;">วันที่นัดหมาย:</span>'
+                '<span style="color:#1E3A8A;font-weight:600;">'
+                + html.escape(date_value.strip()) + '</span>'
+                '&nbsp;&nbsp;&nbsp;'
+                '<span style="color:#111827;">เวลานัดหมาย:</span>'
+                '<span style="color:#1E3A8A;font-weight:600;">'
+                + html.escape(time_part.strip()) + '</span>'
+            )
+            continue
         if ":" in raw:
             prefix, value = raw.split(":", 1)
             if value.strip():
@@ -105,8 +119,11 @@ def popup_content_html(message):
                     + html.escape(value) + '</span>'
                 )
                 continue
+        # Standalone section headings are labels, not cell values.
+        heading = raw.strip().startswith(("ข้อมูลที่", "รายละเอียดแจ้ง", "รายการแจ้ง"))
+        color = "#111827" if heading else "#1E3A8A"
         fragments.append(
-            '<span style="color:#1E3A8A;font-weight:600;">'
+            '<span style="color:' + color + ';">'
             + html.escape(raw) + '</span>'
         )
     return (
@@ -690,8 +707,8 @@ class NotifyPopup(QDialog):
             history_callback
         )
 
-        self.setMinimumWidth(315)
-        self.setMaximumWidth(375)
+        self.setMinimumWidth(405)
+        self.setMaximumWidth(495)
 
         self.setStyleSheet(
             """
@@ -871,7 +888,7 @@ class NotifyPopup(QDialog):
         )
 
         self.resize(
-            400,
+            470,
             285,
         )
 
