@@ -47,6 +47,35 @@ class NotificationHistory:
                 ),
             )
 
+    def add_many(self, items):
+        """Commit a Central polling burst in one SQLite transaction.
+
+        All or none are saved; this avoids blocking Qt on a disk flush for
+        each message. No rewrite of existing notification records.
+        """
+        batch = list(items or [])
+        if not batch:
+            return 0
+        values = [
+            (
+                str(item.get("event_created_at") or "").strip()
+                or datetime.now().isoformat(timespec="seconds"),
+                str(item.get("source") or ""),
+                str(item.get("title") or ""),
+                str(item.get("message") or ""),
+                str(item.get("source_key") or "").strip(),
+            )
+            for item in batch
+        ]
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.executemany(
+                "INSERT INTO notifications("
+                "created_at,source,title,message,source_key"
+                ") VALUES(?,?,?,?,?)",
+                values,
+            )
+        return len(values)
+
     def recent(self, limit=200):
         with closing(sqlite3.connect(self.path)) as db, db:
             db.row_factory = sqlite3.Row
