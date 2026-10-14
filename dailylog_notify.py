@@ -935,6 +935,14 @@ class NotifyApp(QWidget):
             self.popup_mode = "bottom_right"
         self._recent_popup_requests = []
         self.history = NotificationHistory()
+        self._pending_history_entries = []
+        self._history_batch_timer = QTimer(self)
+        self._history_batch_timer.setSingleShot(True)
+        self._history_batch_timer.setInterval(200)
+        self._history_batch_timer.timeout.connect(self._flush_history_batch)
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._flush_history_batch)
         self._history_dialog = None
         self.receiver = None
         self._notify_popups = []
@@ -1912,6 +1920,7 @@ class NotifyApp(QWidget):
         ).exec()
 
     def open_history(self):
+        self._flush_history_batch()
         dialog = HistoryDialog(
             self.history,
             source_allowed=self._source_allowed,
@@ -1928,6 +1937,21 @@ class NotifyApp(QWidget):
             dialog.exec()
         finally:
             self._history_dialog = None
+
+    def _flush_history_batch(self):
+        if not self._pending_history_entries:
+            return
+        batch = self._pending_history_entries
+        self._pending_history_entries = []
+        try:
+            self.history.add_many(batch)
+        except Exception as error:
+            # Never lose queued events because of a temporary local DB lock.
+            self._pending_history_entries = batch + self._pending_history_entries
+            print("[Notify History] local write deferred:", type(error).__name__)
+            if self._history_batch_timer.isActive():
+                self._history_batch_timer.stop()
+            self._history_batch_timer.start(1500)
 
     def _request_global_purge(self, scope):
         if self.receiver is not None:
@@ -1953,6 +1977,7 @@ class NotifyApp(QWidget):
             return
         if payload.get("scope") not in ("yesterday", "last_7_days", "all"):
             return
+        self._flush_history_batch()
         try:
             deleted = self.history.clear_period(
                 payload.get("start"), payload.get("end")
@@ -1990,13 +2015,25 @@ class NotifyApp(QWidget):
         ):
             message = clean_sa_notification_message(message)
 
-        self.history.add(
-            source,
-            title,
-            message,
-            source_key=source_key,
-            event_created_at=event_created_at,
-        )
+        if hasattr(self, "_history_batch_timer"):
+            self._pending_history_entries.append({
+                "source": source,
+                "title": title,
+                "message": message,
+                "source_key": source_key,
+                "event_created_at": event_created_at,
+            })
+            if not self._history_batch_timer.isActive():
+                self._history_batch_timer.start()
+        else:
+            # Allow lightweight source-routing tests to reuse this method.
+            self.history.add(
+                source,
+                title,
+                message,
+                source_key=source_key,
+                event_created_at=event_created_at,
+            )
 
         # Only current-day events create a popup, but the popup is
         # owned by DailyLogNotify itself and therefore does not depend on
