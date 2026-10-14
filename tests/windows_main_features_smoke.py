@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QStackedWidget, QWidget, QPushButton, QLineEdit, QLabel, QListWidget, QTextEdit, QMessageBox
-from dailylog_finance import invoice_withholding_3_percent, base_plus_vat_withholding_3_percent, settlement_3_percent, WithholdingCalculator
+from dailylog_finance import invoice_withholding_3_percent, base_plus_vat_withholding_3_percent, settlement_3_percent, three_percent_adjustments, WithholdingCalculator
 from dailylog_forms import RED_PLATE_HEADER, RedPlateForm, serialize_red_plate, parse_red_plate, split_log_plate, with_log_plate, STRUCTURED_FORM_SPECS, StructuredLogForm, serialize_structured_log, parse_structured_log
 from main import DailyLog
 from cloud_db import CloudDB
@@ -69,9 +69,32 @@ def test_finance(app):
             pass
         else:
             raise AssertionError("Invalid pre-VAT total accepted")
+    # Standalone 3% tab handles two different mathematical meanings of
+    # "ถอด 3%" and a separate withholding gross-up calculation.
+    third = three_percent_adjustments("1,000")
+    assert third["entered"] == Decimal("1000.00")
+    assert third["added_tax"] == Decimal("30.00")
+    assert third["plus_total"] == Decimal("1030.00")
+    assert third["included_base"] == Decimal("970.87")
+    assert third["included_tax"] == Decimal("29.13")
+    assert third["gross_up"] == Decimal("1030.93")
+    assert third["gross_up_withheld"] == Decimal("30.93")
+    assert third["included_base"] + third["included_tax"] == third["entered"]
+    assert third["gross_up"] - third["gross_up_withheld"] == third["entered"]
+    assert three_percent_adjustments("0")["gross_up"] == Decimal("0.00")
+    small_three = three_percent_adjustments("33.33")
+    assert small_three["added_tax"] == Decimal("1.00")
+    for invalid in ("-1", "NaN", "Infinity", "word"):
+        try:
+            three_percent_adjustments(invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Three-percent tool accepted invalid amount")
+
     calc = WithholdingCalculator()
     assert calc.width() <= 450
-    assert calc.tabs.count() == 2
+    assert calc.tabs.count() == 3
     assert not calc.isModal()
     assert bool(calc.windowFlags() & Qt.WindowType.Window)
     calc.gross_input.setText("5,000.00")
@@ -95,6 +118,29 @@ def test_finance(app):
     assert "#ff5252" in calc.forward_answer.toHtml().lower()
     calc.clear_forward()
     assert not calc.forward_copy_button.isEnabled()
+
+    # Partition 3 must be copyable, editable, and independent from tabs 1/2.
+    calc.tabs.setCurrentIndex(2)
+    calc.adjust_input.setText("1,000")
+    result_text = calc.adjust_answer.toPlainText()
+    assert "1,030.00 บาท" in result_text
+    assert "970.87 บาท" in result_text
+    assert "1,030.93 บาท" in result_text
+    assert "29.13 บาท" in result_text
+    assert "30.93 บาท" in result_text
+    assert "#fde047" in calc.adjust_answer.toHtml().lower()
+    calc.adjust_copy_button.click()
+    copied = app.clipboard().text()
+    assert "หาร 1.03" in copied
+    assert "หาร 0.97" in copied
+    assert "1,030.93 บาท" in copied
+    calc.adjust_input.setText("not-money")
+    assert not calc.adjust_copy_button.isEnabled()
+    calc.adjust_input.setText("500")
+    assert calc.adjust_copy_button.isEnabled()
+    calc.clear_adjust()
+    assert not calc.adjust_copy_button.isEnabled()
+    assert not calc.adjust_input.text().strip()
     # Switching back must not reset the original calculation.
     calc.tabs.setCurrentIndex(0)
     assert "140.19 บาท" in calc.answer.toPlainText()
@@ -122,6 +168,10 @@ def test_calculator_standalone_window(app):
         dialog.tabs.setCurrentIndex(1)
         dialog.base_input.setText("1,000")
         assert "1,040.00 บาท" in dialog.forward_answer.toPlainText()
+        dialog.tabs.setCurrentIndex(2)
+        dialog.adjust_input.setText("1,000")
+        assert "1,030.93 บาท" in dialog.adjust_answer.toPlainText()
+        assert owner.isEnabled(), "The standalone three-percent tab must be non-modal"
 
         # Reopening via the header shortcut must reuse, not duplicate it.
         owner.open_withholding_calculator()
