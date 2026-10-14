@@ -84,7 +84,7 @@ class DailyLog(QWidget):
 
         self.expanded_width = 580
         self.expanded_height = 280
-        self.collapsed_height = 33
+        self.collapsed_height = 47
 
         self.setFixedSize(
             self.expanded_width,
@@ -373,9 +373,25 @@ class DailyLog(QWidget):
         )
         self.main_noti_button.hide()
 
-        self.line_status_button = QPushButton("⚪ LINE")
-        self.line_status_button.clicked.connect(
-            self.configure_line_notifications
+        # Keep the old LINE status object only for previously saved
+        # notification-channel settings; never render it in the header.
+        self.line_status_button = QPushButton("LINE (legacy)", self)
+        self.line_status_button.hide()
+        self.multi_notify_button = QPushButton("🟢 Multi-Notify")
+        self.multi_notify_button.setObjectName("multiNotifyButton")
+        self.multi_notify_button.setToolTip(
+            "ตรวจสถานะ Central Scan ของ Sources ทั้งหมด"
+        )
+        self.multi_notify_button.clicked.connect(
+            self.open_multi_notify
+        )
+        self.calculator_shortcut_button = QPushButton("🧮 3%")
+        self.calculator_shortcut_button.setObjectName("quickWithholdingCalculatorButton")
+        self.calculator_shortcut_button.setToolTip(
+            "เปิดเครื่องคิดเลข VAT 7% / หัก ณ ที่จ่าย 3%"
+        )
+        self.calculator_shortcut_button.clicked.connect(
+            self.open_withholding_calculator
         )
 
         # =========================================
@@ -480,7 +496,8 @@ class DailyLog(QWidget):
             self.sale_alert_button,
             self.sale_alert_button_srinakarin,
             self.sa_notify_button,
-            self.line_status_button,
+            self.multi_notify_button,
+            self.calculator_shortcut_button,
         ):
             button.setFixedHeight(24)
 
@@ -488,12 +505,14 @@ class DailyLog(QWidget):
         self.sale_alert_button_srinakarin.setFixedWidth(82)
         # Keep enough width for the status dot + "SA Sathorn".
         self.sa_notify_button.setFixedWidth(86)
-        self.line_status_button.setFixedWidth(66)
+        self.multi_notify_button.setFixedWidth(112)
+        self.calculator_shortcut_button.setFixedWidth(53)
 
         header.addWidget(self.sale_alert_button)
         header.addWidget(self.sale_alert_button_srinakarin)
         header.addWidget(self.sa_notify_button)
-        header.addWidget(self.line_status_button)
+        header.addWidget(self.multi_notify_button)
+        header.addWidget(self.calculator_shortcut_button)
 
         header.addStretch()
 
@@ -1651,13 +1670,6 @@ class DailyLog(QWidget):
 
         notify_menu.addSeparator()
 
-        line_action = notify_menu.addAction(
-            "LINE Messaging API"
-        )
-        line_action.triggered.connect(
-            self.configure_line_notifications
-        )
-
         menu.addSeparator()
 
         update_action = menu.addAction(
@@ -2273,15 +2285,14 @@ class DailyLog(QWidget):
     def open_central_history_cleanup(self):
         """Never delete Central data without a second Admin confirmation."""
         choice_labels = {
-            "ล้างเมื่อวาน (เวลาไทย)": "yesterday",
-            "ล้างย้อนหลัง 7 วัน (ไม่รวมวันนี้)": "last_7_days",
-            "ล้างทั้งหมดถึงเวลาปัจจุบัน": "all",
+            "ล้างประวัติแจ้งเตือนเก่ากว่า 7 วัน": "older_than_7_days",
+            "ล้างประวัติแจ้งเตือนเก่ากว่า 30 วัน": "older_than_30_days",
+            "ล้างประวัติแจ้งเตือนทั้งหมด": "all",
         }
         choice, ok = QInputDialog.getItem(
             self,
             "Central History Retention — เฉพาะ Admin",
-            "เลือกช่วงเวลาที่ต้องการล้างออกจาก Supabase Central "
-            "และให้ DailyLogNotify ทุกเครื่องล้างตาม:",
+            "เลือกช่วงเวลาของประวัติแจ้งเตือนที่ต้องการล้าง:",
             list(choice_labels),
             0,
             False,
@@ -2290,15 +2301,13 @@ class DailyLog(QWidget):
             return
         scope = choice_labels[choice]
         warning = (
-            "นี่คือการลบ Notification Events ออกจาก Supabase Central "
-            "ของ Workspace นี้จริง ๆ\n\n"
             f"ช่วงที่เลือก: {choice}\n\n"
-            "เครื่องที่ออนไลน์และอัปเดตโปรแกรมแล้วจะล้างประวัติท้องถิ่น "
-            "หลังได้รับสัญญาณจาก Central ส่วนเครื่องที่ออฟไลน์ "
-            "จะล้างเมื่อกลับมาเชื่อมต่อ\n\n"
-            "ข้อมูล Google Sheets และ Daily Logs จะไม่ถูกลบ "
-            "แต่ประวัติแจ้งเตือนที่ลบจะกู้คืนจากโปรแกรมไม่ได้\n\n"
-            "ยืนยันล้างประวัติ Central หรือไม่?"
+            "ลบเฉพาะประวัติแจ้งเตือนตามช่วงวันที่ที่เลือก\n"
+            "บันทึกรายวัน Daily Logs และ Google Sheets จะอยู่ครบ\n"
+            "เครื่องที่ออนไลน์จะล้างตาม ส่วนเครื่องออฟไลน์ "
+            "จะซิงก์หลังเชื่อมต่อ\n\n"
+            "ประวัติแจ้งเตือนที่ลบไม่สามารถกู้คืนจากโปรแกรมได้\n"
+            "ยืนยันหรือไม่?"
         )
         answer = QMessageBox.question(
             self, "ยืนยันลบประวัติ Central ทุกเครื่อง",
@@ -8206,61 +8215,24 @@ class DailyLog(QWidget):
 
         if self.is_collapsed:
 
-            self.setFixedHeight(
-                self.expanded_height
-            )
-
-            self.pages.show()
-
-            self.search_input.show()
-
-            self.sale_alert_button.show()
-
-            self.sale_alert_button_srinakarin.show()
-
-            self.sa_notify_button.show()
-
-            self.menu_button.show()
-
-            self.save_background_button.show()
-
-            self.notification_container.show()
-
-            self.collapse_button.setText(
-                "−"
-            )
-
             self.is_collapsed = False
-            # Restoring a red-plate form must restore its larger input area.
+            self.setFixedHeight(self.expanded_height)
+            self.pages.show()
+            self.search_input.show()
+            self.notification_container.show()
+            # All header controls stay visible regardless of collapsed state.
+            self.collapse_button.setText("−")
             self._resize_add_form()
 
         else:
 
-            self.setFixedHeight(
-                self.collapsed_height
-            )
-
-            self.pages.hide()
-
-            self.search_input.hide()
-
-            self.sale_alert_button.hide()
-
-            self.sale_alert_button_srinakarin.hide()
-
-            self.sa_notify_button.hide()
-
-            self.menu_button.hide()
-
-            self.save_background_button.hide()
-
-            self.notification_container.hide()
-
-            self.collapse_button.setText(
-                "＋"
-            )
-
             self.is_collapsed = True
+            self.pages.hide()
+            self.search_input.hide()
+            self.notification_container.hide()
+            # Do not hide branch, Multi-Notify, calculator or menu buttons.
+            self.setFixedHeight(self.collapsed_height)
+            self.collapse_button.setText("＋")
 
         self.move_to_bottom_right()
 
