@@ -88,7 +88,14 @@ def clean_sa_notification_message(message):
         line = re.sub(r"\s*\(Merged D\)", "", line, flags=re.IGNORECASE)
         line = re.sub(r"\s*\(Column\s+D\)", "", line, flags=re.IGNORECASE)
         lines.append(line)
-    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    # Older Central events may still have date and time on two lines.
+    # Normalize those display copies without changing Central or Sheets.
+    return re.sub(
+        r"(วันที่นัดหมาย:[^\n]+)\n\s*(เวลานัดหมาย:[^\n]+)",
+        r"\1    \2",
+        cleaned,
+    )
 
 
 def popup_content_html(message):
