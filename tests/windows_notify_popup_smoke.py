@@ -75,7 +75,7 @@ def test_popup(app):
     timers = popup.findChildren(QTimer)
     assert len(timers) == 1
     timer = timers[0]
-    assert timer.interval() == 23000, timer.interval()
+    assert timer.interval() == 26000, timer.interval()
     assert timer.isSingleShot() and timer.isActive()
 
     red_x = popup.findChild(QPushButton, "notifyPopupCloseButton")
@@ -84,7 +84,7 @@ def test_popup(app):
     assert "background-color: #DC2626" in red_x.styleSheet()
 
     labels = [label.text() for label in popup.findChildren(QLabel)]
-    assert any("ปิดอัตโนมัติใน 23 วินาที" in text for text in labels)
+    assert all("ปิดอัตโนมัติ" not in text for text in labels)
     assert not any("Ctrl+C" in text for text in labels)
     assert not any("3 นาที" in text for text in labels)
 
