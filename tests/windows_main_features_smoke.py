@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QStackedWidget, QWidget, QPushButton, QLineEdit, QLabel, QListWidget, QTextEdit, QMessageBox
-from dailylog_finance import invoice_withholding_3_percent, settlement_3_percent, WithholdingCalculator
+from dailylog_finance import invoice_withholding_3_percent, base_plus_vat_withholding_3_percent, settlement_3_percent, WithholdingCalculator
 from dailylog_forms import RED_PLATE_HEADER, RedPlateForm, serialize_red_plate, parse_red_plate, split_log_plate, with_log_plate, STRUCTURED_FORM_SPECS, StructuredLogForm, serialize_structured_log, parse_structured_log
 from main import DailyLog
 from cloud_db import CloudDB
@@ -48,8 +48,32 @@ def test_finance(app):
     negative = invoice_withholding_3_percent("5000", "5001")
     assert negative["balance"] == Decimal("-141.19")
     assert negative["overpaid"] == Decimal("141.19")
+    # Two distinct parts: pre-tax -> VAT -> WHT, or VAT-inclusive -> WHT.
+    forward = base_plus_vat_withholding_3_percent("5,000.00")
+    assert forward["tax_base"] == Decimal("5000.00")
+    assert forward["vat"] == Decimal("350.00")
+    assert forward["gross"] == Decimal("5350.00")
+    assert forward["withheld"] == Decimal("150.00")
+    assert forward["net"] == Decimal("5200.00")
+    assert forward["remaining"] == Decimal("5200.00")
+    with_paid = base_plus_vat_withholding_3_percent("5,000", "5,500")
+    assert with_paid["balance"] == Decimal("-300.00")
+    assert with_paid["overpaid"] == Decimal("300.00")
+    small = base_plus_vat_withholding_3_percent("123.45")
+    assert small["vat"] == Decimal("8.64")
+    assert small["withheld"] == Decimal("3.70")
+    for illegal in ("-1", "NaN", "Infinity", "test"):
+        try:
+            base_plus_vat_withholding_3_percent(illegal)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Invalid pre-VAT total accepted")
     calc = WithholdingCalculator()
     assert calc.width() <= 450
+    assert calc.tabs.count() == 2
+    assert not calc.isModal()
+    assert bool(calc.windowFlags() & Qt.WindowType.Window)
     calc.gross_input.setText("5,000.00")
     assert "4,859.81" in calc.answer.toPlainText()
     assert "#fde047" in calc.answer.toHtml().lower()
@@ -58,9 +82,71 @@ def test_finance(app):
     assert "#ff5252" in calc.answer.toHtml().lower()
     calc.copy_result()
     assert "140.19 บาท" in app.clipboard().text()
+
+    # Partition 2 must be independently editable/copyable from Partition 1.
+    calc.tabs.setCurrentIndex(1)
+    calc.base_input.setText("5,000")
+    assert "5,200.00 บาท" in calc.forward_answer.toPlainText()
+    assert "350.00 บาท" in calc.forward_answer.toPlainText()
+    calc.forward_copy_button.click()
+    assert "150.00 บาท" in app.clipboard().text()
+    calc.forward_paid_input.setText("5,500")
+    assert "-300.00" in calc.forward_answer.toPlainText()
+    assert "#ff5252" in calc.forward_answer.toHtml().lower()
+    calc.clear_forward()
+    assert not calc.forward_copy_button.isEnabled()
+    # Switching back must not reset the original calculation.
+    calc.tabs.setCurrentIndex(0)
+    assert "140.19 บาท" in calc.answer.toPlainText()
     calc.clear()
     assert not calc.copy_button.isEnabled()
     calc.close()
+
+
+def test_calculator_standalone_window(app):
+    # Nonmodal opening must leave DailyLog's controls interactive.
+    owner = DailyLog.__new__(DailyLog)
+    QWidget.__init__(owner)
+    owner.show()
+    app.processEvents()
+    try:
+        assert owner.isEnabled()
+        assert not hasattr(owner, "_calculator_dialog")
+        owner.open_withholding_calculator()
+        app.processEvents()
+        dialog = owner._calculator_dialog
+        assert dialog.parent() is None, "Calculator must own its Windows taskbar window"
+        assert dialog.isVisible()
+        assert not dialog.isModal()
+        assert owner.isEnabled(), "Calculator must not disable the DailyLog window"
+        dialog.tabs.setCurrentIndex(1)
+        dialog.base_input.setText("1,000")
+        assert "1,040.00 บาท" in dialog.forward_answer.toPlainText()
+
+        # Reopening via the header shortcut must reuse, not duplicate it.
+        owner.open_withholding_calculator()
+        app.processEvents()
+        assert owner._calculator_dialog is dialog
+        dialog.close()
+        app.processEvents()
+        assert not dialog.isVisible()
+        assert owner.isVisible()
+        owner.open_withholding_calculator()
+        app.processEvents()
+        assert dialog.isVisible()
+    finally:
+        dialog = getattr(owner, "_calculator_dialog", None)
+        if dialog is not None:
+            dialog.close()
+            dialog.deleteLater()
+        owner.hide()
+        owner.deleteLater()
+
+    import inspect
+    header = inspect.getsource(DailyLog.__init__)
+    assert "self.save_background_button" not in header
+    assert "self.calculator_shortcut_button" in header
+    assert 'self.save_background' in inspect.getsource(DailyLog.show_settings_menu)
 
 
 def example():
@@ -441,9 +527,10 @@ if __name__ == "__main__":
     app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     test_finance(app)
+    test_calculator_standalone_window(app)
     test_red_plate_serialization(app)
     test_new_form_serialization(app)
     test_main_add_and_edit(app)
     test_admin_central_history_guard()
     test_multi_notify_and_retention_ui(app)
-    print("PASS: VAT invoice, Add/Edit of red plate, vehicle receipt and customer payment templates.")
+    print("PASS: two VAT/WHT partitions, independent calculator, removed disk shortcut, forms and Central UI.")
