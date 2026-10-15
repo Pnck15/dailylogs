@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QInputDialog,
+    QSpinBox,
 )
 from PySide6.QtGui import (
     QColor,
@@ -52,6 +53,7 @@ from update_checker import UpdateChecker
 from notify_channels import NotificationChannels
 from dailylog_finance import WithholdingCalculator
 from dailylog_notification_history import NotificationLogsDialog
+from dailylog_notification_visibility import LocalNotificationVisibility, to_utc
 from dailylog_forms import (
     RedPlateForm, serialize_red_plate, parse_red_plate,
     split_log_plate, with_log_plate, style_form_selector,
@@ -65,7 +67,7 @@ APP_NAME = "DailyLog"
 APP_DISPLAY_NAME = "GAC日記"
 
 DEFAULT_ACCENT = "#2563EB"
-APP_VERSION = "1.2.14"
+APP_VERSION = "1.2.15"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 
 UPDATE_CHECK_DELAY_MS = 2500
@@ -201,6 +203,9 @@ class DailyLog(QWidget):
         )
 
         self._migrate_legacy_settings()
+        self.local_notification_visibility = LocalNotificationVisibility(
+            self.settings
+        )
 
         self.current_accent = str(
             self.settings.value(
@@ -1721,12 +1726,122 @@ class DailyLog(QWidget):
             page_loader=self._request_notification_history_page,
             recent_notifications=self.notification_presenter.notifications,
             parent=self,
+            visibility_filter=self.local_notification_visibility.visible,
+            local_clear_callback=self.clear_local_notification_history,
         )
         self._notification_history_dialog = dialog
         dialog.finished.connect(
             lambda _code: setattr(self, "_notification_history_dialog", None)
         )
         dialog.show()
+
+    def clear_local_notification_history(self):
+        """Hide only this PC's notification feed; never mutate any SQL Logs."""
+        selector = QDialog(self)
+        selector.setWindowTitle("DailyLog — ล้างประวัติแจ้งเตือนในเครื่องนี้")
+        selector.setWindowFlag(Qt.WindowType.Window, True)
+        selector.resize(450, 220)
+        layout = QVBoxLayout(selector)
+        info = QLabel(
+            "เลือกระยะเวลาเพื่อล้างเฉพาะรายการใน Notification "
+            "ของ DailyLog เครื่องนี้\n"
+            "บันทึกรายวัน Daily Logs และประวัติเครื่องอื่นไม่ถูกลบ"
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+        period = QComboBox(selector)
+        period.setObjectName("localNotificationClearMode")
+        period.addItem("ย้อนหลัง N วัน (รวมรายการวันนี้)", "recent")
+        period.addItem("เก่ากว่า N วัน", "older")
+        period.addItem("ล้างทั้งหมด", "all")
+        period.setMinimumHeight(34)
+        period.setStyleSheet(
+            "QComboBox { background:#1E293B; color:white; "
+            "border:1px solid #60A5FA; border-radius:5px; padding:5px; } "
+            "QComboBox QAbstractItemView { color:white; background:#1E293B; }"
+        )
+        layout.addWidget(period)
+        day_row = QHBoxLayout()
+        day_row.addWidget(QLabel("จำนวนวัน:"))
+        number = QSpinBox(selector)
+        number.setObjectName("localNotificationClearDays")
+        number.setRange(1, 3650)
+        number.setValue(7)
+        number.setSuffix(" วัน")
+        number.setStyleSheet(
+            "QSpinBox { background:#1E293B; color:#FFFFFF; "
+            "border:1px solid #60A5FA; padding:4px; }"
+        )
+        day_row.addWidget(number)
+        day_row.addStretch()
+        layout.addLayout(day_row)
+        period.currentIndexChanged.connect(
+            lambda _index: number.setEnabled(period.currentData() != "all")
+        )
+        actions = QHBoxLayout()
+        actions.addStretch()
+        cancel = QPushButton("ยกเลิก")
+        confirm = QPushButton("ถัดไป — ยืนยัน")
+        cancel.clicked.connect(selector.reject)
+        confirm.clicked.connect(selector.accept)
+        actions.addWidget(cancel)
+        actions.addWidget(confirm)
+        layout.addLayout(actions)
+        if selector.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        mode = str(period.currentData() or "")
+        days = number.value()
+        label = (
+            "ทั้งหมด" if mode == "all"
+            else f"ย้อนหลัง {days} วัน" if mode == "recent"
+            else f"เก่ากว่า {days} วัน"
+        )
+        answer = QMessageBox.question(
+            self, "ยืนยันล้าง Notification ในเครื่องนี้",
+            f"ล้างประวัติแจ้งเตือน: {label}\n\n"
+            "รายการจะไม่แสดงอีกบน DailyLog เครื่องนี้ "
+            "แม้เปิดหน้าประวัติใหม่\n"
+            "ไม่ลบ Daily Logs ในปฏิทิน และไม่ลบประวัติเครื่องอื่น\n\n"
+            "หากต้องการลบประวัติส่วนกลาง ให้ใช้เมนู "
+            "Notification System Settings → ล้างประวัติ Central\n\n"
+            "ยืนยันหรือไม่?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.local_notification_visibility.hide(mode, days)
+        except (OSError, ValueError) as error:
+            QMessageBox.critical(
+                self, "ล้างประวัติไม่สำเร็จ", str(error)
+            )
+            return
+
+        presenter = self.notification_presenter
+        presenter.notifications = self.local_notification_visibility.filter_rows(
+            presenter.notifications
+        )
+        self.notification_list.clear()
+        for notification in presenter.notifications:
+            presenter.add_to_central_feed(notification, max_items=50)
+        self.sale_notifications = [
+            row for row in self.sale_notifications
+            if self.local_notification_visibility.visible(row.get("created_at"))
+        ]
+        dialog = getattr(self, "_notification_history_dialog", None)
+        if dialog is not None:
+            try:
+                dialog.refresh_local_visibility(presenter.notifications)
+            except RuntimeError:
+                self._notification_history_dialog = None
+
+        QMessageBox.information(
+            self, "Notification",
+            f"ซ่อนรายการแจ้งเตือน {label} ใน DailyLog เครื่องนี้แล้ว\n"
+            "ข้อมูล Daily Logs ที่บันทึกตามวันที่ยังอยู่ครบ",
+        )
 
     def _request_notification_history_page(self, dialog, page, page_size):
         request_id = self.cloud.call(
@@ -3337,11 +3452,19 @@ class DailyLog(QWidget):
                 except ValueError:
                     show_popup = True
 
+            # Local per-PC dismissal is independent of the Central
+            # retention RPC and never touches the Cloud 'logs' table.
+            if not self.local_notification_visibility.visible(created_at):
+                if event_id > self._main_event_last_id:
+                    self._main_event_last_id = event_id
+                continue
+
             self.add_sale_notification(
                 title,
                 message,
                 notification_type,
                 show_toast=show_popup,
+                event_created_at=created_at,
             )
 
             if (
@@ -4314,6 +4437,18 @@ class DailyLog(QWidget):
             self.open_notification_logs
         )
         notification_header.addWidget(self.notification_history_button)
+        self.clear_notification_button = QPushButton("ล้าง")
+        self.clear_notification_button.setObjectName(
+            "clearMainNotificationButton"
+        )
+        self.clear_notification_button.setToolTip(
+            "ล้างรายการแจ้งเตือนของ DailyLog เครื่องนี้ "
+            "ตามจำนวนวันที่เลือก โดยไม่ลบ Daily Logs"
+        )
+        self.clear_notification_button.clicked.connect(
+            self.clear_local_notification_history
+        )
+        notification_header.addWidget(self.clear_notification_button)
         notification_layout.addLayout(notification_header)
 
         self.notification_list.itemDoubleClicked.connect(
@@ -5941,6 +6076,7 @@ class DailyLog(QWidget):
         message,
         notification_type="info",
         show_toast=True,
+        event_created_at="",
     ):
         """Record and present a notification.
 
@@ -5948,14 +6084,15 @@ class DailyLog(QWidget):
         connection layer; sheet_monitor.NotificationPresenter owns the
         list/popup UI.
         """
-        now = datetime.now().strftime(
-            "%H:%M:%S"
-        )
+        stamp = to_utc(event_created_at) or datetime.now(timezone.utc)
+        local_stamp = stamp.astimezone()
+        now = local_stamp.strftime("%H:%M:%S")
 
         self.sale_notifications.insert(
             0,
             {
                 "time": now,
+                "created_at": stamp.isoformat(),
                 "title": title,
                 "message": message,
                 "type": notification_type,
@@ -5974,6 +6111,7 @@ class DailyLog(QWidget):
             notification_type=notification_type,
             show_popup=show_toast,
             max_items=50,
+            timestamp=local_stamp,
         )
 
         if show_toast:
