@@ -155,6 +155,7 @@ class NotificationPresenter(QObject):
         row=None,
         column="",
         max_items=50,
+        timestamp=None,
     ):
         notification = Notification(
             title=title,
@@ -163,6 +164,7 @@ class NotificationPresenter(QObject):
             sheet=sheet,
             row=row,
             column=column,
+            timestamp=timestamp,
         )
 
         self.notifications.append(notification)
