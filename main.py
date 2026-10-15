@@ -51,6 +51,7 @@ from sheet_monitor import NotificationPresenter
 from update_checker import UpdateChecker
 from notify_channels import NotificationChannels
 from dailylog_finance import WithholdingCalculator
+from dailylog_notification_history import NotificationLogsDialog
 from dailylog_forms import (
     RedPlateForm, serialize_red_plate, parse_red_plate,
     split_log_plate, with_log_plate, style_form_selector,
@@ -73,6 +74,33 @@ UPDATE_CHECK_DELAY_MS = 2500
 SALE_MONITOR_INTERVAL_MS = 300000
 
 SEARCH_DEBOUNCE_MS = 350
+
+# Session manager displays only recent/offline sessions by default.
+# Never delete auth.sessions based solely on a missing heartbeat: another
+# office may have been offline, but its owner may still need to reconnect.
+SESSION_STALE_HIDE_HOURS = 24
+
+
+def session_hidden_after_24h(row, now=None):
+    if row.get("online"):
+        return False
+    now = now or datetime.now(timezone.utc)
+    stamp = (
+        row.get("last_seen_at")
+        or row.get("session_updated_at")
+        or row.get("session_created_at")
+    )
+    if not stamp:
+        return False
+    try:
+        parsed = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return (now - parsed.astimezone(timezone.utc)).total_seconds() > 24 * 3600
+    except (ValueError, TypeError, OverflowError):
+        return False
+
+
 
 
 class DailyLog(QWidget):
@@ -1677,6 +1705,34 @@ class DailyLog(QWidget):
                 self.menu_button.rect().bottomLeft()
             )
         )
+
+    def open_notification_logs(self):
+        """Browse all Central notification events, not merely the 50 visible rows."""
+        dialog = getattr(self, "_notification_history_dialog", None)
+        if dialog is not None:
+            try:
+                dialog.showNormal()
+                dialog.raise_()
+                dialog.activateWindow()
+                return
+            except RuntimeError:
+                self._notification_history_dialog = None
+        dialog = NotificationLogsDialog(
+            page_loader=self._request_notification_history_page,
+            recent_notifications=self.notification_presenter.notifications,
+            parent=self,
+        )
+        self._notification_history_dialog = dialog
+        dialog.finished.connect(
+            lambda _code: setattr(self, "_notification_history_dialog", None)
+        )
+        dialog.show()
+
+    def _request_notification_history_page(self, dialog, page, page_size):
+        request_id = self.cloud.call(
+            "get_notification_history_page", page, page_size
+        )
+        self._cloud_pending[request_id] = ("notification_history_page", dialog)
 
     def open_multi_notify(self):
         """Status from recent Central Worker scans; never ping GAS in Qt UI."""
@@ -4177,10 +4233,24 @@ class DailyLog(QWidget):
             self.notification_list
         )
 
-        notification_layout.addWidget(
-            self.notification_title
+        notification_header = QHBoxLayout()
+        notification_header.addWidget(self.notification_title, 1)
+        self.notification_history_button = QPushButton("ดูทั้งหมด")
+        self.notification_history_button.setObjectName(
+            "allNotificationLogsButton"
         )
+        self.notification_history_button.setToolTip(
+            "เปิดประวัติแจ้งเตือนจาก Central ย้อนหลังทั้งหมด แบ่งหน้าและคัดลอกข้อความได้"
+        )
+        self.notification_history_button.clicked.connect(
+            self.open_notification_logs
+        )
+        notification_header.addWidget(self.notification_history_button)
+        notification_layout.addLayout(notification_header)
 
+        self.notification_list.itemDoubleClicked.connect(
+            lambda _item: self.open_notification_logs()
+        )
         notification_layout.addWidget(
             self.notification_list
         )
@@ -4462,6 +4532,14 @@ class DailyLog(QWidget):
 
             self.back_to_calendar()
 
+        elif kind == "notification_history_page":
+            dialog = payload
+            try:
+                if dialog is not None and dialog.isVisible():
+                    dialog.set_rows(result or [])
+            except RuntimeError:
+                pass
+
         elif kind == "notify_sessions_load":
 
             dialog = payload
@@ -4717,6 +4795,14 @@ class DailyLog(QWidget):
                     f"{message}"
                 ),
             )
+
+        elif kind == "notification_history_page":
+            dialog = payload
+            try:
+                if dialog is not None and dialog.isVisible():
+                    dialog.set_error(message)
+            except RuntimeError:
+                pass
 
         elif kind in {
             "notify_sessions_load",
