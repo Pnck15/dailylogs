@@ -109,7 +109,8 @@ def three_percent_adjustments(value):
     """Separate +3%, removing an included 3%, and WHT gross-up.
 
     Adding 3%: input * 1.03.
-    Extracting included 3%: input / 1.03.
+    WHT deduction of 3% from entered: input - (input * 0.03).
+    Extracting an INCREASE of 3%: input / 1.03 (distinct).
     Recovering gross prior to 3% withholding: input / 0.97.
     All amounts use Decimal and ROUND_HALF_UP.
     """
@@ -121,10 +122,17 @@ def three_percent_adjustments(value):
     gross_up = (entered / (Decimal("1") - WHT_RATE)).quantize(
         SATANG, rounding=ROUND_HALF_UP
     )
+    # Deduct exactly 3% FROM THE ENTERED AMOUNT (the requested 30,927.84
+    # -> 30,000.00 example). This is different from extracting an included
+    # markup (÷1.03), which we retain as a separately labelled calculation.
+    deducted_3_percent = added
+    deducted_total = entered - deducted_3_percent
     return {
         "entered": entered,
         "added_tax": added,
         "plus_total": entered + added,
+        "deducted_3_percent": deducted_3_percent,
+        "deducted_total": deducted_total,
         "included_base": included_base,
         "included_tax": entered - included_base,
         "gross_up": gross_up,
@@ -266,8 +274,8 @@ class WithholdingCalculator(QDialog):
         adjustment_layout = QVBoxLayout(adjustment)
         adjustment_layout.setSpacing(7)
         adjust_note = QLabel(
-            "ส่วนที่ 3: คำนวณบวก 3%, ถอด 3% ในยอดรวม "
-            "และย้อนยอดก่อนถูกหัก ณ ที่จ่าย 3% (ไม่เกี่ยวกับ VAT 7%)"
+            "ส่วนที่ 3: หัก 3% จากยอดที่กรอก (ตัวอย่าง 30,927.84 → 30,000.00) "
+            "หรือบวก 3% และย้อนฐานราคาที่บวก 3% มาแล้ว (ไม่รวม VAT 7%)"
         )
         adjust_note.setWordWrap(True)
         adjustment_layout.addWidget(adjust_note)
@@ -413,18 +421,22 @@ class WithholdingCalculator(QDialog):
         self._adjust_result = data
         self.adjust_copy_button.setEnabled(True)
         sections = (
-            ("ยอดตั้งต้น", (("entered", "ยอดเงินที่กรอก"),)),
-            ("บวก 3% (คูณ 1.03)", (
-                ("added_tax", "จำนวนเงิน 3%"),
-                ("plus_total", "ยอดรวมหลังบวก 3%"),
+            ("ยอดตั้งต้น (ไม่รวม VAT 7%)", (("entered", "ยอดมี 3% / ยอดเงินที่กรอก"),)),
+            ("ถอด 3% แบบหัก ณ ที่จ่าย (คูณ 97%)", (
+                ("deducted_3_percent", "ภาษีหัก ณ ที่จ่าย 3%"),
+                ("deducted_total", "ยอดถอด 3% / ยอดสุทธิหลังหัก"),
             )),
-            ("ถอด 3% ที่รวมแล้ว (หาร 1.03)", (
-                ("included_base", "ฐานก่อนบวก 3%"),
-                ("included_tax", "ยอด 3% ที่รวมอยู่"),
+            ("บวก 3% ของฐาน (คูณ 1.03)", (
+                ("added_tax", "ยอดบวกเพิ่ม 3%"),
+                ("plus_total", "ยอดหลังบวก 3%"),
             )),
-            ("ย้อนยอดก่อนหัก ณ ที่จ่าย 3% (หาร 0.97)", (
-                ("gross_up", "ยอดก่อนถูกหัก 3%"),
-                ("gross_up_withheld", "จำนวนภาษีที่ถูกหัก 3%"),
+            ("ถอดส่วนที่บวก 3% มาแล้ว (หาร 1.03 — คนละสูตร)", (
+                ("included_base", "ฐานราคาก่อนบวก 3%"),
+                ("included_tax", "จำนวน 3% ที่รวมมาแล้ว"),
+            )),
+            ("หายอดก่อนหัก 3% จากยอดสุทธิ (หาร 0.97)", (
+                ("gross_up", "ยอดก่อนถูกหัก ณ ที่จ่าย"),
+                ("gross_up_withheld", "จำนวนเงินภาษี 3%"),
             )),
         )
         plain_lines = []
