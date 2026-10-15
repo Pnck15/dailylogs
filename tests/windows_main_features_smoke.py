@@ -709,10 +709,18 @@ def test_multi_notify_and_retention_ui(app):
             return 8
     owner.cloud = FakeCloud()
     owner._cloud_pending = {}
-    with patch(
-        "main.QInputDialog.getItem",
-        return_value=("ล้างประวัติแจ้งเตือนเก่ากว่า 30 วัน", True),
-    ), patch(
+    def choose_thirty_days(dlg):
+        combo = dlg.findChild(QComboBox, "centralHistoryRetentionRange")
+        assert combo is not None and combo.count() == 3
+        assert combo.itemData(0) == "older_than_7_days"
+        assert combo.itemData(1) == "older_than_30_days"
+        assert combo.itemData(2) == "all"
+        assert "#ffffff" in combo.styleSheet().lower()
+        combo.setCurrentIndex(1)
+        return QDialog.DialogCode.Accepted
+
+    # Exercise the ACTUAL selection UI, without performing a database write.
+    with patch("main.QDialog.exec", new=choose_thirty_days), patch(
         "main.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Yes,
     ):
@@ -723,9 +731,9 @@ def test_multi_notify_and_retention_ui(app):
     assert owner._cloud_pending[8] == (
         "central_history_purge", "older_than_30_days"
     )
-    with patch(
-        "main.QInputDialog.getItem",
-        return_value=("ล้างประวัติแจ้งเตือนเก่ากว่า 7 วัน", True),
+    with patch.object(
+        DailyLog, "_choose_central_history_scope",
+        return_value="older_than_7_days",
     ), patch(
         "main.QMessageBox.question",
         return_value=QMessageBox.StandardButton.No,
