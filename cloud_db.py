@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -125,6 +126,62 @@ class CloudDB:
     def _require_login(self):
         if not self.user or not self.session or not self.workspace_id:
             raise RuntimeError("ยังไม่ได้ Login")
+
+    def ensure_session_fresh(self, force=False):
+        """Use the SDK Auth session for every request on the serial worker.
+
+        Supabase Auth uses short-lived JWTs and rotating refresh tokens. The
+        cached self.session from initial login can be stale even though the
+        SDK has already refreshed its in-memory session. Never persist tokens
+        in this desktop app or share them with the UI thread.
+        """
+        self._require_login()
+
+        try:
+            # get_session() uses Auth's in-memory session and refreshes it
+            # when expired; never trust the stale self.session copy.
+            current = self.client.auth.get_session()
+            if current is None:
+                raise RuntimeError("ไม่พบ Session ที่ใช้งานได้")
+
+            # Proactive refresh before a long-lived DailyLog instance sends
+            # a request with a JWT that expires while being processed.
+            expires_at = getattr(current, "expires_at", None)
+            near_expiry = False
+            if expires_at is not None:
+                try:
+                    near_expiry = float(expires_at) <= time.time() + 120
+                except (TypeError, ValueError):
+                    near_expiry = False
+
+            if force or near_expiry:
+                response = self.client.auth.refresh_session()
+                current = getattr(response, "session", None)
+                if current is None:
+                    raise RuntimeError("Supabase ไม่คืน Session หลังต่ออายุ")
+
+            if not getattr(current, "access_token", None):
+                raise RuntimeError("Session ไม่มี Access Token")
+
+            user = getattr(current, "user", None)
+            if (
+                user is not None
+                and self.user is not None
+                and str(getattr(user, "id", "")) != str(self.user.id)
+            ):
+                raise RuntimeError("บัญชีผู้ใช้เปลี่ยน กรุณา Login ใหม่")
+
+            self.session = current
+            return current
+
+        except Exception as error:
+            # Refresh failures require a deliberate re-login; never store
+            # password or silently send an unverified new login request.
+            raise RuntimeError(
+                "Session Supabase หมดอายุหรือต่ออายุไม่สำเร็จ "
+                "กรุณา Login เข้า DailyLog ใหม่ แล้วบันทึก Log อีกครั้ง "
+                "(ข้อมูลที่กรอกยังอยู่ในหน้าฟอร์ม)"
+            ) from error
 
     @staticmethod
     def _row_to_tuple(row):
