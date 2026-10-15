@@ -2467,24 +2467,62 @@ class DailyLog(QWidget):
             )
         )
 
-    def open_central_history_cleanup(self):
-        """Never delete Central data without a second Admin confirmation."""
-        choice_labels = {
-            "ล้างประวัติแจ้งเตือนเก่ากว่า 7 วัน": "older_than_7_days",
-            "ล้างประวัติแจ้งเตือนเก่ากว่า 30 วัน": "older_than_30_days",
-            "ล้างประวัติแจ้งเตือนทั้งหมด": "all",
-        }
-        choice, ok = QInputDialog.getItem(
-            self,
-            "Central History Retention — เฉพาะ Admin",
-            "เลือกช่วงเวลาของประวัติแจ้งเตือนที่ต้องการล้าง:",
-            list(choice_labels),
-            0,
-            False,
+    def _choose_central_history_scope(self):
+        """Explicit, high-visibility Admin retention selector.
+
+        The always-on-top main window used to obscure native input dialogs
+        on some Windows desktop/theme combinations.
+        """
+        dlg = QDialog(self)
+        dlg.setWindowTitle("เลือกช่วงเวลาล้าง Notification History")
+        dlg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        dlg.resize(470, 205)
+        box = QVBoxLayout(dlg)
+        info = QLabel(
+            "เลือกช่วงเวลาที่ต้องการลบเฉพาะประวัติแจ้งเตือนจาก Central\n"
+            "Daily Logs ที่บันทึกตามวันที่จะไม่ถูกลบ"
         )
-        if not ok or choice not in choice_labels:
+        info.setWordWrap(True)
+        box.addWidget(info)
+        range_select = QComboBox(dlg)
+        range_select.setObjectName("centralHistoryRetentionRange")
+        for label, value in (
+            ("เก่ากว่า 7 วัน (ไม่รวมวันนี้)", "older_than_7_days"),
+            ("เก่ากว่า 30 วัน (ไม่รวมวันนี้)", "older_than_30_days"),
+            ("ล้างประวัติแจ้งเตือนทั้งหมด", "all"),
+        ):
+            range_select.addItem(label, value)
+        range_select.setMinimumHeight(35)
+        range_select.setStyleSheet(
+            "QComboBox { color: #FFFFFF; background: #1E293B; "
+            "border: 2px solid #60A5FA; border-radius: 6px; padding: 5px; }"
+            "QComboBox QAbstractItemView { color: #FFFFFF; background: #1E293B; }"
+        )
+        box.addWidget(range_select)
+        line = QHBoxLayout()
+        line.addStretch()
+        cancel = QPushButton("ยกเลิก")
+        proceed = QPushButton("ถัดไป — ยืนยัน")
+        cancel.clicked.connect(dlg.reject)
+        proceed.clicked.connect(dlg.accept)
+        line.addWidget(cancel)
+        line.addWidget(proceed)
+        box.addLayout(line)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return range_select.currentData()
+
+    def open_central_history_cleanup(self):
+        """Only the separate Admin RPC can delete Central Notification Events."""
+        scope = self._choose_central_history_scope()
+        choice_labels = {
+            "older_than_7_days": "เก่ากว่า 7 วัน",
+            "older_than_30_days": "เก่ากว่า 30 วัน",
+            "all": "ทั้งหมด",
+        }
+        if scope not in choice_labels:
             return
-        scope = choice_labels[choice]
+        choice = choice_labels[scope]
         warning = (
             f"ช่วงที่เลือก: {choice}\n\n"
             "ลบเฉพาะประวัติแจ้งเตือนตามช่วงวันที่ที่เลือก\n"
