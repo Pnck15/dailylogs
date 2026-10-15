@@ -65,7 +65,7 @@ APP_NAME = "DailyLog"
 APP_DISPLAY_NAME = "GAC日記"
 
 DEFAULT_ACCENT = "#2563EB"
-APP_VERSION = "1.2.12"
+APP_VERSION = "1.2.13"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 
 UPDATE_CHECK_DELAY_MS = 2500
@@ -96,7 +96,7 @@ def session_hidden_after_24h(row, now=None):
         parsed = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
-        return (now - parsed.astimezone(timezone.utc)).total_seconds() > 24 * 3600
+        return (now - parsed.astimezone(timezone.utc)).total_seconds() > SESSION_STALE_HIDE_HOURS * 3600
     except (ValueError, TypeError, OverflowError):
         return False
 
