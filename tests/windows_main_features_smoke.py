@@ -526,8 +526,7 @@ def test_notification_history_and_offline_sessions(app):
     class MemoryNotification:
         def __init__(self):
             self.title = "แจ้งเตือนล่าสุด"
-            self.message = "ข้อความที่เก็บในหน่วยความจำ
-เลือก Copy ได้"
+            self.message = "ข้อความที่เก็บในหน่วยความจำ\nเลือก Copy ได้"
             self.timestamp = now
             self.sheet = "SA Sathorn"
             self.notification_type = "edit"
