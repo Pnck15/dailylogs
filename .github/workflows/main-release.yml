@@ -8,6 +8,7 @@ on:
       - dailylog_finance.py
       - dailylog_forms.py
       - tests/windows_main_features_smoke.py
+      - tests/windows_cloud_auth_smoke.py
       - cloud_db.py
       - cloud_worker.py
       - sale_api_monitor.py
@@ -81,6 +82,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Compiled updater smoke test failed." }
           ./.venv/Scripts/python.exe tests/windows_main_features_smoke.py
           if ($LASTEXITCODE -ne 0) { throw "Main 3% calculator / red-plate form smoke test failed." }
+          ./.venv/Scripts/python.exe tests/windows_cloud_auth_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw "Supabase JWT refresh and safe Log write retry smoke test failed." }
 
       - uses: actions/upload-artifact@v4
         with:
