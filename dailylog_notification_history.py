@@ -30,10 +30,17 @@ def display_event_time(raw):
 
 
 class NotificationLogsDialog(QDialog):
-    def __init__(self, page_loader, recent_notifications=(), parent=None):
+    def __init__(
+        self, page_loader, recent_notifications=(), parent=None,
+        visibility_filter=None, local_clear_callback=None,
+    ):
         super().__init__(parent)
         self.page_loader = page_loader
+        self.visibility_filter = visibility_filter
+        self.local_clear_callback = local_clear_callback
         self.recent_notifications = list(recent_notifications or [])
+        self._last_raw_rows = []
+        self._last_origin = ""
         self.page = 0
         self.pending = False
         self.central_rows = []
@@ -79,14 +86,23 @@ class NotificationLogsDialog(QDialog):
         self.next = QPushButton("ถัดไป ▶")
         self.next.setObjectName("notificationHistoryNext")
         self.refresh = QPushButton("Refresh")
+        self.local_clear_button = QPushButton("ล้างประวัติ")
+        self.local_clear_button.setObjectName("clearMainNotificationHistoryButton")
+        self.local_clear_button.setToolTip(
+            "เลือกจำนวนวันที่ต้องการซ่อนเฉพาะใน DailyLog เครื่องนี้ "
+            "โดยไม่แตะ Daily Logs หรือ Notification ของเครื่องอื่น"
+        )
+        self.local_clear_button.setEnabled(callable(self.local_clear_callback))
         close = QPushButton("Close")
         self.previous.clicked.connect(lambda: self.open_page(self.page - 1))
         self.next.clicked.connect(lambda: self.open_page(self.page + 1))
         self.refresh.clicked.connect(lambda: self.open_page(self.page))
+        self.local_clear_button.clicked.connect(self._request_local_clear)
         close.clicked.connect(self.close)
         for button in (self.previous, self.next, self.refresh):
             buttons.addWidget(button)
         buttons.addStretch()
+        buttons.addWidget(self.local_clear_button)
         buttons.addWidget(close)
         layout.addLayout(buttons)
         self.show_recent_cache()
@@ -104,8 +120,11 @@ class NotificationLogsDialog(QDialog):
                 "notification_type": str(getattr(entry, "notification_type", "") or ""),
                 "created_at": stamp.isoformat() if hasattr(stamp, "isoformat") else "",
             })
-        self._render_rows(rows)
-        if rows:
+        self._last_origin = "cache"
+        self._last_raw_rows = rows
+        visible_rows = self._visible_rows(rows)
+        self._render_rows(visible_rows)
+        if visible_rows:
             self.status.setText(
                 f"แสดง {len(rows)} รายการล่าสุดในหน่วยความจำของโปรแกรม "
                 "(ถ้าไม่มีอินเทอร์เน็ต ยังเปิดอ่านและ Copy ได้)"
@@ -130,11 +149,13 @@ class NotificationLogsDialog(QDialog):
     def set_rows(self, rows):
         self.pending = False
         self.page = self._requested_page
-        self.central_rows = [
+        self._last_origin = "central"
+        self._last_raw_rows = [
             row for row in (rows or [])
             if isinstance(row, dict)
             and row.get("notification_type") != "history_purge"
         ]
+        self.central_rows = self._visible_rows(self._last_raw_rows)
         self._render_rows(self.central_rows)
         self.previous.setEnabled(self.page > 0)
         self.next.setEnabled(len(rows or []) == PAGE_SIZE)
@@ -156,6 +177,32 @@ class NotificationLogsDialog(QDialog):
             + str(message)[:200]
             + " • รายการที่โหลดก่อนหน้านี้ยังเลือกอ่านและ Copy ได้"
         )
+
+    def _visible_rows(self, rows):
+        if not callable(self.visibility_filter):
+            return list(rows or [])
+        return [
+            row for row in (rows or [])
+            if self.visibility_filter(row.get("created_at"))
+        ]
+
+    def refresh_local_visibility(self, recent_notifications=None):
+        """Apply new local retention without fetching or deleting Central rows."""
+        if recent_notifications is not None:
+            self.recent_notifications = list(recent_notifications)
+        if self._last_origin == "cache":
+            self.show_recent_cache()
+        elif self._last_origin == "central":
+            self.central_rows = self._visible_rows(self._last_raw_rows)
+            self._render_rows(self.central_rows)
+            self.status.setText(
+                f"หน้า {self.page + 1} — แสดง {len(self.central_rows)} "
+                "รายการตามการตั้งค่าประวัติของเครื่องนี้"
+            )
+
+    def _request_local_clear(self):
+        if callable(self.local_clear_callback):
+            self.local_clear_callback()
 
     def _render_rows(self, rows):
         self.items.clear()
