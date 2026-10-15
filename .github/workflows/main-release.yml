@@ -6,6 +6,7 @@ on:
     paths:
       - main.py
       - dailylog_finance.py
+      - dailylog_notification_history.py
       - dailylog_forms.py
       - tests/windows_main_features_smoke.py
       - tests/windows_cloud_auth_smoke.py
@@ -51,7 +52,7 @@ jobs:
       - name: Compile Python sources
         run: >
           python -m py_compile
-          main.py dailylog_finance.py dailylog_forms.py cloud_db.py cloud_worker.py sale_api_monitor.py
+          main.py dailylog_finance.py dailylog_notification_history.py dailylog_forms.py cloud_db.py cloud_worker.py sale_api_monitor.py
           sheet_monitor.py notify_channels.py update_checker.py updater.py
 
       - name: Validate PowerShell build and publishing scripts
