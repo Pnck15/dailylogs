@@ -449,6 +449,52 @@ def test_main_add_and_edit(app):
     owner.deleteLater()
 
 
+def test_notification_history_db_read_only():
+    class FakeQuery:
+        def __init__(self):
+            self.calls = []
+        def select(self, *args):
+            self.calls.append(("select", args))
+            return self
+        def eq(self, *args):
+            self.calls.append(("eq", args))
+            return self
+        def neq(self, *args):
+            self.calls.append(("neq", args))
+            return self
+        def order(self, *args, **kwargs):
+            self.calls.append(("order", args, kwargs))
+            return self
+        def range(self, a, b):
+            self.calls.append(("range", a, b))
+            return self
+        def execute(self):
+            return SimpleNamespace(data=[{"id": 5, "title": "test"}])
+    class FakeSupabase:
+        def __init__(self):
+            self.tables = []
+            self.query = FakeQuery()
+        def table(self, name):
+            self.tables.append(name)
+            return self.query
+
+    db = CloudDB.__new__(CloudDB)
+    db.user = object()
+    db.session = object()
+    db.workspace_id = "test-workspace"
+    db.client = FakeSupabase()
+    result = db.get_notification_history_page(2, 100)
+    assert result == [{"id": 5, "title": "test"}]
+    assert db.client.tables == ["notification_events"], (
+        "Opening Notification Logs MUST NEVER query or delete Daily Logs"
+    )
+    assert ("range", 200, 299) in db.client.query.calls
+    assert ("eq", ("workspace_id", "test-workspace")) in db.client.query.calls
+    assert ("neq", ("notification_type", "history_purge")) in db.client.query.calls
+    assert db.get_notification_history_page(0, 10000)
+    assert ("range", 0, 99) in db.client.query.calls
+
+
 def test_notification_history_and_offline_sessions(app):
     """Offline Qt test: no login, zero Supabase calls, no destructive writes."""
     now = datetime(2026, 10, 15, 5, 0, tzinfo=timezone.utc)
@@ -718,6 +764,7 @@ if __name__ == "__main__":
     test_finance(app)
     test_calculator_standalone_window(app)
     test_notification_history_and_offline_sessions(app)
+    test_notification_history_db_read_only()
     test_red_plate_serialization(app)
     test_new_form_serialization(app)
     test_main_add_and_edit(app)
