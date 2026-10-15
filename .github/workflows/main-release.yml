@@ -104,7 +104,11 @@ jobs:
           $tag = "v$version"
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $tag already exists; verifying the published assets."
+            $existingCommit = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" --jq '.target_commitish'
+            if ($LASTEXITCODE -ne 0 -or $existingCommit -ne $env:GITHUB_SHA) {
+              throw "Release $tag points to another commit; bump APP_VERSION to publish the latest Windows EXE."
+            }
+            Write-Host "Release $tag already matches this exact source commit."
             exit 0
           }
           ./publish_release.ps1 -GitHubRepo $env:GITHUB_REPOSITORY
