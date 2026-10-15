@@ -1740,6 +1740,9 @@ class DailyLog(QWidget):
         selector = QDialog(self)
         selector.setWindowTitle("DailyLog — ล้างประวัติแจ้งเตือนในเครื่องนี้")
         selector.setWindowFlag(Qt.WindowType.Window, True)
+        # Main DailyLog is always-on-top. The confirmation picker must
+        # never open hidden behind it or behind the modeless history viewer.
+        selector.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         selector.resize(450, 220)
         layout = QVBoxLayout(selector)
         info = QLabel(
