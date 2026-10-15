@@ -5,7 +5,7 @@ Never connects Supabase or changes the user's data.
 """
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 from decimal import Decimal
@@ -15,10 +15,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtCore import QDate, Qt
-from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QStackedWidget, QWidget, QPushButton, QLineEdit, QLabel, QListWidget, QTextEdit, QMessageBox
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QStackedWidget, QWidget, QPushButton, QLineEdit, QLabel, QListWidget, QTextEdit, QMessageBox, QCheckBox
 from dailylog_finance import invoice_withholding_3_percent, base_plus_vat_withholding_3_percent, settlement_3_percent, three_percent_adjustments, WithholdingCalculator
 from dailylog_forms import RED_PLATE_HEADER, RedPlateForm, serialize_red_plate, parse_red_plate, split_log_plate, with_log_plate, STRUCTURED_FORM_SPECS, StructuredLogForm, serialize_structured_log, parse_structured_log
-from main import DailyLog
+from main import DailyLog, session_hidden_after_24h
+from dailylog_notification_history import NotificationLogsDialog, PAGE_SIZE
 from cloud_db import CloudDB
 
 
@@ -71,6 +72,13 @@ def test_finance(app):
             raise AssertionError("Invalid pre-VAT total accepted")
     # Standalone 3% tab handles two different mathematical meanings of
     # "ถอด 3%" and a separate withholding gross-up calculation.
+    # Requested WHT deduction: 30,927.84 - ROUND(30,927.84 * 3%)
+    # = 30,000.00. This is NOT an inverse markup (divide by 1.03).
+    wht_example = three_percent_adjustments("30,927.84")
+    assert wht_example["entered"] == Decimal("30927.84")
+    assert wht_example["deducted_3_percent"] == Decimal("927.84")
+    assert wht_example["deducted_total"] == Decimal("30000.00")
+    assert wht_example["included_base"] != wht_example["deducted_total"]
     third = three_percent_adjustments("1,000")
     assert third["entered"] == Decimal("1000.00")
     assert third["added_tax"] == Decimal("30.00")
@@ -126,6 +134,8 @@ def test_finance(app):
     assert "1,030.00 บาท" in result_text
     assert "970.87 บาท" in result_text
     assert "1,030.93 บาท" in result_text
+    assert "970.00 บาท" in result_text
+    assert "30.00 บาท" in result_text
     assert "29.13 บาท" in result_text
     assert "30.93 บาท" in result_text
     assert "#fde047" in calc.adjust_answer.toHtml().lower()
@@ -134,6 +144,11 @@ def test_finance(app):
     assert "หาร 1.03" in copied
     assert "หาร 0.97" in copied
     assert "1,030.93 บาท" in copied
+    calc.adjust_input.setText("30,927.84")
+    assert "30,000.00 บาท" in calc.adjust_answer.toPlainText()
+    assert "927.84 บาท" in calc.adjust_answer.toPlainText()
+    calc.adjust_copy_button.click()
+    assert "30,000.00 บาท" in app.clipboard().text()
     calc.adjust_input.setText("not-money")
     assert not calc.adjust_copy_button.isEnabled()
     calc.adjust_input.setText("500")
@@ -434,6 +449,130 @@ def test_main_add_and_edit(app):
     owner.deleteLater()
 
 
+def test_notification_history_and_offline_sessions(app):
+    """Offline Qt test: no login, zero Supabase calls, no destructive writes."""
+    now = datetime(2026, 10, 15, 5, 0, tzinfo=timezone.utc)
+    old = (now - timedelta(hours=25)).isoformat()
+    recent = (now - timedelta(hours=23)).isoformat()
+    assert session_hidden_after_24h(
+        {"online": False, "last_seen_at": old}, now
+    )
+    assert not session_hidden_after_24h(
+        {"online": True, "last_seen_at": old}, now
+    )
+    assert not session_hidden_after_24h(
+        {"online": False, "last_seen_at": recent}, now
+    )
+    assert session_hidden_after_24h(
+        {"online": False, "session_updated_at": old}, now
+    )
+    assert not session_hidden_after_24h(
+        {"online": False, "last_seen_at": "not-a-date"}, now
+    )
+
+    class FakeCloud:
+        def __init__(self):
+            self.calls = []
+        def call(self, name, *args):
+            self.calls.append((name, args))
+            return len(self.calls)
+
+    class MemoryNotification:
+        def __init__(self):
+            self.title = "แจ้งเตือนล่าสุด"
+            self.message = "ข้อความที่เก็บในหน่วยความจำ
+เลือก Copy ได้"
+            self.timestamp = now
+            self.sheet = "SA Sathorn"
+            self.notification_type = "edit"
+
+    owner = DailyLog.__new__(DailyLog)
+    QWidget.__init__(owner)
+    owner._cloud_pending = {}
+    owner.cloud = FakeCloud()
+    owner.notification_presenter = SimpleNamespace(
+        notifications=[MemoryNotification()]
+    )
+    try:
+        owner.open_notification_logs()
+        app.processEvents()
+        dialog = owner._notification_history_dialog
+        assert dialog is not None and dialog.isVisible()
+        assert not dialog.isModal()
+        assert dialog.items.count() == 1
+        assert "หน่วยความจำ" in dialog.detail.toPlainText()
+        assert owner.cloud.calls == [
+            ("get_notification_history_page", (0, PAGE_SIZE))
+        ]
+        assert owner._cloud_pending[1] == (
+            "notification_history_page", dialog
+        )
+        rows = [{
+            "id": id_, "title": f"Notice {id_}",
+            "message": "รายละเอียดแจ้งเตือน\nแถวที่เปลี่ยน", "source": "SA Sathorn",
+            "notification_type": "edit", "created_at": "2026-10-15T04:30:00Z",
+        } for id_ in range(PAGE_SIZE)]
+        dialog.set_rows(rows)
+        assert dialog.items.count() == PAGE_SIZE
+        assert dialog.next.isEnabled()
+        assert "Notice 0" in dialog.detail.toPlainText()
+        dialog.next.click()
+        assert owner.cloud.calls[-1] == (
+            "get_notification_history_page", (1, PAGE_SIZE)
+        )
+        dialog.set_rows([{
+            "id": PAGE_SIZE, "source": "Sale Deli Sathorn",
+            "title": "Notice 100", "message": "VIN test",
+            "notification_type": "new", "created_at": "2026-10-14T09:00:00Z",
+        }])
+        assert dialog.previous.isEnabled()
+        assert not dialog.next.isEnabled()
+        assert "VIN test" in dialog.detail.toPlainText()
+        dialog.set_error("Temporary Internet outage")
+        assert "Internet outage" in dialog.status.text()
+        assert "VIN test" in dialog.detail.toPlainText()
+        cursor = dialog.detail.textCursor()
+        cursor.select(cursor.SelectionType.Document)
+        dialog.detail.setTextCursor(cursor)
+        dialog.detail.copy()
+        assert "VIN test" in app.clipboard().text()
+        menu = dialog.detail.createStandardContextMenu()
+        assert menu is not None
+        menu.deleteLater()
+        assert dialog.previous.isEnabled()
+
+        # Only offline stale rows disappear from the default Admin UI.
+        sessions = QDialog(owner)
+        sessions._session_list = QListWidget(sessions)
+        sessions._details = QTextEdit(sessions)
+        sessions._logout_button = QPushButton(sessions)
+        sessions._status = QLabel(sessions)
+        sessions._show_stale_check = QCheckBox(sessions)
+        sessions._show_stale_check.setChecked(False)
+        session_rows = [
+            {"session_id": "online-id", "online": True,
+             "device_registered": True, "last_seen_at": old},
+            {"session_id": "stale-id", "online": False,
+             "device_registered": True,
+             "last_seen_at": (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()},
+            {"session_id": "current-id", "online": False,
+             "device_registered": True,
+             "last_seen_at": datetime.now(timezone.utc).isoformat()},
+        ]
+        owner._render_notify_sessions(sessions, session_rows)
+        assert sessions._session_list.count() == 2
+        assert "stale-id" not in sessions._session_rows
+        sessions._show_stale_check.setChecked(True)
+        owner._render_notify_sessions(sessions, session_rows)
+        assert sessions._session_list.count() == 3
+        sessions.hide()
+        sessions.deleteLater()
+        dialog.close()
+    finally:
+        owner.hide()
+        owner.deleteLater()
+
+
 def test_admin_central_history_guard():
     """No Supabase operations: enforce authorization before creating request."""
     class OfflineClient:
@@ -578,9 +717,10 @@ if __name__ == "__main__":
     app.setQuitOnLastWindowClosed(False)
     test_finance(app)
     test_calculator_standalone_window(app)
+    test_notification_history_and_offline_sessions(app)
     test_red_plate_serialization(app)
     test_new_form_serialization(app)
     test_main_add_and_edit(app)
     test_admin_central_history_guard()
     test_multi_notify_and_retention_ui(app)
-    print("PASS: two VAT/WHT partitions, independent calculator, removed disk shortcut, forms and Central UI.")
+    print("PASS: WHT 30927.84 -> 30000, paginated Notification Logs, offline fallback, hide stale sessions, forms.")
