@@ -528,6 +528,25 @@ class CloudDB:
 
         return response.data or []
 
+    def get_notification_history_page(self, page: int = 0, page_size: int = 100):
+        """Read-only, workspace-scoped history; never selects or touches Daily Logs."""
+        self._require_login()
+        page = max(0, int(page))
+        page_size = min(100, max(1, int(page_size)))
+        start = page * page_size
+        response = (
+            self.client.table("notification_events")
+            .select(
+                "id,source_key,source,title,message,notification_type,created_at"
+            )
+            .eq("workspace_id", self.workspace_id)
+            .neq("notification_type", "history_purge")
+            .order("id", desc=True)
+            .range(start, start + page_size - 1)
+            .execute()
+        )
+        return response.data or []
+
     def disable_monitor_source(
         self,
         source_key: str,
