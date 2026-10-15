@@ -3,6 +3,21 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 from cloud_db import CloudDB
 
 
+def is_expired_jwt_error(error):
+    """Match only an explicit expired JWT, never any unrelated API/network error.
+
+    PostgREST PGRST303 can also mean other JWT validation problems; retrying
+    arbitrary writes after ambiguous failures could duplicate Daily Logs.
+    """
+    code = str(getattr(error, "code", "") or "").strip().upper()
+    detail = str(getattr(error, "message", "") or "")
+    description = (detail + " " + str(error)).casefold()
+    return (
+        "jwt expired" in description
+        and (code in ("", "PGRST303") or "PGRST303" in description)
+    )
+
+
 class _CloudWorker(QObject):
     result = Signal(int, str, object)
     error = Signal(int, str, str)
@@ -21,9 +36,31 @@ class _CloudWorker(QObject):
         try:
             db = self._ensure_db()
             args = args or []
-            value = getattr(db, operation)(*args)
+            function = getattr(db, operation)
+
+            # All requests are already serialized on this one QThread,
+            # so no concurrent refresh token rotation is possible here.
+            if operation not in ("login", "logout"):
+                db.ensure_session_fresh()
+
+            try:
+                value = function(*args)
+            except Exception as error:
+                if (
+                    operation in ("login", "logout")
+                    or not is_expired_jwt_error(error)
+                ):
+                    raise
+                # PGRST303 "JWT expired" is rejected at the PostgREST
+                # authorization layer BEFORE the query runs. Refresh and
+                # retry this precise rejection once. Never replay timeouts,
+                # network disconnects or unknown write errors.
+                db.ensure_session_fresh(force=True)
+                value = function(*args)
+
             self.result.emit(request_id, operation, value)
         except Exception as exc:
+            # Do not print session tokens or sensitive request arguments.
             self.error.emit(request_id, operation, str(exc))
 
 
