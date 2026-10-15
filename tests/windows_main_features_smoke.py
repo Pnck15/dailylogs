@@ -535,6 +535,12 @@ def test_notification_history_and_offline_sessions(app):
     QWidget.__init__(owner)
     owner._cloud_pending = {}
     owner.cloud = FakeCloud()
+    # A partial QWidget test must also provide the per-PC display policy
+    # normally constructed in DailyLog.__init__. Persistent behavior is
+    # covered by windows_main_notification_clear_smoke.py.
+    owner.local_notification_visibility = SimpleNamespace(
+        visible=lambda _timestamp: True
+    )
     owner.notification_presenter = SimpleNamespace(
         notifications=[MemoryNotification()]
     )
