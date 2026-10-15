@@ -1898,6 +1898,17 @@ class DailyLog(QWidget):
             info
         )
 
+        show_stale_check = QCheckBox(
+            "แสดง Session ที่ออฟไลน์เกิน 24 ชั่วโมง (ซ่อนอัตโนมัติโดยไม่เพิกถอนสิทธิ์)"
+        )
+        show_stale_check.setObjectName("showOlderNotifySessions")
+        show_stale_check.setChecked(False)
+        show_stale_check.setToolTip(
+            "ซ่อนรายการเก่าที่เป็นวงกลมเทาจากหน้าจอเท่านั้น "
+            "ไม่ยกเลิก Session ของพนักงานที่อินเทอร์เน็ตขัดข้อง"
+        )
+        layout.addWidget(show_stale_check)
+
         session_list = QListWidget()
         layout.addWidget(
             session_list,
@@ -1974,6 +1985,13 @@ class DailyLog(QWidget):
             logout_button
         )
         dialog._session_rows = {}
+        dialog._raw_session_rows = []
+        dialog._show_stale_check = show_stale_check
+        show_stale_check.toggled.connect(
+            lambda _state: self._render_notify_sessions(
+                dialog, dialog._raw_session_rows
+            )
+        )
 
         def selected_changed():
             item = (
@@ -2307,6 +2325,7 @@ class DailyLog(QWidget):
         if dialog is None:
             return
 
+        dialog._raw_session_rows = list(rows or [])
         dialog._session_rows = {}
         dialog._session_list.clear()
         dialog._details.clear()
@@ -2316,6 +2335,12 @@ class DailyLog(QWidget):
 
         online_count = 0
         registered_count = 0
+        hidden_stale_count = 0
+        now = datetime.now(timezone.utc)
+        show_stale = (
+            hasattr(dialog, "_show_stale_check")
+            and dialog._show_stale_check.isChecked()
+        )
 
         for row in rows or []:
             if not isinstance(
@@ -2333,6 +2358,10 @@ class DailyLog(QWidget):
             ).strip()
 
             if not session_id:
+                continue
+
+            if session_hidden_after_24h(row, now) and not show_stale:
+                hidden_stale_count += 1
                 continue
 
             dialog._session_rows[
@@ -2433,7 +2462,8 @@ class DailyLog(QWidget):
             (
                 f"Sessions: {total} | "
                 f"Registered devices: {registered_count} | "
-                f"Online: {online_count}"
+                f"Online: {online_count} | "
+                f"ซ่อนรายการ Offline เกิน 24 ชม.: {hidden_stale_count}"
             )
         )
 
