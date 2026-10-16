@@ -36,11 +36,12 @@ from PySide6.QtWidgets import (
 from notify_history import NotificationHistory, app_data_dir
 from notify_excel import make_history_xlsx
 from notify_receiver import CentralNotifyReceiver
+from notify_windows_toast import NativeToastDispatcher
 from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.14"
+APP_VERSION = "1.5.15"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
@@ -1078,6 +1079,16 @@ class NotifyApp(QWidget):
             self._change_popup_mode
         )
 
+        self.test_notification_button = QPushButton(
+            "🔔 ทดสอบการแจ้งเตือน"
+        )
+        self.test_notification_button.setToolTip(
+            "ทดสอบการแจ้งเตือนตามโหมดที่เลือก "
+            "โดยไม่ต้องรอการเปลี่ยนข้อมูล Google Sheets"
+        )
+        self.test_notification_button.clicked.connect(self.show_test_popup)
+        popup_row.addWidget(self.test_notification_button)
+
         layout.addLayout(
             buttons
         )
@@ -1227,6 +1238,12 @@ class NotifyApp(QWidget):
         )
 
         self.tray.show()
+
+        # Windows Toast needs its own WinRT backend and Start-menu identity.
+        # Never block the Qt GUI thread on the PowerShell/Windows API call.
+        self.native_toast = NativeToastDispatcher(self)
+        self.native_toast.succeeded.connect(self._native_toast_submitted)
+        self.native_toast.failed.connect(self._native_toast_failed)
 
         # -----------------------------------------
         # Start with Windows
@@ -2086,19 +2103,13 @@ class NotifyApp(QWidget):
         self,
         title,
         message,
+        force_app_popup=False,
     ):
-        # System mode never constructs a DailyLogNotify popup.
-        if self.popup_mode == "windows":
-            if self._tray_available():
-                try:
-                    self.tray.showMessage(
-                        str(title or "DailyLogNotify"),
-                        str(message or "")[:1200],
-                        QSystemTrayIcon.MessageIcon.Information,
-                        26000,
-                    )
-                except (RuntimeError, OSError) as error:
-                    print("[Notify Windows Notification]", type(error).__name__)
+        # Qt QSystemTrayIcon.showMessage() can be ignored by Windows 11.
+        # Submit a real WinRT Toast (with a registered AUMID) asynchronously.
+        # A failed submission MUST fall back to our own Qt popup.
+        if self.popup_mode == "windows" and not force_app_popup:
+            self.native_toast.send(title, message)
             return
 
         # A GAS burst can carry hundreds of events in a minute. Persist
@@ -2140,6 +2151,31 @@ class NotifyApp(QWidget):
         popup.raise_()
 
         self._position_notify_popups()
+
+    def _native_toast_submitted(self, _title):
+        # Accepted by Windows != necessarily shown on screen. Do Not
+        # Disturb/Focus Assist and per-app banner settings are external.
+        if self.popup_mode == "windows":
+            self.info.setText(
+                "Windows รับแจ้งเตือนแล้ว — ถ้าไม่เห็น Banner "
+                "ให้ตรวจ Settings → System → Notifications "
+                "และปิด Do Not Disturb"
+            )
+
+    def _native_toast_failed(self, title, message, reason):
+        safe_reason = str(reason or "Unknown Windows toast error")[:200]
+        print("[Notify Windows Toast]", safe_reason)
+        if self.popup_mode != "windows":
+            return
+        self.info.setText(
+            "⚠️ Windows Notification ส่งไม่สำเร็จ — "
+            "แสดง Popup ของโปรแกรมแทน ตรวจ Settings → "
+            "System → Notifications และ Do Not Disturb "
+            f"({safe_reason[:105]})"
+        )
+        self._show_notify_popup(
+            title, message, force_app_popup=True
+        )
 
     def _notify_popup_closed(
         self,
@@ -2212,7 +2248,8 @@ class NotifyApp(QWidget):
         self.settings.sync()
         if mode == "windows":
             self.info.setText(
-                "โหมด Windows Notification (ตั้งค่าเปิดแจ้งเตือนที่ Windows)"
+                "โหมด Windows Toast — กด 'ทดสอบการแจ้งเตือน' "
+                "เพื่อตรวจ Windows Settings และการลงทะเบียนโปรแกรม"
             )
         else:
             self.info.setText(
