@@ -198,6 +198,51 @@ def check_popup_display_modes(app, settings):
         window._notify_popups[0].dismiss()
         app.processEvents()
         assert not window._notify_popups
+
+        # Windows Notification permission is different from Do Not Disturb.
+        repair = next(
+            b for b in window.findChildren(QPushButton)
+            if b.objectName() == "repairWindowsNotificationButton"
+        )
+        settings_button = next(
+            b for b in window.findChildren(QPushButton)
+            if b.objectName() == "openWindowsNotificationsSettingsButton"
+        )
+        requested = []
+        with patch.object(
+            window.native_toast, "repair_registration",
+            side_effect=lambda: requested.append(True) or True,
+        ):
+            repair.click()
+        assert requested == [True]
+        assert not repair.isEnabled(), "Repair runs on a worker, not GUI thread"
+        window.native_toast.registration_status.emit("DisabledForApplication", True)
+        assert repair.isEnabled()
+        assert "เฉพาะ DailyLogNotify" in window.info.text()
+        assert "Do Not Disturb" not in window.info.text()
+        window.native_toast.registration_status.emit("Enabled", True)
+        assert "อนุญาต" in window.info.text()
+        window.native_toast.registration_error.emit("Windows COM lookup failed")
+        assert repair.isEnabled()
+        assert "COM lookup failed" in window.info.text()
+        opened_settings = []
+        with patch(
+            "dailylog_notify.QDesktopServices.openUrl",
+            side_effect=lambda url: opened_settings.append(url.toString()) or True,
+        ):
+            settings_button.click()
+        assert opened_settings == ["ms-settings:notifications"]
+        # Specific native API blocks still fall back to our own popup.
+        window._native_toast_failed(
+            "Denied by app", "VIN: WHT888",
+            "DAILYLOG_TOAST_ERROR: TOAST_SETTING:DisabledForUser;"
+            " Windows Notifications are off",
+        )
+        assert "Notifications ทั้งบัญชี" in window.info.text()
+        assert len(window._notify_popups) == 1
+        window._notify_popups[0].dismiss()
+        app.processEvents()
+        assert not window._notify_popups
     finally:
         for popup in list(window._notify_popups):
             popup.dismiss()
