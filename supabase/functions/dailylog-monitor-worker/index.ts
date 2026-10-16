@@ -1326,6 +1326,53 @@ async function processSa(
   };
 }
 
+// Dedicated 04-红牌ชีตnew GAS contract. Other structured sources retain
+// their current JSON-format notifications unchanged.
+function redPlateFieldLabel(item: AnyRow) {
+  const col = normalize(item.column).toUpperCase();
+  const header = normalize(item.header);
+  return header && header !== `คอลัมน์ ${col}`
+    ? `${col} - ${header}`
+    : col || header || "ไม่ทราบคอลัมน์";
+}
+
+function redPlateEventMessage(event: AnyRow) {
+  const eventType = normalize(event.type);
+  const row = normalize(event.row);
+  const oldRow = normalize(event.old_row);
+  const sheet = normalize(event.sheet);
+  const lines = [
+    `แท็บ: ${sheet}`,
+    `แถว: ${row}` + (
+      oldRow && oldRow !== row ? ` (ก่อนหน้าแถว ${oldRow})` : ""
+    ),
+  ];
+  if (eventType === "add" || eventType === "delete") {
+    lines.push(eventType === "add" ? "ข้อมูลที่เพิ่ม" : "ข้อมูลที่ถูกลบ");
+    const fields = Array.isArray(event.fields) ? event.fields : [];
+    for (const raw of fields) {
+      if (!raw || typeof raw !== "object") continue;
+      const field = raw as AnyRow;
+      const value = normalize(field.value);
+      if (value) lines.push(`${redPlateFieldLabel(field)}: ${value}`);
+    }
+  } else {
+    lines.push(eventType === "header_edit" ? "หัวคอลัมน์ที่เปลี่ยน" : "ข้อมูลที่เปลี่ยน");
+    const cells = Array.isArray(event.changed_cells) ? event.changed_cells : [];
+    for (const raw of cells) {
+      if (!raw || typeof raw !== "object") continue;
+      const field = raw as AnyRow;
+      const before = normalize(field.before);
+      const after = normalize(field.after);
+      const label = redPlateFieldLabel(field);
+      if (!before && after) lines.push(`${label}: เพิ่ม ${after}`);
+      else if (before && !after) lines.push(`${label}: ลบ ${before}`);
+      else lines.push(`${label}: ${before || "-"} → ${after || "-"}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 async function processStructured(
   source: SourceRow,
   payload: AnyRow,
@@ -1354,21 +1401,40 @@ async function processStructured(
     const sheet = normalize(event.sheet);
     const row = normalize(event.row);
 
-    const key =
-      `${source.source_key}|structured|${eventType}|${sheet}|${row}|${JSON.stringify(event)}`;
+    const isRedPlate =
+      normalize(event.schema) === "red_plate_monitor_v1" &&
+      ["add", "edit", "delete", "header_edit"].includes(eventType);
+    const eventId = normalize(event.event_id);
+
+    const key = isRedPlate && eventId
+      ? `${source.source_key}|red-plate|${eventId}`
+      : `${source.source_key}|structured|${eventType}|${sheet}|${row}|${JSON.stringify(event)}`;
+
+    const redPlateVerb: Record<string, string> = {
+      add: "เพิ่มข้อมูล",
+      edit: "แก้ไขข้อมูล",
+      delete: "ลบข้อมูล",
+      header_edit: "แก้ไขหัวคอลัมน์",
+    };
 
     await publishEvent(
       source,
       key,
-      `${source.source_name} - แจ้งเตือน`,
-      JSON.stringify(
-        event,
-        null,
-        2,
-      ),
-      eventType.includes("today")
-        ? "due"
-        : "info",
+      isRedPlate
+        ? `${source.source_name} - ${redPlateVerb[eventType]} (แถว ${row})`
+        : `${source.source_name} - แจ้งเตือน`,
+      isRedPlate
+        ? redPlateEventMessage(event)
+        : JSON.stringify(event, null, 2),
+      isRedPlate
+        ? eventType === "add"
+          ? "new"
+          : eventType === "delete"
+            ? "delete"
+            : "edit"
+        : eventType.includes("today")
+          ? "due"
+          : "info",
     );
   }
 
