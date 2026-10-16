@@ -82,37 +82,37 @@ def test_command_arguments_are_safe():
             else:
                 raise AssertionError("Timeout must propagate to fallback")
 
-    # Repair mode uses script-file args only: it never writes Windows
-    # notification permissions or runs source/event text as code.
-    observed = []
-    def diagnose_stub(cmd, **kwargs):
-        observed.append((cmd, kwargs))
-        return SimpleNamespace(
-            returncode=0,
-            stdout=b"SHORTCUT_REPAIRED\r\nTOAST_SETTING:DisabledForApplication\r\n",
-            stderr=b"",
-        )
-    with patch("notify_windows_toast.subprocess.run", side_effect=diagnose_stub):
-        setting = check_windows_notification_registration(
-            repair=True, exe_path=exe, script_path=script, system="win32"
-        )
-        assert setting == "DisabledForApplication"
-    cmd, kwargs = observed[0]
-    assert "-RepairShortcut" in cmd
-    assert "-Command" not in cmd
-    assert kwargs["timeout"] >= 40
-    assert original_body not in " ".join(cmd)
-    with patch(
-        "notify_windows_toast.subprocess.run",
-        return_value=SimpleNamespace(
-            returncode=0,
-            stdout=b"TOAST_SETTING:Enabled\r\n",
-            stderr=b"",
-        ),
-    ):
-        assert check_windows_notification_registration(
-            repair=False, exe_path=exe, script_path=script, system="win32"
-        ) == "Enabled"
+        # Repair mode uses script-file args only: it never writes Windows
+        # notification permissions or runs source/event text as code.
+        observed = []
+        def diagnose_stub(cmd, **kwargs):
+            observed.append((cmd, kwargs))
+            return SimpleNamespace(
+                returncode=0,
+                stdout=b"SHORTCUT_REPAIRED\r\nTOAST_SETTING:DisabledForApplication\r\n",
+                stderr=b"",
+            )
+        with patch("notify_windows_toast.subprocess.run", side_effect=diagnose_stub):
+            setting = check_windows_notification_registration(
+                repair=True, exe_path=exe, script_path=script, system="win32"
+            )
+            assert setting == "DisabledForApplication"
+        cmd, kwargs = observed[0]
+        assert "-RepairShortcut" in cmd
+        assert "-Command" not in cmd
+        assert kwargs["timeout"] >= 40
+        assert original_body not in " ".join(cmd)
+        with patch(
+            "notify_windows_toast.subprocess.run",
+            return_value=SimpleNamespace(
+                returncode=0,
+                stdout=b"TOAST_SETTING:Enabled\r\n",
+                stderr=b"",
+            ),
+        ):
+            assert check_windows_notification_registration(
+                repair=False, exe_path=exe, script_path=script, system="win32"
+            ) == "Enabled"
 
     power_shell = toast_script_path().read_text(encoding="utf-8")
     for setting_name in (
