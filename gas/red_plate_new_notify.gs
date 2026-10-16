@@ -246,6 +246,17 @@ function rpBaseline_(snapshot) {
   return { version: RP_CONFIG.VERSION, snapshot: snapshot, queue: [],
     cursor: 0, checked_at: new Date().toISOString() };
 }
+/** Read-only inspection before setup: shows detected labels, never row data. */
+function inspectRedPlateHeaders() {
+  var view = rpRead_(rpOpenTab_());
+  Logger.log('Detected HEADER_ROW=' + view.header_row +
+    ', DATA_START_ROW=' + view.data_start_row +
+    ', rows=' + view.rows.length);
+  Logger.log('Column headers: ' + view.headers.map(function (name, index) {
+    return rpColumn_(index) + ' = ' + name;
+  }).join(' | '));
+}
+
 function setupRedPlateMonitor() {
   var props = rpProperties_();
   if (!props.getProperty(RP_CONFIG.TOKEN_PROPERTY)) {
