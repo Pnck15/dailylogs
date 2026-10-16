@@ -7,6 +7,8 @@ on:
       - notify_updates.py
       - updater.py
       - notify_receiver.py
+      - notify_windows_toast.py
+      - notify_windows_toast.ps1
       - notify_history.py
       - notify_excel.py
       - supabase/central_notification_retention.sql
@@ -27,6 +29,7 @@ on:
       - tests/windows_notify_purge_smoke.py
       - tests/windows_notify_resilience_smoke.py
       - tests/windows_notify_tray_login_smoke.py
+      - tests/windows_native_toast_smoke.py
       - tests/windows_notify_sources_smoke.py
       - tests/windows_notify_heartbeat_smoke.py
       - tests/windows_update_smoke.py
@@ -54,7 +57,7 @@ jobs:
       - name: Validate PowerShell build and publishing scripts
         shell: pwsh
         run: |
-          foreach ($file in @("build_notify.ps1", "publish_notify_release.ps1")) {
+          foreach ($file in @("build_notify.ps1", "publish_notify_release.ps1", "notify_windows_toast.ps1")) {
             $tokens = $null
             $parseErrors = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $file), [ref]$tokens, [ref]$parseErrors) | Out-Null
@@ -87,6 +90,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Notify login and startup resilience smoke test failed." }
           ./.venv/Scripts/python.exe tests/windows_notify_tray_login_smoke.py
           if ($LASTEXITCODE -ne 0) { throw "Notify main-tray/Login signal lifecycle smoke test failed." }
+          ./.venv/Scripts/python.exe tests/windows_native_toast_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw "Windows Toast Start-menu identity / error smoke failed." }
           ./.venv/Scripts/python.exe tests/windows_notify_sources_smoke.py
           if ($LASTEXITCODE -ne 0) { throw "Notify dynamic source catalog smoke test failed." }
           ./.venv/Scripts/python.exe tests/windows_notify_heartbeat_smoke.py
