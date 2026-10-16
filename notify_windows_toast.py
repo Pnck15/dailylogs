@@ -71,6 +71,54 @@ def native_windows_toast(title, message, *, exe_path=None, script_path=None,
     return True
 
 
+def check_windows_notification_registration(*, repair=False, exe_path=None,
+                                            script_path=None, system=None,
+                                            timeout=55):
+    """Inspect WinRT permission and optionally repair ONLY our Start shortcut.
+
+    Does not modify Notifications/Do Not Disturb/Group Policy registry values,
+    and does not send or read any notification or user data.
+    """
+    platform = sys.platform if system is None else system
+    if platform != "win32":
+        raise RuntimeError("Windows Notification is available only on Windows.")
+    exe = Path(exe_path or sys.executable).resolve()
+    script = Path(script_path or toast_script_path()).resolve()
+    if not exe.is_file() or not script.is_file():
+        raise RuntimeError("Windows Toast executable/helper is missing.")
+    command = [
+        "powershell.exe",
+        "-NoLogo", "-NoProfile", "-NonInteractive",
+        "-ExecutionPolicy", "Bypass",
+        "-File", str(script),
+        "-ExePath", str(exe),
+        "-AppId", APP_USER_MODEL_ID,
+        "-RepairShortcut" if repair else "-DiagnoseOnly",
+    ]
+    result = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        check=False,
+    )
+    stdout = result.stdout.decode("utf-8", errors="replace")
+    stderr = result.stderr.decode("utf-8", errors="replace").strip()
+    if result.returncode != 0:
+        raise RuntimeError(
+            (stderr or stdout or "Windows Toast registration check failed").strip()[:600]
+        )
+    found = [
+        line.strip().split(":", 1)[1].strip()
+        for line in stdout.splitlines()
+        if line.strip().startswith("TOAST_SETTING:")
+    ]
+    if len(found) != 1:
+        raise RuntimeError("Unable to read Windows Notification setting.")
+    return found[0]
+
+
 class _DeliverySignals(QObject):
     done = Signal(object)
     error = Signal(str)
@@ -95,11 +143,31 @@ class _DeliveryJob(QRunnable):
             self.signals.error.emit(str(exc))
 
 
+class _RegistrationJob(QRunnable):
+    def __init__(self, repair=False):
+        super().__init__()
+        self.repair = bool(repair)
+        self.signals = _DeliverySignals()
+        self.setAutoDelete(False)
+
+    @Slot()
+    def run(self):
+        try:
+            setting = check_windows_notification_registration(
+                repair=self.repair
+            )
+            self.signals.done.emit(setting)
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            self.signals.error.emit(str(exc))
+
+
 class NativeToastDispatcher(QObject):
     """FIFO worker; a failing native toast is reported for popup fallback."""
 
     succeeded = Signal(str)
     failed = Signal(str, str, str)
+    registration_status = Signal(str, bool)
+    registration_error = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -125,14 +193,34 @@ class NativeToastDispatcher(QObject):
         self.pool.start(job)
         return True
 
+    def repair_registration(self):
+        """Re-register this app's existing Start shortcut asynchronously."""
+        if sys.platform != "win32":
+            self.registration_error.emit(
+                "Windows Notification ใช้งานได้เฉพาะบน Windows"
+            )
+            return False
+        if any(isinstance(x, _RegistrationJob) for x in self._jobs.values()):
+            return False
+        job = _RegistrationJob(repair=True)
+        self._jobs[job.signals] = job
+        job.signals.done.connect(self._on_done)
+        job.signals.error.connect(self._on_error)
+        self.pool.start(job)
+        return True
+
     @Slot(object)
     def _on_done(self, _result):
         job = self._jobs.pop(self.sender(), None)
-        if job is not None:
+        if isinstance(job, _RegistrationJob):
+            self.registration_status.emit(str(_result), job.repair)
+        elif job is not None:
             self.succeeded.emit(job.title)
 
     @Slot(str)
     def _on_error(self, message):
         job = self._jobs.pop(self.sender(), None)
-        if job is not None:
+        if isinstance(job, _RegistrationJob):
+            self.registration_error.emit(str(message)[:600])
+        elif job is not None:
             self.failed.emit(job.title, job.message, str(message)[:600])
