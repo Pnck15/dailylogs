@@ -5,7 +5,9 @@ param(
     [string]$AppId = "MiniDailyLog.DailyLogNotify",
     [string]$TitleBase64 = "",
     [string]$BodyBase64 = "",
-    [switch]$RegisterOnly
+    [switch]$RegisterOnly,
+    [switch]$DiagnoseOnly,
+    [switch]$RepairShortcut
 )
 $ErrorActionPreference = "Stop"
 try {
@@ -25,7 +27,10 @@ try {
 
     # Unpackaged Windows Toasts need a Start-menu .lnk whose
     # System.AppUserModel.ID matches CreateToastNotifier(appId).
-    if (-not [System.IO.File]::Exists($linkPath) -or
+    # Never alter the user's notification permission. A repair only rewrites
+    # OUR owned Start-menu shortcut/AUMID, not Windows notification settings.
+    if ($RepairShortcut -or
+        -not [System.IO.File]::Exists($linkPath) -or
         -not [System.IO.File]::Exists($registrationStamp) -or
         [System.IO.File]::ReadAllText($registrationStamp) -ne $fingerprint) {
         $source = @'
@@ -136,8 +141,31 @@ namespace MiniDailyLogWindowsToast {
     [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType=WindowsRuntime] | Out-Null
     $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($AppId)
     $setting = [string]$notifier.Setting
+    # Exact setting identifies the block level; Do Not Disturb alone does
+    # NOT determine whether this WinRT app is allowed to send toast.
+    if ($DiagnoseOnly -or $RepairShortcut) {
+        if ($RepairShortcut) { Write-Output "SHORTCUT_REPAIRED" }
+        Write-Output ("TOAST_SETTING:" + $setting)
+        exit 0
+    }
     if ($setting -ne "Enabled") {
-        throw "Windows notifications are disabled for DailyLogNotify (status: $setting). Enable them under Settings > System > Notifications."
+        switch ($setting) {
+            "DisabledForApplication" {
+                throw "TOAST_SETTING:DisabledForApplication; Enable DailyLogNotify under Windows Settings > System > Notifications > Notifications from apps."
+            }
+            "DisabledForUser" {
+                throw "TOAST_SETTING:DisabledForUser; Turn on the master Notifications toggle in Windows Settings > System > Notifications."
+            }
+            "DisabledByGroupPolicy" {
+                throw "TOAST_SETTING:DisabledByGroupPolicy; Notifications are blocked by an administrator's Windows Group Policy."
+            }
+            "DisabledByManifest" {
+                throw "TOAST_SETTING:DisabledByManifest; Windows app identity could not use native notifications. Repair the DailyLogNotify Start-menu shortcut."
+            }
+            default {
+                throw ("TOAST_SETTING:" + $setting + "; Windows blocked this app's notifications.")
+            }
+        }
     }
 
     $title = [System.Text.Encoding]::UTF8.GetString(
