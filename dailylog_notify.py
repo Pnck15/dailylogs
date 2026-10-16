@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 from notify_history import NotificationHistory, app_data_dir
 from notify_excel import make_history_xlsx
 from notify_receiver import CentralNotifyReceiver
-from notify_windows_toast import NativeToastDispatcher
+from notify_windows_toast import NativeToastDispatcher, toast_script_path
 from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
@@ -2509,6 +2509,8 @@ if __name__ == "__main__":
         from notify_receiver import load_notify_config
         from supabase import create_client
         create_client(*load_notify_config())
+        if not toast_script_path().is_file():
+            raise SystemExit("Bundled Windows native toast helper missing")
         smoke_app = QApplication(sys.argv)
         make_tray_icon()
         raise SystemExit(0)
