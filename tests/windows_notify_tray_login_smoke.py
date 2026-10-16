@@ -193,7 +193,7 @@ def check_popup_display_modes(app, settings):
         )
         app.processEvents()
         assert len(window._notify_popups) == 1
-        assert "Test fallback" in window._notify_popups[0].windowTitle()
+        assert "VIN: LMG123" in window._notify_popups[0].message_box.toPlainText()
         assert "ส่งไม่สำเร็จ" in window.info.text()
         window._notify_popups[0].dismiss()
         app.processEvents()
