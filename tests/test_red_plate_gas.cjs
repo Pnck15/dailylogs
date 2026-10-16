@@ -52,6 +52,8 @@ vm.runInContext(code,ctx,{filename:"red_plate_new_notify.gs"});
 const run=(action="changes",token=props.get("RP_NOTIFY_SECRET_TOKEN"))=>
  JSON.parse(ctx.doGet({parameter:{action,token}}).text);
 assert.equal(run("ping","invalid").ok,false);
+ctx.inspectRedPlateHeaders();
+assert.equal(stateText,null,"Inspect must not create or change the snapshot");
 ctx.setupRedPlateMonitor();
 const p=run("ping");
 assert.equal(p.ok,true);
