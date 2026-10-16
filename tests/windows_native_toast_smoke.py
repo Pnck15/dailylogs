@@ -16,7 +16,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from notify_windows_toast import (
-    APP_USER_MODEL_ID, native_windows_toast, toast_script_path
+    APP_USER_MODEL_ID, native_windows_toast, toast_script_path,
+    check_windows_notification_registration,
 )
 
 
@@ -81,6 +82,48 @@ def test_command_arguments_are_safe():
             else:
                 raise AssertionError("Timeout must propagate to fallback")
 
+    # Repair mode uses script-file args only: it never writes Windows
+    # notification permissions or runs source/event text as code.
+    observed = []
+    def diagnose_stub(cmd, **kwargs):
+        observed.append((cmd, kwargs))
+        return SimpleNamespace(
+            returncode=0,
+            stdout=b"SHORTCUT_REPAIRED\r\nTOAST_SETTING:DisabledForApplication\r\n",
+            stderr=b"",
+        )
+    with patch("notify_windows_toast.subprocess.run", side_effect=diagnose_stub):
+        setting = check_windows_notification_registration(
+            repair=True, exe_path=exe, script_path=script, system="win32"
+        )
+        assert setting == "DisabledForApplication"
+    cmd, kwargs = observed[0]
+    assert "-RepairShortcut" in cmd
+    assert "-Command" not in cmd
+    assert kwargs["timeout"] >= 40
+    assert original_body not in " ".join(cmd)
+    with patch(
+        "notify_windows_toast.subprocess.run",
+        return_value=SimpleNamespace(
+            returncode=0,
+            stdout=b"TOAST_SETTING:Enabled\r\n",
+            stderr=b"",
+        ),
+    ):
+        assert check_windows_notification_registration(
+            repair=False, exe_path=exe, script_path=script, system="win32"
+        ) == "Enabled"
+
+    power_shell = toast_script_path().read_text(encoding="utf-8")
+    for setting_name in (
+        "DisabledForApplication", "DisabledForUser",
+        "DisabledByGroupPolicy", "DisabledByManifest",
+    ):
+        assert setting_name in power_shell
+    assert "SHORTCUT_REPAIRED" in power_shell
+    assert "TOAST_SETTING:" in power_shell
+    assert "Set-ItemProperty" not in power_shell
+    assert "New-ItemProperty" not in power_shell
     assert toast_script_path().is_file(), "Bundled native toast script must exist in checkout"
 
 
@@ -104,6 +147,18 @@ def test_shortcut_registration_windows_ci():
         + proc.stderr.decode("utf-8", errors="replace")[:5000]
     )
     assert b"REGISTERED" in proc.stdout
+    # Exercise actual shortcut recreation on the Windows CI host without
+    # attempting an interactive toast or reading user's Windows preferences.
+    repair = subprocess.run(
+        cmd + ["-RepairShortcut"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        timeout=75, check=False,
+    )
+    assert repair.returncode == 0, (
+        "Safe Windows shortcut re-registration failed:\n"
+        + repair.stderr.decode("utf-8", errors="replace")[:5000]
+    )
+    assert b"REGISTERED" in repair.stdout
     link = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "DailyLogNotify.lnk"
     assert link.is_file(), "Native Toast must have Start-menu shortcut"
 
