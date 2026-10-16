@@ -170,25 +170,34 @@ def check_popup_display_modes(app, settings):
         popup.dismiss()
         app.processEvents()
 
-        class FakeWindowsTray:
-            def __init__(self):
-                self.shown = []
-            def showMessage(self, *args):
-                self.shown.append(args)
-        real_tray = window.tray
-        fake_tray = FakeWindowsTray()
         selector.setCurrentIndex(2)
-        window.tray = fake_tray
-        with patch.object(window, "_tray_available", return_value=True):
+        native_requests = []
+        with patch.object(
+            window.native_toast, "send",
+            side_effect=lambda title, msg: native_requests.append((title, msg)),
+        ):
             window._show_notify_popup("Test native", "VIN: LMH123")
+            window.test_notification_button.click()
         assert window.popup_mode == "windows"
         assert settings.value("display/notification_mode") == "windows"
-        assert len(fake_tray.shown) == 1
+        assert len(native_requests) == 2
+        assert native_requests[0] == ("Test native", "VIN: LMH123")
         assert not window._notify_popups, (
-            "Windows Notification mode must never create custom Qt popups"
+            "Success path must never create custom Qt popups"
         )
-        window.tray = real_tray
-        assert "Windows Notification" in window.info.text()
+        assert "Windows Toast" in window.info.text()
+        # A failed native Windows Toast must NOT silently lose the event.
+        window._native_toast_failed(
+            "Test fallback", "VIN: LMG123",
+            "Notifications are disabled for this Windows app",
+        )
+        app.processEvents()
+        assert len(window._notify_popups) == 1
+        assert "Test fallback" in window._notify_popups[0].windowTitle()
+        assert "ส่งไม่สำเร็จ" in window.info.text()
+        window._notify_popups[0].dismiss()
+        app.processEvents()
+        assert not window._notify_popups
     finally:
         for popup in list(window._notify_popups):
             popup.dismiss()
