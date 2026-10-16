@@ -3,7 +3,7 @@ a = Analysis(
     ['dailylog_notify.py'],
     pathex=[],
     binaries=[],
-    datas=[('notify.env', '.')],
+    datas=[('notify.env', '.'), ('notify_windows_toast.ps1', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
