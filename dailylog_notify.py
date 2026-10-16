@@ -9,9 +9,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
-from PySide6.QtCore import QEvent, QLockFile, QSettings, QTimer, Qt
+from PySide6.QtCore import QEvent, QLockFile, QSettings, QTimer, Qt, QUrl
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -41,7 +41,7 @@ from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.15"
+APP_VERSION = "1.5.16"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
@@ -1005,7 +1005,7 @@ class NotifyApp(QWidget):
         )
         self.setFixedSize(
             480,
-            258,
+            306,
         )
         # Keep the receiver running even if every popup or main window closes.
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
@@ -1092,6 +1092,35 @@ class NotifyApp(QWidget):
         layout.addLayout(
             buttons
         )
+
+        # Explicit diagnostic/repair. Do Not Disturb is not the same as the
+        # per-app WinRT ToastNotifier.Setting; never change Windows policy.
+        native_buttons = QHBoxLayout()
+        self.repair_toast_button = QPushButton(
+            "ตรวจ/ซ่อม Windows Notification"
+        )
+        self.repair_toast_button.setObjectName(
+            "repairWindowsNotificationButton"
+        )
+        self.repair_toast_button.setToolTip(
+            "ลงทะเบียน Start-menu shortcut ของ DailyLogNotify ใหม่ "
+            "และตรวจระดับการบล็อกของ Windows โดยไม่เปลี่ยนสิทธิ์แจ้งเตือน"
+        )
+        self.open_windows_notifications_button = QPushButton(
+            "เปิดการตั้งค่า Notifications"
+        )
+        self.open_windows_notifications_button.setObjectName(
+            "openWindowsNotificationsSettingsButton"
+        )
+        self.repair_toast_button.clicked.connect(
+            self.repair_windows_notifications
+        )
+        self.open_windows_notifications_button.clicked.connect(
+            self.open_windows_notification_settings
+        )
+        native_buttons.addWidget(self.repair_toast_button, 1)
+        native_buttons.addWidget(self.open_windows_notifications_button, 1)
+        layout.addLayout(native_buttons)
 
         self.startup_label = QLabel(
             "✅ Start with Windows"
@@ -1244,6 +1273,12 @@ class NotifyApp(QWidget):
         self.native_toast = NativeToastDispatcher(self)
         self.native_toast.succeeded.connect(self._native_toast_submitted)
         self.native_toast.failed.connect(self._native_toast_failed)
+        self.native_toast.registration_status.connect(
+            self._native_registration_status
+        )
+        self.native_toast.registration_error.connect(
+            self._native_registration_error
+        )
 
         # -----------------------------------------
         # Start with Windows
@@ -2152,6 +2187,72 @@ class NotifyApp(QWidget):
 
         self._position_notify_popups()
 
+    @staticmethod
+    def _toast_setting_explanation(status):
+        explanations = {
+            "Enabled": (
+                "✅ Windows อนุญาตให้ DailyLogNotify ส่ง Notification แล้ว "
+                "ทดลองกด 'ทดสอบการแจ้งเตือน' อีกครั้ง"
+            ),
+            "DisabledForApplication": (
+                "⚠️ Windows ปิด Notification เฉพาะ DailyLogNotify: "
+                "เปิด Settings → System → Notifications → DailyLogNotify "
+                "แล้วเปิด Notifications และ Show notification banners"
+            ),
+            "DisabledForUser": (
+                "⚠️ Windows ปิด Notifications ทั้งบัญชี: "
+                "เปิด Settings → System → Notifications และเปิดสวิตช์ "
+                "Notifications หลัก (ไม่ใช่ Do Not Disturb)"
+            ),
+            "DisabledByGroupPolicy": (
+                "⛔ Windows Group Policy ของผู้ดูแลระบบบล็อก Notifications "
+                "ต้องให้ผู้ดูแล Windows แก้นโยบาย"
+            ),
+            "DisabledByManifest": (
+                "⚠️ Windows ไม่ยอมรับตัวตนแอปสำหรับ Notification: "
+                "กดตรวจ/ซ่อมเพื่อสร้าง Start-menu shortcut ใหม่ "
+                "หากยังไม่หายให้ใช้ Popup ของโปรแกรมแทน"
+            ),
+        }
+        return explanations.get(
+            str(status),
+            "⚠️ สถานะ Windows Notification: " + str(status)[:90]
+        )
+
+    def repair_windows_notifications(self):
+        if not self.repair_toast_button.isEnabled():
+            return
+        self.repair_toast_button.setEnabled(False)
+        self.info.setText(
+            "กำลังตรวจและซ่อมการลงทะเบียน Windows Notification... "
+            "ยังรับแจ้งเตือนตามปกติระหว่างตรวจ"
+        )
+        if not self.native_toast.repair_registration():
+            self.repair_toast_button.setEnabled(True)
+
+    def open_windows_notification_settings(self):
+        ok = QDesktopServices.openUrl(QUrl("ms-settings:notifications"))
+        if not ok:
+            QMessageBox.information(
+                self, "Windows Notifications",
+                "กด Windows + I → System → Notifications "
+                "และเลือก DailyLogNotify เพื่อดูสิทธิ์การแจ้งเตือน"
+            )
+
+    def _native_registration_status(self, status, _repaired):
+        self.repair_toast_button.setEnabled(True)
+        self.info.setText(self._toast_setting_explanation(status))
+        # Intentionally do not force-enable per-user/app notification
+        # preferences; only the current Windows user or IT admin may do that.
+
+    def _native_registration_error(self, message):
+        self.repair_toast_button.setEnabled(True)
+        self.info.setText(
+            "⚠️ ตรวจ Windows Notification ไม่สำเร็จ: "
+            + str(message or "")[:190]
+            + " — สามารถเลือก Popup มุมซ้าย/ขวาได้"
+        )
+
     def _native_toast_submitted(self, _title):
         # Accepted by Windows != necessarily shown on screen. Do Not
         # Disturb/Focus Assist and per-app banner settings are external.
@@ -2167,12 +2268,20 @@ class NotifyApp(QWidget):
         print("[Notify Windows Toast]", safe_reason)
         if self.popup_mode != "windows":
             return
-        self.info.setText(
-            "⚠️ Windows Notification ส่งไม่สำเร็จ — "
-            "แสดง Popup ของโปรแกรมแทน ตรวจ Settings → "
-            "System → Notifications และ Do Not Disturb "
-            f"({safe_reason[:105]})"
+        status_match = re.search(
+            r"TOAST_SETTING:([A-Za-z]+)", safe_reason
         )
+        if status_match:
+            self.info.setText(
+                self._toast_setting_explanation(status_match.group(1))
+                + " — แสดง Popup ของโปรแกรมแทน"
+            )
+        else:
+            self.info.setText(
+                "⚠️ Windows Notification ส่งไม่สำเร็จ: "
+                + safe_reason[:135]
+                + " — แสดง Popup ของโปรแกรมแทน"
+            )
         self._show_notify_popup(
             title, message, force_app_popup=True
         )
