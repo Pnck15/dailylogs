@@ -79,11 +79,14 @@ class SaMessageCleanerTests(unittest.TestCase):
         self.assertIn("or self.source_allowed(", SOURCE)
         self.assertIn("source_key=source_key", SOURCE)
 
-    def test_x_is_red_and_copy_remains(self):
+    def test_compact_dark_popup_and_only_history_action(self):
         self.assertIn('close_button.setObjectName("notifyPopupCloseButton")', SOURCE)
         self.assertIn("background-color: #DC2626", SOURCE)
-        self.assertIn('copy_button = QPushButton(', SOURCE)
+        self.assertNotIn('copy_button = QPushButton(', SOURCE)
         self.assertIn("def copy_all(self):", SOURCE)
+        self.assertIn("self.setFixedSize(405, 208)", SOURCE)
+        self.assertIn("self.setWindowOpacity(0.95)", SOURCE)
+        self.assertIn('history_button.setObjectName("notifyPopupHistoryButton")', SOURCE)
 
 
 if __name__ == "__main__":

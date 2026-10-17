@@ -41,7 +41,7 @@ from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.16"
+APP_VERSION = "1.5.17"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
@@ -100,20 +100,20 @@ def clean_sa_notification_message(message):
 
 
 def popup_content_html(message):
-    """White popup, black field names, navy cell values, safe escaped HTML."""
+    """Select/copy-safe light text on a charcoal notification background."""
     fragments = []
     for raw in str(message or "").splitlines():
-        # The date and time must share one LINE while BOTH labels stay black.
+        # Preserve date and time on the same line for SA notifications.
         if raw.strip().startswith("วันที่นัดหมาย:") and "เวลานัดหมาย:" in raw:
             date_part, time_part = raw.split("เวลานัดหมาย:", 1)
             _, date_value = date_part.split("วันที่นัดหมาย:", 1)
             fragments.append(
-                '<span style="color:#111827;">วันที่นัดหมาย:</span>'
-                '<span style="color:#1E3A8A;font-weight:600;">'
+                '<span style="color:#D1D5DB;">วันที่นัดหมาย:</span> '
+                '<span style="color:#FFFFFF;font-weight:600;">'
                 + html.escape(date_value.strip()) + '</span>'
-                '&nbsp;&nbsp;&nbsp;'
-                '<span style="color:#111827;">เวลานัดหมาย:</span>'
-                '<span style="color:#1E3A8A;font-weight:600;">'
+                '&nbsp;&nbsp;'
+                '<span style="color:#D1D5DB;">เวลานัดหมาย:</span> '
+                '<span style="color:#FFFFFF;font-weight:600;">'
                 + html.escape(time_part.strip()) + '</span>'
             )
             continue
@@ -121,23 +121,21 @@ def popup_content_html(message):
             prefix, value = raw.split(":", 1)
             if value.strip():
                 fragments.append(
-                    '<span style="color:#111827;">'
-                    + html.escape(prefix) + ':</span>'
-                    + '<span style="color:#1E3A8A;font-weight:600;">'
-                    + html.escape(value) + '</span>'
+                    '<span style="color:#D1D5DB;">'
+                    + html.escape(prefix) + ':</span> '
+                    + '<span style="color:#FFFFFF;font-weight:600;">'
+                    + html.escape(value.strip()) + '</span>'
                 )
                 continue
-        # Standalone section headings are labels, not cell values.
-        heading = raw.strip().startswith(("ข้อมูลที่", "รายละเอียดแจ้ง", "รายการแจ้ง"))
-        color = "#111827" if heading else "#1E3A8A"
         fragments.append(
-            '<span style="color:' + color + ';">'
+            '<span style="color:#F9FAFB;">'
             + html.escape(raw) + '</span>'
         )
     return (
-        '<html><body style="background-color:#FFFFFF;font-family:Segoe UI;">'
-        + '<p style="white-space:pre-wrap;margin:0;">'
-        + '<br/>'.join(fragments) + '</p></body></html>'
+        '<html><body style="background-color:#30343A;color:#FFFFFF;'
+        'font-family:Segoe UI;font-size:9pt;">'
+        '<div style="white-space:pre-wrap;margin:0;">'
+        + '<br/>'.join(fragments) + '</div></body></html>'
     )
 
 
@@ -693,11 +691,10 @@ class SourceSelectionDialog(QDialog):
 
 
 class NotifyPopup(QDialog):
-    """Independent DailyLogNotify popup.
+    """Compact Windows-style in-app notification, independent of OS toasts.
 
-    This popup does not depend on Windows Notification settings.
-    Text can be selected/copied, the user can close it with X,
-    and each popup closes automatically after 26 seconds of inactivity.
+    Keeps selectable, scrollable text, 26-second idle timeout, X dismiss,
+    and a single small centered History action. Does not alter history data.
     """
 
     def __init__(
@@ -713,96 +710,76 @@ class NotifyPopup(QDialog):
             | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint,
         )
-
-        self.setAttribute(
-            Qt.WidgetAttribute.WA_DeleteOnClose,
-            True,
-        )
-
-        self.setModal(False)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+        self.setModal(False)
+        self.history_callback = history_callback
 
-        self.history_callback = (
-            history_callback
-        )
-
-        self.setMinimumWidth(405)
-        self.setMaximumWidth(495)
-
+        # Logical pixels: approximately the size of a Windows toast.
+        # Opacity belongs to this popup only, never to the history window.
+        self.setFixedSize(405, 208)
+        self.setWindowOpacity(0.95)
         self.setStyleSheet(
             """
             QDialog {
-                background: #FFFFFF;
-                border: 1px solid #D1D5DB;
+                background-color: #30343A;
+                border: 1px solid #5B606B;
                 border-radius: 10px;
             }
-            QLabel {
-                color: #111827;
-            }
+            QLabel { color: #FFFFFF; }
             QTextEdit {
-                background: #FFFFFF;
-                border: 1px solid #E5E7EB;
-                border-radius: 6px;
-                padding: 6px;
-                color: #111827;
+                background-color: #30343A;
+                border: none;
+                border-radius: 4px;
+                color: #FFFFFF;
+                padding: 2px 4px;
+                selection-background-color: #64748B;
+                selection-color: #FFFFFF;
             }
-            QPushButton {
-                min-height: 24px;
+            QPushButton#notifyPopupHistoryButton {
+                background-color: #444A54;
+                color: #FFFFFF;
+                border: 1px solid #626975;
+                border-radius: 5px;
+                font-size: 10px;
+                padding: 1px 9px;
+                min-height: 0px;
+            }
+            QPushButton#notifyPopupHistoryButton:hover {
+                background-color: #586171;
             }
             """
         )
 
-        root = QVBoxLayout(
-            self
-        )
-        root.setContentsMargins(
-            9,
-            8,
-            9,
-            8,
-        )
-        root.setSpacing(6)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 8, 10, 8)
+        root.setSpacing(4)
 
         header = QHBoxLayout()
-
-        title_label = QLabel(
-            f"🔔 {title}"
-        )
-        title_label.setWordWrap(
-            True
-        )
+        header.setSpacing(6)
+        title_label = QLabel(f"🔔 {title}")
+        title_label.setWordWrap(True)
+        title_label.setMaximumHeight(46)
         title_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
             | Qt.TextInteractionFlag.TextSelectableByKeyboard
         )
+        title_font = title_label.font()
+        title_font.setBold(True)
+        title_label.setFont(title_font)
 
-        title_font = (
-            title_label.font()
-        )
-        title_font.setBold(
-            True
-        )
-        title_label.setFont(
-            title_font
-        )
-
-        close_button = QPushButton(
-            "✕"
-        )
-        close_button.setFixedSize(
-            28,
-            28,
-        )
+        close_button = QPushButton("✕")
         close_button.setObjectName("notifyPopupCloseButton")
+        close_button.setFixedSize(24, 24)
         close_button.setStyleSheet(
             """
             QPushButton#notifyPopupCloseButton {
                 background-color: #DC2626;
                 color: #FFFFFF;
                 border: 1px solid #B91C1C;
-                border-radius: 6px;
+                border-radius: 5px;
                 font-weight: bold;
-                font-size: 16px;
+                font-size: 14px;
             }
             QPushButton#notifyPopupCloseButton:hover {
                 background-color: #B91C1C;
@@ -812,117 +789,53 @@ class NotifyPopup(QDialog):
             }
             """
         )
-        close_button.setToolTip(
-            "Close"
-        )
-        # QDialog.reject emits finished() as well as closing the window,
-        # so the stacked popup list is updated as soon as X is clicked.
-        close_button.clicked.connect(
-            self.dismiss
-        )
+        close_button.setToolTip("Close")
+        close_button.clicked.connect(self.dismiss)
+        header.addWidget(title_label, 1)
+        header.addWidget(close_button, 0)
+        root.addLayout(header)
 
-        header.addWidget(
-            title_label,
-            1,
-        )
-        header.addWidget(
-            close_button,
-            0,
-        )
-        root.addLayout(
-            header
-        )
-
-        detail_label = QLabel(
-            "รายละเอียดแจ้ง:"
-        )
-        detail_font = (
-            detail_label.font()
-        )
-        detail_font.setBold(
-            True
-        )
-        detail_label.setFont(
-            detail_font
-        )
-        root.addWidget(
-            detail_label
-        )
-
-        self.message_box = QTextEdit()
-        self.message_box.setReadOnly(
-            True
-        )
+        self.message_box = QTextEdit(self)
+        self.message_box.setObjectName("notifyPopupMessage")
+        self.message_box.setReadOnly(True)
         self._raw_message = str(message or "")
         self.message_box.setHtml(popup_content_html(self._raw_message))
-        self.message_box.setMinimumHeight(
-            75
+        self.message_box.setMinimumHeight(84)
+        self.message_box.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
-        self.message_box.setMaximumHeight(
-            200
+        self.message_box.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         self.message_box.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
             | Qt.TextInteractionFlag.TextSelectableByKeyboard
         )
-        root.addWidget(
-            self.message_box
-        )
-        # Mouse selection, keyboard copy and wheel scrolling may exceed the
-        # nominal 26 second display lifetime. Suspend the timer while the
-        # person is using the message area, resume when the pointer leaves.
+        root.addWidget(self.message_box, 1)
+
+        # Keep the idle timeout suspended while reading, scrolling, or
+        # selecting/copying text, then resume after pointer/focus leaves.
         self.message_box.installEventFilter(self)
         self.message_box.viewport().installEventFilter(self)
         self.message_box.verticalScrollBar().installEventFilter(self)
 
         footer = QHBoxLayout()
-
-        copy_button = QPushButton(
-            "Copy All"
-        )
-        copy_button.clicked.connect(
-            self.copy_all
-        )
-
-        footer.addStretch()
-        footer.addWidget(
-            copy_button
-        )
-
-        root.addLayout(
-            footer
-        )
-
-        history_button = QPushButton(
-            "ดูประวัติแจ้งเตือนทั้งหมด"
-        )
+        footer.addStretch(1)
+        history_button = QPushButton("ประวัติแจ้งเตือนทั้งหมด")
+        history_button.setObjectName("notifyPopupHistoryButton")
+        history_button.setFixedHeight(24)
         history_button.setToolTip(
             "เปิด All Notification Logs ใน DailyLogNotify"
         )
-        history_button.clicked.connect(
-            self.open_history
-        )
-        root.addWidget(
-            history_button
-        )
+        history_button.clicked.connect(self.open_history)
+        footer.addWidget(history_button)
+        footer.addStretch(1)
+        root.addLayout(footer)
 
-        self.resize(
-            470,
-            285,
-        )
-
-        self._auto_close_timer = QTimer(
-            self
-        )
-        self._auto_close_timer.setSingleShot(
-            True
-        )
-        self._auto_close_timer.setInterval(
-            26 * 1000
-        )
-        self._auto_close_timer.timeout.connect(
-            self.dismiss
-        )
+        self._auto_close_timer = QTimer(self)
+        self._auto_close_timer.setSingleShot(True)
+        self._auto_close_timer.setInterval(26 * 1000)
+        self._auto_close_timer.timeout.connect(self.dismiss)
         self._auto_close_timer.start()
 
     def eventFilter(self, watched, event):

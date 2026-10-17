@@ -66,14 +66,14 @@ def run(app):
         assert popup.message_box.verticalScrollBar().maximum() > 0, (
             "Popup must scroll when text exceeds its maximum height"
         )
-        assert "background: #FFFFFF" in popup.styleSheet(), (
-            "Only cell values may be navy, never the background"
+        assert "background-color: #30343A" in popup.styleSheet(), (
+            "Popup must have a dark charcoal background"
         )
-        assert "color:#111827" in popup.message_box.toHtml(), (
-            "Cell column names must remain black"
+        assert "color:#d1d5db" in popup.message_box.toHtml().lower(), (
+            "Cell column labels must be light gray"
         )
-        assert "color:#1e3a8a" in popup.message_box.toHtml().lower(), (
-            "Cell values must be dark navy"
+        assert "color:#ffffff" in popup.message_box.toHtml().lower(), (
+            "Cell values must be white"
         )
         assert popup._auto_close_timer.interval() == 26000
         viewport = popup.message_box.viewport()
