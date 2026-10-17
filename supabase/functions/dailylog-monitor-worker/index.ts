@@ -1404,11 +1404,18 @@ async function processStructured(
     const isRedPlate =
       normalize(event.schema) === "red_plate_monitor_v1" &&
       ["add", "edit", "delete", "header_edit"].includes(eventType);
+    // RedPlateNotify.gs is a different, cursor-based GAS implementation.
+    // Its id/seq must be used for stable deduplication across all polls.
+    const cursorRedPlate = normalize(payload.source) === "red_plate" &&
+      Number(event.seq ?? event.id ?? 0) > 0;
+    const seq = Number(event.seq ?? event.id ?? 0);
     const eventId = normalize(event.event_id);
 
-    const key = isRedPlate && eventId
-      ? `${source.source_key}|red-plate|${eventId}`
-      : `${source.source_key}|structured|${eventType}|${sheet}|${row}|${JSON.stringify(event)}`;
+    const key = cursorRedPlate
+      ? `${source.source_key}|red-plate-seq|${seq}`
+      : isRedPlate && eventId
+        ? `${source.source_key}|red-plate|${eventId}`
+        : `${source.source_key}|structured|${eventType}|${sheet}|${row}|${JSON.stringify(event)}`;
 
     const redPlateVerb: Record<string, string> = {
       add: "เพิ่มข้อมูล",
@@ -1420,27 +1427,46 @@ async function processStructured(
     await publishEvent(
       source,
       key,
-      isRedPlate
-        ? `${source.source_name} - ${redPlateVerb[eventType]} (แถว ${row})`
-        : `${source.source_name} - แจ้งเตือน`,
-      isRedPlate
-        ? redPlateEventMessage(event)
-        : JSON.stringify(event, null, 2),
-      isRedPlate
+      cursorRedPlate
+        ? `${source.source_name} - ${redPlateVerb[eventType] ||
+          (eventType === "structure" ? "เปลี่ยนโครงสร้าง" : "แจ้งเตือน")}` +
+          (normalize(event.plate) ? ` (${normalize(event.plate)})` : "")
+        : isRedPlate
+          ? `${source.source_name} - ${redPlateVerb[eventType]} (แถว ${row})`
+          : `${source.source_name} - แจ้งเตือน`,
+      cursorRedPlate
+        ? (normalize(event.message) ||
+          `แท็บ: ${sheet}\nป้าย: ${normalize(event.plate)}\nคอลัมน์: ${normalize(event.column)}\nครั้งที่ใช้: ${normalize(event.usage)}`)
+        : isRedPlate
+          ? redPlateEventMessage(event)
+          : JSON.stringify(event, null, 2),
+      cursorRedPlate
         ? eventType === "add"
           ? "new"
-          : eventType === "delete"
-            ? "delete"
-            : "edit"
-        : eventType.includes("today")
-          ? "due"
-          : "info",
+          : eventType === "delete" ? "delete" : "edit"
+        : isRedPlate
+          ? eventType === "add"
+            ? "new"
+            : eventType === "delete"
+              ? "delete"
+              : "edit"
+          : eventType.includes("today")
+            ? "due"
+            : "info",
     );
   }
 
   return {
     ...state,
     initialized: true,
+    // Advance only after all events are published successfully. A retry
+    // can safely replay them because the event keys include stable seq.
+    red_plate_cursor: normalize(payload.source) === "red_plate"
+      ? Math.max(
+          Number(state.red_plate_cursor ?? 0),
+          Number(payload.next_cursor ?? 0),
+        )
+      : state.red_plate_cursor,
     last_payload_version:
       normalize(payload.version),
   };
@@ -1455,9 +1481,20 @@ async function processSource(
   );
 
   try {
-    const payload = await fetchGasJson(
-      source.gas_url,
-    );
+    // Cursor-based RedPlateNotify.gs uses &after=N instead of a replay queue.
+    // Other Sale/SA and structured monitors retain their original URL logic.
+    let gasUrl = source.gas_url;
+    if (source.source_type === "structured") {
+      const configured = new URL(gasUrl);
+      if (configured.searchParams.has("key")) {
+        configured.searchParams.set(
+          "after", String(Number(state.red_plate_cursor ?? 0))
+        );
+        configured.searchParams.set("limit", "75");
+        gasUrl = configured.toString();
+      }
+    }
+    const payload = await fetchGasJson(gasUrl);
 
     let nextState: AnyRow;
 
@@ -1493,7 +1530,7 @@ async function processSource(
       count:
         Number(payload.count ?? 0),
       partial:
-        payload.partial === true,
+        payload.partial === true || payload.has_more === true,
     };
   } catch (error) {
     let message = "";

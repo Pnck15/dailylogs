@@ -41,7 +41,7 @@ from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.18"
+APP_VERSION = "1.5.19"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
@@ -1244,6 +1244,9 @@ class NotifyApp(QWidget):
             self.receiver.session_revoked.connect(
                 self._receiver_session_revoked
             )
+            self.receiver.force_update_requested.connect(
+                self._handle_remote_force_update
+            )
 
             if self.receiver.has_saved_credentials():
                 self.receiver.login_saved()
@@ -1269,6 +1272,7 @@ class NotifyApp(QWidget):
         # -----------------------------------------
 
         self._update_check_running = False
+        self._pending_force_update_request = None
 
         # Check shortly after startup without blocking the receiver.
         QTimer.singleShot(
@@ -1310,6 +1314,39 @@ class NotifyApp(QWidget):
         self.status.setText(
             "🔴 Central Notification: " + str(message or "")[:170]
         )
+
+    def _handle_remote_force_update(self, command):
+        """Admin remote command: check latest release without user popups."""
+        if not isinstance(command, dict):
+            return
+        try:
+            request_id = int(command.get("request_id") or 0)
+        except (ValueError, TypeError):
+            return
+        if request_id <= 0:
+            return
+        self.status.setText(
+            "🟡 Admin Force Update: กำลังตรวจเวอร์ชันล่าสุด..."
+        )
+        self.check_for_updates(force=True, request_id=request_id)
+
+    def _run_queued_force_update(self):
+        request_id = self._pending_force_update_request
+        self._pending_force_update_request = None
+        if request_id:
+            QTimer.singleShot(
+                0, lambda rid=request_id:
+                self.check_for_updates(force=True, request_id=rid)
+            )
+
+    def _report_force_update(self, request_id, status, detail="", on_done=None):
+        receiver = getattr(self, "receiver", None)
+        if receiver is not None and request_id:
+            receiver.report_force_update(
+                request_id, status, detail, on_done=on_done
+            )
+        elif callable(on_done):
+            on_done()
 
     def _receiver_session_revoked(
         self,
@@ -2358,24 +2395,35 @@ class NotifyApp(QWidget):
     def check_for_updates(
         self,
         manual=False,
+        force=False,
+        request_id=None,
     ):
-        """Check in the background and install Notify updates automatically."""
-
+        """Check/install updates; remote force bypasses the 15-minute throttle."""
         if self._update_check_running:
+            if force and request_id:
+                self._pending_force_update_request = request_id
             return
         last_attempt = float(self.settings.value("update/last_attempt", 0) or 0)
-        if not manual and time.time() - last_attempt < 15 * 60:
+        if not manual and not force and time.time() - last_attempt < 15 * 60:
             return
 
         self._update_check_running = True
 
         def finished(result):
             self._update_check_running = False
+            self._run_queued_force_update()
 
             if not result.get(
                 "available",
                 False,
             ):
+                if request_id:
+                    self._report_force_update(
+                        request_id, "no_update", f"Already v{APP_VERSION}"
+                    )
+                    self.status.setText(
+                        f"🟢 Admin Force Update: v{APP_VERSION} ล่าสุดแล้ว"
+                    )
                 if manual:
                     QMessageBox.information(
                         self,
@@ -2393,6 +2441,10 @@ class NotifyApp(QWidget):
                 "frozen",
                 False,
             ):
+                if request_id:
+                    self._report_force_update(
+                        request_id, "failed", "Requires built DailyLogNotify.exe"
+                    )
                 if manual:
                     QMessageBox.information(
                         self,
@@ -2428,6 +2480,8 @@ class NotifyApp(QWidget):
                     "[Notify Update]",
                     message,
                 )
+                if request_id:
+                    self._report_force_update(request_id, "failed", message)
                 if manual:
                     QMessageBox.warning(
                         self,
@@ -2474,6 +2528,10 @@ class NotifyApp(QWidget):
                 self.status.setToolTip(
                     str(error)
                 )
+                if request_id:
+                    self._report_force_update(
+                        request_id, "failed", type(error).__name__
+                    )
                 if manual:
                     QMessageBox.warning(
                         self,
@@ -2482,10 +2540,25 @@ class NotifyApp(QWidget):
                     )
                 return
 
-            QApplication.quit()
+            if request_id:
+                self._report_force_update(
+                    request_id, "updating",
+                    f"Launching updater to v{result.get('latest', '')}",
+                    on_done=QApplication.quit,
+                )
+                # A network failure must never leave the updater waiting
+                # for the still-running Notify process indefinitely.
+                QTimer.singleShot(5000, QApplication.quit)
+            else:
+                QApplication.quit()
 
         def failed(message):
             self._update_check_running = False
+            self._run_queued_force_update()
+            if request_id:
+                self._report_force_update(
+                    request_id, "failed", str(message or "")[:250]
+                )
 
             print(
                 "[Notify Update]",

@@ -547,6 +547,29 @@ class SaleAPIMonitor:
             )
         except RuntimeError as exc:
             message = str(exc)
+            if "Unauthorized" in message:
+                raise RuntimeError(
+                    "RedPlateNotify.gs ปฏิเสธการเข้าถึง (Unauthorized). "
+                    "URL นี้ต้องมี ?key=API_KEY จาก showRedPlateApiKey() "
+                    "ใน Apps Script > Execution log แล้ว Test Connection อีกครั้ง"
+                ) from exc
+            if "Missing or invalid monitor token" in message:
+                raise RuntimeError(
+                    "GAS รุ่นใช้ Token ต้องเพิ่ม ?token=... "
+                    "โดย Run showRedPlateWebAppUrl() เพื่อรับ URL เต็ม"
+                ) from exc
+            if "Unsupported action" in message:
+                # RedPlateNotify.gs accepts action=status, not action=ping.
+                status = self._request_json(
+                    "status", read_timeout=15, max_retries=1
+                )
+                if str(status.get("source") or "").strip() == "red_plate":
+                    status["version"] = "RedPlateNotify.gs / cursor"
+                    status["action"] = "ping"
+                    return status
+                raise RuntimeError(
+                    "GAS รองรับ status แต่ไม่ได้ส่ง RedPlateNotify status"
+                ) from exc
             if "Unknown action: ping" in message:
                 raise RuntimeError(
                     "GAS Deployment นี้เป็นเวอร์ชันเก่าและยังไม่รองรับ "

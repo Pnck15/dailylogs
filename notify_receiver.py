@@ -293,13 +293,45 @@ class _HeartbeatJob(QRunnable):
                 ).execute()
             )
 
-            self.signals.done.emit(
-                response.data or {}
-            )
+            data = response.data or {}
+            if isinstance(data, dict) and data.get("active") is True:
+                try:
+                    command = self.client.rpc(
+                        "claim_notify_force_update"
+                    ).execute().data or {}
+                    if isinstance(command, dict) and command.get("request_id"):
+                        data = dict(data)
+                        data["force_update_request"] = command
+                except Exception as error:
+                    # Heartbeat success must not be downgraded by a temporary
+                    # command queue failure. No secrets in the log.
+                    print("[Notify Force Update] claim retry:",
+                          type(error).__name__)
+            self.signals.done.emit(data)
         except Exception as exc:
-            self.signals.error.emit(
-                str(exc)
-            )
+            self.signals.error.emit(str(exc))
+
+
+class _UpdateResultJob(QRunnable):
+    def __init__(self, client, request_id, status, detail):
+        super().__init__()
+        self.client = client
+        self.request_id = int(request_id)
+        self.status = str(status)
+        self.detail = str(detail or "")[:300]
+        self.signals = _Signals()
+
+    @Slot()
+    def run(self):
+        try:
+            result = self.client.rpc("report_notify_force_update", {
+                "p_request_id": self.request_id,
+                "p_status": self.status,
+                "p_detail": self.detail,
+            }).execute()
+            self.signals.done.emit(bool(result.data))
+        except Exception as error:
+            self.signals.error.emit(type(error).__name__)
 
 
 class _PollJob(QRunnable):
@@ -365,6 +397,7 @@ class CentralNotifyReceiver(QObject):
     login_success = Signal(str)
     login_failed = Signal(str)
     session_revoked = Signal(str)
+    force_update_requested = Signal(object)
 
     def __init__(
         self,
@@ -870,6 +903,18 @@ class CentralNotifyReceiver(QObject):
             )
         )
 
+    def report_force_update(self, request_id, status, detail="", on_done=None):
+        """Record the targeted update attempt without blocking the Qt UI."""
+        if self.client is None or not request_id:
+            if callable(on_done):
+                on_done()
+            return
+        job = _UpdateResultJob(self.client, request_id, status, detail)
+        if callable(on_done):
+            job.signals.done.connect(lambda _result: on_done())
+            job.signals.error.connect(lambda _error: on_done())
+        self._start_job(job)
+
     def send_heartbeat(self):
         if (
             self._heartbeat_busy
@@ -933,6 +978,9 @@ class CentralNotifyReceiver(QObject):
             self.status_changed.emit(
                 f"🟢 Central Notification: {self.email}"
             )
+            command = data.get("force_update_request") or {}
+            if isinstance(command, dict) and command.get("request_id"):
+                self.force_update_requested.emit(command)
 
         if data.get(
             "active",

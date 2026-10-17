@@ -612,6 +612,29 @@ class CloudDB:
 
         return response.data or []
 
+    def request_notify_force_update(self, session_id: str):
+        """Queue a targeted update check for an online Notify session."""
+        self._require_login()
+        if str(self.role or "").lower() != "admin":
+            raise PermissionError("เฉพาะ Admin เท่านั้นที่ใช้ Force Update ได้")
+        session_id = str(session_id or "").strip()
+        if not session_id:
+            raise ValueError("ต้องเลือก Session")
+        response = self.client.rpc(
+            "request_notify_force_update", {"p_session_id": session_id}
+        ).execute()
+        return response.data
+
+    def get_notify_force_update_status(self, session_id: str):
+        self._require_login()
+        if str(self.role or "").lower() != "admin":
+            raise PermissionError("เฉพาะ Admin เท่านั้นที่ดู Force Update ได้")
+        response = self.client.rpc(
+            "get_notify_force_update_status",
+            {"p_session_id": str(session_id or "").strip()},
+        ).execute()
+        return response.data or {}
+
     def revoke_notify_session(
         self,
         session_id: str,

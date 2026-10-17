@@ -67,7 +67,7 @@ APP_NAME = "DailyLog"
 APP_DISPLAY_NAME = "GAC日記"
 
 DEFAULT_ACCENT = "#2563EB"
-APP_VERSION = "1.2.16"
+APP_VERSION = "1.2.17"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 
 UPDATE_CHECK_DELAY_MS = 2500
@@ -2064,9 +2064,15 @@ class DailyLog(QWidget):
         refresh_button = QPushButton(
             "Refresh"
         )
-        logout_button = QPushButton(
-            "Logout Selected Session"
+        logout_button = QPushButton("Logout Selected Session")
+        force_update_button = QPushButton("⚡ Force Update Selected Device")
+        force_update_button.setObjectName("notifyForceUpdateSelected")
+        force_update_button.setToolTip(
+            "ส่งคำสั่งตรวจอัปเดตทันทีไปยังเครื่องที่ออนไลน์และมี Updater"
         )
+        force_status_button = QPushButton("Update Status")
+        force_update_button.setEnabled(False)
+        force_status_button.setEnabled(False)
         close_button = QPushButton(
             "Close"
         )
@@ -2078,9 +2084,9 @@ class DailyLog(QWidget):
         buttons.addWidget(
             refresh_button
         )
-        buttons.addWidget(
-            logout_button
-        )
+        buttons.addWidget(force_update_button)
+        buttons.addWidget(force_status_button)
+        buttons.addWidget(logout_button)
         buttons.addStretch()
         buttons.addWidget(
             close_button
@@ -2102,6 +2108,8 @@ class DailyLog(QWidget):
         dialog._logout_button = (
             logout_button
         )
+        dialog._force_update_button = force_update_button
+        dialog._force_status_button = force_status_button
         dialog._session_rows = {}
         dialog._raw_session_rows = []
         dialog._show_stale_check = show_stale_check
@@ -2117,9 +2125,9 @@ class DailyLog(QWidget):
             )
 
             if item is None:
-                logout_button.setEnabled(
-                    False
-                )
+                logout_button.setEnabled(False)
+                force_update_button.setEnabled(False)
+                force_status_button.setEnabled(False)
                 details.clear()
                 return
 
@@ -2310,9 +2318,46 @@ class DailyLog(QWidget):
                 )
             )
 
-            logout_button.setEnabled(
-                True
+            logout_button.setEnabled(True)
+            force_update_button.setEnabled(
+                registered and online and bool(row.get("updater_ready"))
             )
+            force_status_button.setEnabled(registered)
+
+        def force_update_selected():
+            item = session_list.currentItem()
+            if item is None:
+                return
+            session_id = str(item.data(Qt.ItemDataRole.UserRole) or "").strip()
+            row = dialog._session_rows.get(session_id, {})
+            if not (row.get("device_registered") and row.get("online")
+                    and row.get("updater_ready")):
+                status.setText("⚠️ ต้องเลือกเครื่อง Online ที่มี Updater พร้อม")
+                return
+            name = str(row.get("device_name") or "Unknown device")
+            version = str(row.get("app_version") or "Unknown")
+            if QMessageBox.question(
+                dialog, "Force Update DailyLogNotify",
+                f"ส่งคำสั่ง Force Update ไปยังเครื่องนี้หรือไม่?\n\n"
+                f"Device: {name}\nVersion: {version}\n"
+                f"Session: {session_id[:12]}...\n\n"
+                "การอัปเดตจะทำเฉพาะเมื่อมีเวอร์ชันใหม่ "
+                "และเครื่องต้องใช้ DailyLogNotify รุ่นรองรับคำสั่ง"
+            ) != QMessageBox.StandardButton.Yes:
+                return
+            force_update_button.setEnabled(False)
+            status.setText("กำลังส่งคำสั่ง Force Update...")
+            request_id = self.cloud.call("request_notify_force_update", session_id)
+            self._cloud_pending[request_id] = ("notify_force_update", dialog)
+
+        def force_update_status():
+            item = session_list.currentItem()
+            if item is None:
+                return
+            session_id = str(item.data(Qt.ItemDataRole.UserRole) or "").strip()
+            status.setText("กำลังตรวจสถานะ Force Update...")
+            request_id = self.cloud.call("get_notify_force_update_status", session_id)
+            self._cloud_pending[request_id] = ("notify_force_update_status", dialog)
 
         def logout_selected():
             item = (
@@ -2400,9 +2445,9 @@ class DailyLog(QWidget):
                 dialog
             )
         )
-        logout_button.clicked.connect(
-            logout_selected
-        )
+        logout_button.clicked.connect(logout_selected)
+        force_update_button.clicked.connect(force_update_selected)
+        force_status_button.clicked.connect(force_update_status)
         close_button.clicked.connect(
             dialog.close
         )
@@ -2447,9 +2492,11 @@ class DailyLog(QWidget):
         dialog._session_rows = {}
         dialog._session_list.clear()
         dialog._details.clear()
-        dialog._logout_button.setEnabled(
-            False
-        )
+        dialog._logout_button.setEnabled(False)
+        if hasattr(dialog, "_force_update_button"):
+            dialog._force_update_button.setEnabled(False)
+        if hasattr(dialog, "_force_status_button"):
+            dialog._force_status_button.setEnabled(False)
 
         online_count = 0
         registered_count = 0
@@ -4780,6 +4827,34 @@ class DailyLog(QWidget):
                     dialog
                 )
 
+        elif kind == "notify_force_update":
+            dialog = payload
+            if dialog is not None and dialog.isVisible():
+                dialog._status.setText(
+                    f"✅ ส่งคำสั่งแล้ว Request #{result} "
+                    "เครื่องจะรับในรอบ Heartbeat ถัดไป"
+                )
+                item = dialog._session_list.currentItem()
+                row = dialog._session_rows.get(
+                    str(item.data(Qt.ItemDataRole.UserRole) or ""), {}
+                ) if item is not None else {}
+                dialog._force_update_button.setEnabled(
+                    bool(row.get("online") and row.get("updater_ready"))
+                )
+
+        elif kind == "notify_force_update_status":
+            dialog = payload
+            if dialog is not None and dialog.isVisible():
+                info = result or {}
+                if not info.get("request_id"):
+                    dialog._status.setText("Session นี้ยังไม่มีคำสั่ง Force Update")
+                else:
+                    dialog._status.setText(
+                        f"Force Update #{info.get('request_id')}: "
+                        f"{info.get('status', '-')}"
+                        + (f" | {info.get('detail')}" if info.get('detail') else "")
+                    )
+
         elif kind == "multi_notify_health":
             if payload is not None and payload.isVisible():
                 self._render_multi_notify(payload, result or [])
@@ -5013,6 +5088,8 @@ class DailyLog(QWidget):
         elif kind in {
             "notify_sessions_load",
             "notify_session_revoke",
+            "notify_force_update",
+            "notify_force_update_status",
         }:
 
             dialog = payload
@@ -5030,6 +5107,15 @@ class DailyLog(QWidget):
                         dialog._session_list.currentItem()
                     )
                 )
+
+                if hasattr(dialog, "_force_update_button"):
+                    item = dialog._session_list.currentItem()
+                    row = dialog._session_rows.get(
+                        str(item.data(Qt.ItemDataRole.UserRole) or ""), {}
+                    ) if item is not None else {}
+                    dialog._force_update_button.setEnabled(
+                        bool(row.get("online") and row.get("updater_ready"))
+                    )
 
         elif kind == "multi_notify_health":
             if payload is not None and payload.isVisible():
