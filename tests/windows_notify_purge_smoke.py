@@ -121,13 +121,13 @@ def verify_purge(app):
     assert "วันที่นัดหมาย: 2026-10-12    เวลานัดหมาย: 13:30" in msg
     assert "Merged D:" not in msg
     rendered = popup_content_html(msg)
-    assert "color:#1E3A8A" in rendered
-    assert "background-color:#FFFFFF" in rendered
-    assert rendered.count('<span style="color:#111827;">') >= 2, (
-        "Date and time column labels must both be black"
+    assert "color:#FFFFFF" in rendered
+    assert "background-color:#30343A" in rendered
+    assert rendered.count('<span style="color:#D1D5DB;">') >= 2, (
+        "Date and time column labels must both be light gray"
     )
-    assert rendered.count('<span style="color:#1E3A8A;font-weight:600;">') >= 2, (
-        "Date and time cell values must both be navy blue"
+    assert rendered.count('<span style="color:#FFFFFF;font-weight:600;">') >= 2, (
+        "Date and time values must both be white"
     )
     assert "ตัวอย่าง" in rendered
     assert "<script>" not in popup_content_html("<script>do not execute</script>")
@@ -143,4 +143,4 @@ if __name__ == "__main__":
     app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     verify_purge(app)
-    print("PASS: date-scoped local purge, Central marker sync, no popup, date label and navy cell values.")
+    print("PASS: date-scoped local purge, Central marker sync, no popup, date label and white cell values.")
