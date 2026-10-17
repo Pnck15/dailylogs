@@ -68,7 +68,7 @@ class SaMessageCleanerTests(unittest.TestCase):
 
     def test_x_is_connected_to_explicit_dismiss(self):
         self.assertIn(
-            "close_button.clicked.connect(\n            self.dismiss",
+            "close_button.clicked.connect(self.dismiss)",
             SOURCE,
         )
         self.assertIn("self._auto_close_timer.stop()", SOURCE)
