@@ -41,7 +41,7 @@ from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.17"
+APP_VERSION = "1.5.18"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
@@ -752,34 +752,47 @@ class NotifyPopup(QDialog):
         )
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 8, 10, 8)
-        root.setSpacing(4)
+        root.setContentsMargins(10, 4, 8, 6)
+        root.setSpacing(3)
 
+        # A thin, single-line header: bell and title stay readable without
+        # growing the toast. The full title remains available on hover.
         header = QHBoxLayout()
-        header.setSpacing(6)
-        title_label = QLabel(f"🔔 {title}")
-        title_label.setWordWrap(True)
-        title_label.setMaximumHeight(46)
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(3)
+        full_title = f"🔔 {title}"
+        title_label = QLabel(full_title)
+        title_label.setObjectName("notifyPopupHeaderTitle")
+        title_label.setWordWrap(False)
+        title_label.setFixedHeight(18)
+        title_label.setToolTip(full_title)
         title_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
             | Qt.TextInteractionFlag.TextSelectableByKeyboard
         )
         title_font = title_label.font()
+        title_font.setPixelSize(10)
         title_font.setBold(True)
         title_label.setFont(title_font)
+        title_label.setText(
+            title_label.fontMetrics().elidedText(
+                full_title, Qt.TextElideMode.ElideRight, 350
+            )
+        )
 
         close_button = QPushButton("✕")
         close_button.setObjectName("notifyPopupCloseButton")
-        close_button.setFixedSize(24, 24)
+        close_button.setFixedSize(17, 17)
         close_button.setStyleSheet(
             """
             QPushButton#notifyPopupCloseButton {
                 background-color: #DC2626;
                 color: #FFFFFF;
                 border: 1px solid #B91C1C;
-                border-radius: 5px;
+                border-radius: 4px;
                 font-weight: bold;
-                font-size: 14px;
+                font-size: 11px;
+                padding: 0px;
             }
             QPushButton#notifyPopupCloseButton:hover {
                 background-color: #B91C1C;

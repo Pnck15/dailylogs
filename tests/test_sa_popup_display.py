@@ -86,6 +86,10 @@ class SaMessageCleanerTests(unittest.TestCase):
         self.assertIn("def copy_all(self):", SOURCE)
         self.assertIn("self.setFixedSize(405, 208)", SOURCE)
         self.assertIn("self.setWindowOpacity(0.95)", SOURCE)
+        self.assertIn("root.setContentsMargins(10, 4, 8, 6)", SOURCE)
+        self.assertIn("title_label.setFixedHeight(18)", SOURCE)
+        self.assertIn("title_font.setPixelSize(10)", SOURCE)
+        self.assertIn("close_button.setFixedSize(17, 17)", SOURCE)
         self.assertIn('history_button.setObjectName("notifyPopupHistoryButton")', SOURCE)
 
 

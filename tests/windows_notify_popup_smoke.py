@@ -82,6 +82,13 @@ def test_popup(app):
     assert red_x is not None
     assert red_x.text() == "✕"
     assert "background-color: #DC2626" in red_x.styleSheet()
+    assert red_x.width() == 17 and red_x.height() == 17
+    header_label = popup.findChild(QLabel, "notifyPopupHeaderTitle")
+    assert header_label is not None
+    assert header_label.height() == 18
+    assert not header_label.wordWrap()
+    assert header_label.font().pixelSize() == 10
+    assert header_label.toolTip().startswith("🔔 SA Sathorn")
 
     labels = [label.text() for label in popup.findChildren(QLabel)]
     assert all("ปิดอัตโนมัติ" not in text for text in labels)
@@ -115,6 +122,15 @@ def test_popup(app):
 
     # Opening History through a topmost popup must first dismiss it;
     # otherwise modal History may appear behind it and look frozen.
+    long_title = "แจ้งเตือนข้อมูลจากต้นทาง " * 20
+    long_popup = NotifyPopup(long_title, "รายการทดสอบ")
+    long_header = long_popup.findChild(QLabel, "notifyPopupHeaderTitle")
+    assert long_header.toolTip() == f"🔔 {long_title}"
+    assert long_header.text().endswith("…"), (
+        "Long headings must be elided instead of making the header taller"
+    )
+    long_popup.dismiss()
+
     callback_calls = []
     popup_with_history = NotifyPopup(
         "History test", "VIN: XYZ",
