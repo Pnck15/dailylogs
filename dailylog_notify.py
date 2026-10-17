@@ -41,7 +41,7 @@ from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.19"
+APP_VERSION = "1.5.20"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
@@ -717,7 +717,7 @@ class NotifyPopup(QDialog):
 
         # Logical pixels: approximately the size of a Windows toast.
         # Opacity belongs to this popup only, never to the history window.
-        self.setFixedSize(405, 208)
+        self.setFixedSize(365, 180)
         self.setWindowOpacity(0.95)
         self.setStyleSheet(
             """
@@ -752,7 +752,7 @@ class NotifyPopup(QDialog):
         )
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(10, 4, 8, 6)
+        root.setContentsMargins(8, 4, 8, 6)
         root.setSpacing(3)
 
         # A thin, single-line header: bell and title stay readable without
@@ -776,7 +776,7 @@ class NotifyPopup(QDialog):
         title_label.setFont(title_font)
         title_label.setText(
             title_label.fontMetrics().elidedText(
-                full_title, Qt.TextElideMode.ElideRight, 350
+                full_title, Qt.TextElideMode.ElideRight, 310
             )
         )
 
@@ -813,7 +813,7 @@ class NotifyPopup(QDialog):
         self.message_box.setReadOnly(True)
         self._raw_message = str(message or "")
         self.message_box.setHtml(popup_content_html(self._raw_message))
-        self.message_box.setMinimumHeight(84)
+        self.message_box.setMinimumHeight(72)
         self.message_box.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
@@ -836,7 +836,7 @@ class NotifyPopup(QDialog):
         footer.addStretch(1)
         history_button = QPushButton("ประวัติแจ้งเตือนทั้งหมด")
         history_button.setObjectName("notifyPopupHistoryButton")
-        history_button.setFixedHeight(24)
+        history_button.setFixedHeight(22)
         history_button.setToolTip(
             "เปิด All Notification Logs ใน DailyLogNotify"
         )

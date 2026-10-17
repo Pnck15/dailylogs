@@ -102,12 +102,15 @@ def test_popup(app):
     assert "ลำดับ 序号:" not in visible
     assert "ลูกค้า: ตัวอย่าง" in visible
 
-    assert popup.size().width() == 405 and popup.size().height() == 208
+    assert popup.size().width() == 365 and popup.size().height() == 180
     assert 0.9 < popup.windowOpacity() < 1.0
     buttons = popup.findChildren(QPushButton)
     assert len(buttons) == 2, "Only X and the centered History action remain"
     assert not any(b.text() == "Copy All" for b in buttons)
-    assert popup.findChild(QPushButton, "notifyPopupHistoryButton") is not None
+    history_action = popup.findChild(QPushButton, "notifyPopupHistoryButton")
+    assert history_action is not None
+    assert history_action.height() == 22
+    assert popup.message_box.minimumHeight() == 72
     assert any("ประวัติแจ้งเตือน" in b.text() for b in buttons)
 
     closed = []
