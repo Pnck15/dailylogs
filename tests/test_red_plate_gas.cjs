@@ -145,7 +145,7 @@ assert.throws(()=>ctx.rpXlsxGrid_(
  '<row r="1"><c r="ZZ1"><v>1</v></c></row>',shared
 ),/MAX_COLUMNS/);
 assert.match(code,/rpViewerExcelFile/);
-assert.match(code,/Utilities\\.unzip\\(file\\.getBlob\\(\\)\\)/);
+assert.ok(code.includes("Utilities.unzip(file.getBlob())"));
 assert.doesNotMatch(code,/\.setContent\(\s*file\.getBlob\(\)/);
 
 console.log("PASS: red-plate GAS token, auto-header, add/edit/delete, shifted rows, replay, header rename, failure safety.");
