@@ -108,4 +108,45 @@ tabName="04-红牌ชีตnew";
 ctx.setupRedPlateMonitor();
 assert.equal(stateText,safe,"re-running setup must preserve all pending events");
 assert.notEqual(stateText,initial);
+// Viewer Excel reader: parsing is isolated, and never writes the source.
+const shared=ctx.rpXlsxShared_(
+ '<sst><si><t>เลข VIN</t></si><si><r><t>ชื่อลูกค้า</t></r></si>'+
+ '<si><t>ลูกค้า&amp;จีน</t></si></sst>'
+);
+assert.deepEqual(Array.from(shared),["เลข VIN","ชื่อลูกค้า","ลูกค้า&จีน"]);
+const xml='<worksheet><sheetData>'+
+ '<row r="1"><c r="B1" t="s"><v>0</v></c>'+
+ '<c r="IS1" t="s"><v>1</v></c><c r="C1" s="1"/></row>'+
+ '<row r="2"><c r="B2" t="s"><v>2</v></c>'+
+ '<c r="IS2"><v>123</v></c></row>'+
+ '</sheetData></worksheet>';
+const viewerGrid=ctx.rpXlsxGrid_(xml,shared);
+assert.equal(viewerGrid.length,2);
+assert.equal(viewerGrid[0].length,253,"Excel content through column 253 must be monitored");
+assert.equal(viewerGrid[0][252],"ชื่อลูกค้า");
+assert.equal(viewerGrid[1][1],"ลูกค้า&จีน");
+assert.equal(viewerGrid[1][252],"123");
+const viewerBaseline=ctx.rpSnapshotFromGrid_(
+ viewerGrid,"04-红牌ชีตnew",1947537691
+);
+assert.equal(viewerBaseline.rows.length,1);
+assert.equal(viewerBaseline.rows[0].row,2);
+const modifiedViewerXml=xml.replace("<v>123</v>","<v>321</v>");
+const revisedViewer=ctx.rpSnapshotFromGrid_(
+ ctx.rpXlsxGrid_(modifiedViewerXml,shared),"04-红牌ชีตnew",1947537691
+);
+const changed=ctx.rpDiff_(viewerBaseline,revisedViewer);
+assert.equal(changed.length,1);
+assert.equal(changed[0].type,"edit");
+assert.equal(changed[0].changed_cells[0].column,"IS");
+assert.equal(changed[0].changed_cells[0].before,"123");
+assert.equal(changed[0].changed_cells[0].after,"321");
+assert.throws(()=>ctx.rpXlsxGrid_(
+ '<row r="1"><c r="ZZ1"><v>1</v></c></row>',shared
+),/MAX_COLUMNS/);
+assert.match(code,/rpViewerExcelFile/);
+assert.match(code,/Utilities\\.unzip\\(file\\.getBlob\\(\\)\\)/);
+assert.doesNotMatch(code,/\.setContent\(\s*file\.getBlob\(\)/);
+
 console.log("PASS: red-plate GAS token, auto-header, add/edit/delete, shifted rows, replay, header rename, failure safety.");
+console.log("PASS: Viewer .xlsx XML values to column 253, edits, parser limits and read-only routing.");

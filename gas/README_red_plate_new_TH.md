@@ -1,3 +1,31 @@
+# RedPlateNotify: อ่านไฟล์ .xlsx ด้วยสิทธิ์ Viewer (v1.1)
+
+**สถานะ:** โค้ดรองรับการอ่าน Excel แบบ Read-only แล้ว แต่ยังต้องคัดลอก GAS ไป Deploy ด้วยบัญชีที่มีสิทธิ์ Viewer และนำ URL พร้อม Token ไปบันทึกใน DailyLog. **การแก้โค้ดใน GitHub ไม่ได้อัปเดต Apps Script Deployment โดยอัตโนมัติ**
+
+- ต้นทาง: `1aC1NFxBfqDg4zkC1-y-vDYmIUpqTqegb`, ชื่อ `GACB-发票登记表20250318(Customer ).xlsx`
+- แท็บที่จะติดตาม: `04-红牌ชีตnew` (ลิงก์ Google Sheets แสดง gid `1947537691`; ในโครงสร้าง Excel ระบุด้วย **ชื่อแท็บ**)
+- อ่านเฉพาะข้อมูลจากไฟล์ต้นฉบับด้วย `DriveApp.getFileById(...).getBlob()` และ `Utilities.unzip()`; ไม่ต้องมีสิทธิ์ Editor
+- ตรวจจับเพิ่มแถว, ลบแถว, แก้ไขค่าเซลล์ และแก้ไขชื่อหัวคอลัมน์ พร้อมเลขคอลัมน์/แถวและค่าเดิม → ค่าใหม่
+- ขยายขอบเขตเป็น 260 คอลัมน์ (ข้อมูลจริงในแท็บนี้พบถึงคอลัมน์ที่ 253); ส่วน Snapshot/Queue บันทึกไว้ใน **ไฟล์ส่วนตัวของบัญชีที่ Deploy** เท่านั้น
+- เช็คการแก้ไขจาก Last modified ของไฟล์ก่อนแกะ Excel เพื่อไม่ต้องอ่าน ZIP 28 MB ทุกครั้งที่ไฟล์ไม่เปลี่ยน
+- การใช้งานครั้งแรกสร้าง Baseline และ **ไม่ย้อนแจ้งเตือนการแก้ไขในอดีต**; แจ้งเฉพาะการเปลี่ยนแปลงหลังตั้ง Baseline
+- ต้องมีสิทธิ์ Viewer **และดาวน์โหลดไฟล์ได้** ในบัญชีที่ Deploy GAS; หากเจ้าของปิด Download/Copy ระบบจะอ่าน Blob ไม่ได้
+- Apps Script จำกัดเวลาโดยทั่วไปไม่เกิน 6 นาทีต่อคำขอ จึงต้องตรวจ Performance กับไฟล์จริงก่อนเชื่อถือว่าตรวจครบทุก 5 นาที
+
+## วิธีติดตั้งแบบไม่แตะไฟล์ต้นฉบับ
+
+1. เปิด <https://script.google.com/home/projects/create> จากบัญชี Google ที่มีสิทธิ์ Viewer/ดาวน์โหลด Excel นี้ได้
+2. สร้าง Apps Script **Standalone Project แยก** (ไม่ต้องเปิด Script Editor จากไฟล์ต้นฉบับ)
+3. คัดลอกโค้ดทั้งหมดใน `gas/red_plate_new_notify.gs` ไปใส่ไฟล์ Code.gs ของโปรเจกต์ใหม่นี้
+4. Run `inspectRedPlateHeaders()` เพื่อตรวจว่าพบชื่อแท็บ Header แถวเริ่มต้นและคอลัมน์ครบ ไม่มีการเขียนกลับไฟล์ต้นฉบับ
+5. Run `setupRedPlateMonitor()` เพื่อสร้าง Snapshot ส่วนตัวและ Secret Token
+6. Deploy → New deployment → Web app → Execute as **Me** → Who has access: **Anyone** (Token คุมสิทธิ์) แล้ว Deploy
+7. Run `showRedPlateWebAppUrl()` คัดลอก URL เต็ม **`.../exec?token=...`** จาก Execution log ไปใส่ **DailyLog.exe → Main Notification Sources → RedPlate → Test Connection → Save** โดยแก้ Source เดิม (ไม่สร้างชื่อซ้ำ)
+8. ตรวจ `action=ping` แล้วให้ Central Poll `action=changes` ทดสอบด้วยการเปลี่ยนค่าจริงในไฟล์ต้นฉบับโดยผู้มีสิทธิ์ Editor เท่านั้น จากนั้นดู `monitor_state.last_success_at` และ Notification Events
+
+คำเตือน: หากมี Source เดิมที่ยังใช้ `?key=...` / `action=status` อย่าใช้ API Key ของสคริปต์เดิมกับโค้ด Standalone ใหม่นี้ เพราะเป็นคนละ API — ใช้ URL `?token=...` ที่ `showRedPlateWebAppUrl()` สร้างเท่านั้น
+
+---
 # GAS แจ้งเตือน Google Sheets: 04-红牌ชีตnew
 
 **Google Sheets:** https://docs.google.com/spreadsheets/d/1aC1NFxBfqDg4zkC1-y-vDYmIUpqTqegb/edit?gid=1947537691

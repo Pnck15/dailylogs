@@ -1,9 +1,16 @@
 /**
- * DailyLog / Central Notify — Google Sheets Red Plate Monitor, v1.0
+ * DailyLog / Central Notify — Viewer-safe Red Plate Monitor (native Sheets or Excel .xlsx), v1.1
  * Spreadsheet: 1aC1NFxBfqDg4zkC1-y-vDYmIUpqTqegb
  * Tab: 04-红牌ชีตnew (gid=1947537691)
  *
  * STANDALONE Apps Script project (do not replace an existing doGet).
+ * IMPORTANT: the original source may be a 28 MB .xlsx, shared as VIEWER.
+ * The Web App deployer needs read/download permission on that XLSX; no
+ * permission to edit the XLSX is required. Source is read through DriveApp
+ * getBlob() + Utilities.unzip(), never through SpreadsheetApp.openById for
+ * Excel. Private snapshot and queue belong exclusively to the GAS owner.
+ * This does not monitor past changes before first setup.
+
  * Read-only access to the source Sheet. Snapshot and retry queue reside in a
  * PRIVATE JSON file in the deploying account's Google Drive.
  *
@@ -13,14 +20,14 @@
  *    DailyLog > Main Notification Sources > New > Test Connection > Save.
  */
 const RP_CONFIG = Object.freeze({
-  VERSION: 'red-plate-rows-v1.0',
+  VERSION: 'red-plate-rows-v1.1',
   SPREADSHEET_ID: '1aC1NFxBfqDg4zkC1-y-vDYmIUpqTqegb',
   SHEET_GID: 1947537691,
   SHEET_NAME: '04-红牌ชีตnew',
   HEADER_ROW: 0,            // 0: detect dynamically; use 1, 2, ... if needed
   DATA_START_ROW: 0,        // 0: row immediately below HEADER_ROW
   MAX_ROWS: 6500,           // fail safely if exceeded; never return partial rows
-  MAX_COLUMNS: 70,
+  MAX_COLUMNS: 260,         // Actual .xlsx red-plate tab has data through column 253
   RETENTION_HOURS: 168,     // retry events for 7 days, across Central outages
   DELIVERY_PAGE_SIZE: 75,
   MAX_QUEUED_EVENTS: 3000,
@@ -43,7 +50,24 @@ function rpJson_(value) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 function rpOpenTab_() {
-  var book = SpreadsheetApp.openById(RP_CONFIG.SPREADSHEET_ID);
+  // Native Sheets and view-only Excel files have different readers.
+  // openById is not supported for a stored .xlsx file, even with Viewer access.
+  var book;
+  try {
+    book = SpreadsheetApp.openById(RP_CONFIG.SPREADSHEET_ID);
+  } catch (nativeError) {
+    var readOnlyFile;
+    try { readOnlyFile = DriveApp.getFileById(RP_CONFIG.SPREADSHEET_ID); }
+    catch (driveError) {
+      throw new Error('Cannot read the original file with the script owner account. The GAS executor needs Viewer and download permission. No source data was changed.');
+    }
+    if (readOnlyFile.getMimeType() !==
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+      throw nativeError;
+    }
+    // This is a reference only. All source access is read via getBlob().
+    return { rpViewerExcelFile: readOnlyFile };
+  }
   var tabs = book.getSheets().filter(function (tab) {
     return tab.getSheetId() === RP_CONFIG.SHEET_GID;
   });
@@ -51,6 +75,140 @@ function rpOpenTab_() {
     throw new Error('Target tab not found: expected 04-红牌ชีตnew, gid=1947537691. No snapshot modified.');
   }
   return tabs[0];
+}
+
+function rpXlsxAttr_(xmlTag, name) {
+  var pattern = new RegExp('(?:^|\\s)' + name + '=["\\\']([^"\\\']*)["\\\']');
+  var match = pattern.exec(xmlTag || '');
+  return match ? match[1] : '';
+}
+function rpXlsxText_(str) {
+  var entities = {amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"};
+  return String(str || '').replace(/&(#(?:x[0-9a-f]+|[0-9]+)|amp|lt|gt|quot|apos);/gi,
+    function (match, key) {
+      if (key.charAt(0) === '#') {
+        var code = key.charAt(1).toLowerCase() === 'x'
+          ? parseInt(key.slice(2),16) : parseInt(key.slice(1),10);
+        try {return String.fromCodePoint(code);} catch (_) {return match;}
+      }
+      return Object.prototype.hasOwnProperty.call(entities,key) ? entities[key] : match;
+    });
+}
+function rpXlsxShared_(xml) {
+  var result = [], match;
+  var si = /<si(?:\s[^>]*)?>([\s\S]*?)<\/si>/g;
+  while ((match = si.exec(xml))) {
+    var parts = [], textMatch;
+    var textNodes = /<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g;
+    while ((textMatch = textNodes.exec(match[1]))) parts.push(rpXlsxText_(textMatch[1]));
+    result.push(parts.join(''));
+  }
+  return result;
+}
+function rpXlsxColNumber_(ref) {
+  var letters = String(ref || '').match(/^([A-Z]+)[0-9]+$/i);
+  if (!letters) return -1;
+  var column = 0;
+  letters[1].toUpperCase().split('').forEach(function (ch) {
+    column = column * 26 + ch.charCodeAt(0) - 64;
+  });
+  return column - 1;
+}
+function rpXlsxGrid_(sheetXml, shared) {
+  var rows = [], maxCol = 0, maxRow = 0, rowMatch;
+  var rowPattern = /<row(?:\s[^>]*)?>([\s\S]*?)<\/row>/g;
+  while ((rowMatch = rowPattern.exec(sheetXml))) {
+    var rowMarkup = rowMatch[0].slice(0,rowMatch[0].indexOf('>') + 1);
+    var rowNumber = Number(rpXlsxAttr_(rowMarkup, 'r'));
+    if (!rowNumber || rowNumber > RP_CONFIG.MAX_ROWS) {
+      throw new Error('Source Excel exceeded MAX_ROWS or has invalid row references. Snapshot unchanged.');
+    }
+    var values = [], match;
+    var cellPattern = /<c\b([^>]*?)>([\s\S]*?)<\/c>/g;
+    while ((match = cellPattern.exec(rowMatch[1]))) {
+      var index = rpXlsxColNumber_(rpXlsxAttr_(match[1], 'r'));
+      if (index < 0 || index >= RP_CONFIG.MAX_COLUMNS) {
+        throw new Error('Source Excel exceeded MAX_COLUMNS. Snapshot unchanged.');
+      }
+      var type = rpXlsxAttr_(match[1], 't'), content = match[2];
+      var valueMatch = /<v(?:\s[^>]*)?>([\s\S]*?)<\/v>/.exec(content);
+      var raw = valueMatch ? rpXlsxText_(valueMatch[1]) : '';
+      if (type === 's' && raw) {
+        var sharedIndex = Number(raw);
+        if (!Number.isInteger(sharedIndex) || sharedIndex < 0 || sharedIndex >= shared.length) {
+          throw new Error('Malformed Excel shared-string index; snapshot unchanged.');
+        }
+        raw = shared[sharedIndex];
+      } else if (type === 'inlineStr') {
+        var inlineMatch, fragments = [], inline = /<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g;
+        while ((inlineMatch = inline.exec(content))) fragments.push(rpXlsxText_(inlineMatch[1]));
+        raw = fragments.join('');
+      } else if (type === 'b' && raw) {
+        raw = raw === '1' ? 'TRUE' : 'FALSE';
+      }
+      if (!raw && /<f(?:\s[^>]*)?>/.test(content)) {
+        // A changed formula with an empty cache is still a data change.
+        var formula = /<f(?:\s[^>]*)?>([\s\S]*?)<\/f>/.exec(content);
+        raw = formula ? '=' + rpXlsxText_(formula[1]) : '';
+      }
+      if (!rpString_(raw)) continue; // Ignore styling-only and blank cells.
+      values[index] = String(raw);
+      maxCol = Math.max(maxCol,index + 1);
+    }
+    if (values.some(function (v) {return Boolean(rpString_(v));})) {
+      rows[rowNumber - 1] = values;
+      maxRow = Math.max(maxRow,rowNumber);
+    }
+  }
+  if (!maxRow || !maxCol) throw new Error('Selected Excel tab has no readable data. Snapshot unchanged.');
+  var grid=[];
+  for (var r=0;r<maxRow;r++) {
+    var row=rows[r] || [];
+    grid.push(Array.from({length:maxCol},function (_,i) {return rpString_(row[i]);}));
+  }
+  return grid;
+}
+function rpReadXlsx_(file) {
+  // read-only: the original .xlsx is NEVER copied, edited or converted.
+  // Utilities.unzip is an official Apps Script utility for ZIP containers;
+  // Office .xlsx files use the same archive format.
+  var parts = Utilities.unzip(file.getBlob());
+  var blobs = {};
+  parts.forEach(function (part) {
+    var name = String(part.getName() || '').replace(/^\/+/, '');
+    if (name === 'xl/workbook.xml' || name === 'xl/_rels/workbook.xml.rels' ||
+        name === 'xl/sharedStrings.xml' || /^xl\/worksheets\/sheet[0-9]+\.xml$/.test(name)) {
+      blobs[name] = part;
+    }
+  });
+  if (!blobs['xl/workbook.xml'] || !blobs['xl/_rels/workbook.xml.rels']) {
+    throw new Error('Invalid Excel archive: missing workbook relationships. Snapshot unchanged.');
+  }
+  var main = XmlService.getNamespace('http://schemas.openxmlformats.org/spreadsheetml/2006/main');
+  var rel = XmlService.getNamespace('r','http://schemas.openxmlformats.org/officeDocument/2006/relationships');
+  var workbook = XmlService.parse(blobs['xl/workbook.xml'].getDataAsString('UTF-8'));
+  var sheets = workbook.getRootElement().getChild('sheets',main).getChildren('sheet',main);
+  var wanted = sheets.filter(function (node) {
+    return node.getAttribute('name').getValue() === RP_CONFIG.SHEET_NAME;
+  });
+  if (wanted.length !== 1) throw new Error('RedPlate tab name was not found in Excel; source unchanged.');
+  var relId = wanted[0].getAttribute('id',rel).getValue();
+  var relationshipNs = XmlService.getNamespace('http://schemas.openxmlformats.org/package/2006/relationships');
+  var relationships = XmlService.parse(blobs['xl/_rels/workbook.xml.rels'].getDataAsString('UTF-8'))
+    .getRootElement().getChildren('Relationship',relationshipNs);
+  var matches = relationships.filter(function (node) {
+    return node.getAttribute('Id').getValue() === relId;
+  });
+  if (matches.length !== 1) throw new Error('Excel sheet mapping is invalid. Snapshot unchanged.');
+  var target = matches[0].getAttribute('Target').getValue();
+  var partName = target.charAt(0) === '/' ? target.slice(1) : 'xl/' + target.replace(/^\.\//,'');
+  if (!/^xl\/worksheets\/sheet[0-9]+\.xml$/.test(partName) || !blobs[partName]) {
+    throw new Error('Selected Excel worksheet ZIP component not found. Snapshot unchanged.');
+  }
+  var shared = blobs['xl/sharedStrings.xml']
+    ? rpXlsxShared_(blobs['xl/sharedStrings.xml'].getDataAsString('UTF-8')) : [];
+  var grid = rpXlsxGrid_(blobs[partName].getDataAsString('UTF-8'),shared);
+  return rpSnapshotFromGrid_(grid, RP_CONFIG.SHEET_NAME, RP_CONFIG.SHEET_GID);
 }
 function rpHeaderRow_(display) {
   if (RP_CONFIG.HEADER_ROW > 0) return RP_CONFIG.HEADER_ROW;
@@ -85,6 +243,7 @@ function rpKeyColumn_(headers) {
   return -1;
 }
 function rpRead_(sheet) {
+  if (sheet && sheet.rpViewerExcelFile) return rpReadXlsx_(sheet.rpViewerExcelFile);
   var lastRow = sheet.getLastRow();
   var lastCol = sheet.getLastColumn();
   if (lastRow < 1 || lastCol < 1) throw new Error('Target sheet has no headers. Snapshot unchanged.');
@@ -92,6 +251,9 @@ function rpRead_(sheet) {
     throw new Error('Sheet is larger than monitor safety limits. Increase MAX_ROWS/MAX_COLUMNS before retry; snapshot unchanged.');
   }
   var grid = sheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+  return rpSnapshotFromGrid_(grid, sheet.getName(), sheet.getSheetId());
+}
+function rpSnapshotFromGrid_(grid, sourceName, sourceGid) {
   var headerRow = rpHeaderRow_(grid);
   if (headerRow < 1 || headerRow > grid.length) throw new Error('Invalid HEADER_ROW');
   var dataStart = RP_CONFIG.DATA_START_ROW || headerRow + 1;
@@ -107,7 +269,7 @@ function rpRead_(sheet) {
     rows.push({ row: r + 1, values: values });
   }
   return {
-    sheet: sheet.getName(), gid: sheet.getSheetId(),
+    sheet: sourceName, gid: sourceGid,
     header_row: headerRow, data_start_row: dataStart,
     headers: headers, key_column: keyCol, rows: rows
   };
@@ -246,6 +408,10 @@ function rpBaseline_(snapshot) {
   return { version: RP_CONFIG.VERSION, snapshot: snapshot, queue: [],
     cursor: 0, checked_at: new Date().toISOString() };
 }
+function rpSourceModified_(source) {
+  return source && source.rpViewerExcelFile
+    ? String(source.rpViewerExcelFile.getLastUpdated().getTime()) : '';
+}
 /** Read-only inspection before setup: shows detected labels, never row data. */
 function inspectRedPlateHeaders() {
   var view = rpRead_(rpOpenTab_());
@@ -264,8 +430,11 @@ function setupRedPlateMonitor() {
   }
   var state = rpReadState_();
   if (!state) {
-    var snapshot = rpRead_(rpOpenTab_());
-    rpStoreState_(rpBaseline_(snapshot));
+    var source = rpOpenTab_();
+    var snapshot = rpRead_(source);
+    var baseline = rpBaseline_(snapshot);
+    baseline.source_modified_at = rpSourceModified_(source);
+    rpStoreState_(baseline);
     Logger.log('Baseline initialized: ' + snapshot.rows.length + ' rows, HEADER_ROW=' + snapshot.header_row);
   } else {
     Logger.log('Snapshot already exists: preserved; no data or event queue reset.');
@@ -286,14 +455,19 @@ function rpChanges_() {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return {ok:false, success:false, busy:true, error:'Monitor busy; retry later.'};
   try {
-    var current = rpRead_(rpOpenTab_());
+    var source = rpOpenTab_();
+    var modifiedAt = rpSourceModified_(source);
     var state = rpReadState_();
+    // Large Viewer .xlsx files need no re-parse if their Drive mtime did
+    // not move. Pending events are still replayed from the private queue.
+    var unchanged = Boolean(state && modifiedAt && state.source_modified_at === modifiedAt);
+    var current = unchanged ? state.snapshot : rpRead_(source);
     if (!state) {
       rpStoreState_(rpBaseline_(current));
       return {ok:true,success:true,action:'changes',version:RP_CONFIG.VERSION,
         initialized:true,mode:'structured_changes',count:0,changes:[], note:'Initial baseline; no historical notifications.'};
     }
-    var newEvents = rpDiff_(state.snapshot, current);
+    var newEvents = unchanged ? [] : rpDiff_(state.snapshot, current);
     var cutoff = Date.now() - RP_CONFIG.RETENTION_HOURS * 3600000;
     var queue = (state.queue || []).filter(function (evt) {
       return Date.parse(evt.occurred_at) >= cutoff;
@@ -306,6 +480,7 @@ function rpChanges_() {
     var page = Number(state.cursor || 0) % pages;
     var delivered = queue.slice(page * pageSize, (page + 1) * pageSize);
     state.snapshot = current;
+    state.source_modified_at = modifiedAt;
     state.queue = queue;
     state.cursor = (page + 1) % pages;
     state.checked_at = new Date().toISOString();
