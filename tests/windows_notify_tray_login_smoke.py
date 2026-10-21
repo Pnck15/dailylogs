@@ -116,7 +116,7 @@ def check_main_window_x(app, settings):
             popup = window._notify_popups[0]
             popup_history = next(
                 b for b in popup.findChildren(QPushButton)
-                if "ประวัติแจ้งเตือน" in b.text()
+                if b.text() == "เปิดดูการแก้ไขตาราง"
             )
             popup_history.click()
             app.processEvents()

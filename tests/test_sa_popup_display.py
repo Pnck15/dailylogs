@@ -58,8 +58,8 @@ class SaMessageCleanerTests(unittest.TestCase):
         self.assertIn("message = clean_sa_notification_message(message)", SOURCE)
         self.assertIn("if (\n            str(source_key or \"\").strip().lower()", SOURCE)
 
-    def test_popup_closes_in_twenty_six_seconds(self):
-        self.assertIn("26 * 1000", SOURCE)
+    def test_popup_closes_in_twenty_two_seconds(self):
+        self.assertIn("22 * 1000", SOURCE)
         self.assertNotIn("ปิดอัตโนมัติใน 23 วินาที", SOURCE)
         self.assertNotIn("เลือกข้อความแล้ว Ctrl+C ได้", SOURCE)
         self.assertNotIn("ปิดอัตโนมัติใน 10 นาที", SOURCE)
@@ -84,15 +84,16 @@ class SaMessageCleanerTests(unittest.TestCase):
         self.assertIn("background-color: #DC2626", SOURCE)
         self.assertNotIn('copy_button = QPushButton(', SOURCE)
         self.assertIn("def copy_all(self):", SOURCE)
-        self.assertIn("self.setFixedSize(365, 180)", SOURCE)
-        self.assertIn("self.setWindowOpacity(0.95)", SOURCE)
-        self.assertIn("root.setContentsMargins(8, 4, 8, 6)", SOURCE)
+        self.assertIn("self.setFixedSize(335, 160)", SOURCE)
+        self.assertIn("self.setWindowOpacity(0.86)", SOURCE)
+        self.assertIn("root.setContentsMargins(8, 3, 8, 5)", SOURCE)
         self.assertIn("title_label.setFixedHeight(18)", SOURCE)
         self.assertIn("title_font.setPixelSize(10)", SOURCE)
-        self.assertIn("history_button.setFixedHeight(22)", SOURCE)
-        self.assertIn("self.message_box.setMinimumHeight(72)", SOURCE)
+        self.assertIn("history_button.setFixedHeight(20)", SOURCE)
+        self.assertIn("self.message_box.setMinimumHeight(64)", SOURCE)
         self.assertIn("close_button.setFixedSize(17, 17)", SOURCE)
         self.assertIn('history_button.setObjectName("notifyPopupHistoryButton")', SOURCE)
+        self.assertIn('history_button = QPushButton("เปิดดูการแก้ไขตาราง")', SOURCE)
 
 
 if __name__ == "__main__":

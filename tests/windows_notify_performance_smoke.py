@@ -75,7 +75,7 @@ def run(app):
         assert "color:#ffffff" in popup.message_box.toHtml().lower(), (
             "Cell values must be white"
         )
-        assert popup._auto_close_timer.interval() == 26000
+        assert popup._auto_close_timer.interval() == 22000
         viewport = popup.message_box.viewport()
         popup.eventFilter(viewport, QEvent(QEvent.Type.Enter))
         assert not popup._auto_close_timer.isActive(), (
@@ -96,7 +96,7 @@ def run(app):
         )
         popup.eventFilter(viewport, QEvent(QEvent.Type.Leave))
         assert popup._auto_close_timer.isActive(), (
-            "26-second timeout must resume after pointer leaves"
+            "22-second timeout must resume after pointer leaves"
         )
         assert popup.message_box.verticalScrollBar().value() > 0
     finally:

@@ -75,7 +75,7 @@ def test_popup(app):
     timers = popup.findChildren(QTimer)
     assert len(timers) == 1
     timer = timers[0]
-    assert timer.interval() == 26000, timer.interval()
+    assert timer.interval() == 22000, timer.interval()
     assert timer.isSingleShot() and timer.isActive()
 
     red_x = popup.findChild(QPushButton, "notifyPopupCloseButton")
@@ -102,16 +102,16 @@ def test_popup(app):
     assert "ลำดับ 序号:" not in visible
     assert "ลูกค้า: ตัวอย่าง" in visible
 
-    assert popup.size().width() == 365 and popup.size().height() == 180
-    assert 0.9 < popup.windowOpacity() < 1.0
+    assert popup.size().width() == 335 and popup.size().height() == 160
+    assert 0.84 < popup.windowOpacity() < 0.88
     buttons = popup.findChildren(QPushButton)
     assert len(buttons) == 2, "Only X and the centered History action remain"
     assert not any(b.text() == "Copy All" for b in buttons)
     history_action = popup.findChild(QPushButton, "notifyPopupHistoryButton")
     assert history_action is not None
-    assert history_action.height() == 22
-    assert popup.message_box.minimumHeight() == 72
-    assert any("ประวัติแจ้งเตือน" in b.text() for b in buttons)
+    assert history_action.height() == 20
+    assert popup.message_box.minimumHeight() == 64
+    assert any(b.text() == "เปิดดูการแก้ไขตาราง" for b in buttons)
 
     closed = []
     popup.finished.connect(lambda code: closed.append(code))
@@ -145,7 +145,7 @@ def test_popup(app):
     app.processEvents()
     history_button = next(
         button for button in popup_with_history.findChildren(QPushButton)
-        if "ประวัติแจ้งเตือน" in button.text()
+        if button.text() == "เปิดดูการแก้ไขตาราง"
     )
     QTest.mouseClick(history_button, Qt.MouseButton.LeftButton)
     app.processEvents()
@@ -222,7 +222,7 @@ def main():
     test_popup(app)
     test_source_only_history()
     print(
-        "PASS: real X click, 26-sec auto-dismiss, topmost History safety, "
+        "PASS: real X click, 22-sec auto-dismiss, topmost History safety, "
         "checked-source-only history and non-destructive filtering"
     )
 

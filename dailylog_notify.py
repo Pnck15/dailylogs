@@ -41,7 +41,7 @@ from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.20"
+APP_VERSION = "1.5.21"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
@@ -693,7 +693,7 @@ class SourceSelectionDialog(QDialog):
 class NotifyPopup(QDialog):
     """Compact Windows-style in-app notification, independent of OS toasts.
 
-    Keeps selectable, scrollable text, 26-second idle timeout, X dismiss,
+    Keeps selectable, scrollable text, 22-second idle timeout, X dismiss,
     and a single small centered History action. Does not alter history data.
     """
 
@@ -717,8 +717,8 @@ class NotifyPopup(QDialog):
 
         # Logical pixels: approximately the size of a Windows toast.
         # Opacity belongs to this popup only, never to the history window.
-        self.setFixedSize(365, 180)
-        self.setWindowOpacity(0.95)
+        self.setFixedSize(335, 160)
+        self.setWindowOpacity(0.86)
         self.setStyleSheet(
             """
             QDialog {
@@ -742,7 +742,7 @@ class NotifyPopup(QDialog):
                 border: 1px solid #626975;
                 border-radius: 5px;
                 font-size: 10px;
-                padding: 1px 9px;
+                padding: 1px 7px;
                 min-height: 0px;
             }
             QPushButton#notifyPopupHistoryButton:hover {
@@ -752,7 +752,7 @@ class NotifyPopup(QDialog):
         )
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(8, 4, 8, 6)
+        root.setContentsMargins(8, 3, 8, 5)
         root.setSpacing(3)
 
         # A thin, single-line header: bell and title stay readable without
@@ -776,7 +776,7 @@ class NotifyPopup(QDialog):
         title_label.setFont(title_font)
         title_label.setText(
             title_label.fontMetrics().elidedText(
-                full_title, Qt.TextElideMode.ElideRight, 310
+                full_title, Qt.TextElideMode.ElideRight, 285
             )
         )
 
@@ -813,7 +813,7 @@ class NotifyPopup(QDialog):
         self.message_box.setReadOnly(True)
         self._raw_message = str(message or "")
         self.message_box.setHtml(popup_content_html(self._raw_message))
-        self.message_box.setMinimumHeight(72)
+        self.message_box.setMinimumHeight(64)
         self.message_box.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
@@ -834,11 +834,11 @@ class NotifyPopup(QDialog):
 
         footer = QHBoxLayout()
         footer.addStretch(1)
-        history_button = QPushButton("ประวัติแจ้งเตือนทั้งหมด")
+        history_button = QPushButton("เปิดดูการแก้ไขตาราง")
         history_button.setObjectName("notifyPopupHistoryButton")
-        history_button.setFixedHeight(22)
+        history_button.setFixedHeight(20)
         history_button.setToolTip(
-            "เปิด All Notification Logs ใน DailyLogNotify"
+            "เปิดดูประวัติการแจ้งเตือนและการเปลี่ยนแปลงข้อมูลตาราง"
         )
         history_button.clicked.connect(self.open_history)
         footer.addWidget(history_button)
@@ -847,7 +847,7 @@ class NotifyPopup(QDialog):
 
         self._auto_close_timer = QTimer(self)
         self._auto_close_timer.setSingleShot(True)
-        self._auto_close_timer.setInterval(26 * 1000)
+        self._auto_close_timer.setInterval(22 * 1000)
         self._auto_close_timer.timeout.connect(self.dismiss)
         self._auto_close_timer.start()
 
