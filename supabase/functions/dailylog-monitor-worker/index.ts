@@ -122,9 +122,9 @@ function viewerGatewayRequest(gatewayUrl: string, fileUrl: string) {
   }
   const source = new URL(fileUrl);
   const document = source.hostname === "docs.google.com"
-    ? /^\\/spreadsheets\\/d\\/([A-Za-z0-9_-]{15,})(?:\\/|$)/.exec(source.pathname)
+    ? /^\/spreadsheets\/d\/([A-Za-z0-9_-]{15,})(?:\/|$)/.exec(source.pathname)
     : source.hostname === "drive.google.com"
-      ? /^\\/file\\/d\\/([A-Za-z0-9_-]{15,})(?:\\/|$)/.exec(source.pathname)
+      ? /^\/file\/d\/([A-Za-z0-9_-]{15,})(?:\/|$)/.exec(source.pathname)
       : null;
   if (source.protocol !== "https:" || !document) {
     throw new Error("Source URL ต้องเป็น Google Sheets/Drive ของจริง");
@@ -132,7 +132,7 @@ function viewerGatewayRequest(gatewayUrl: string, fileUrl: string) {
   const fragment = new URLSearchParams(source.hash.replace(/^#/, ""));
   const gid = source.searchParams.get("gid") ?? fragment.get("gid") ?? "";
   const tab = source.searchParams.get("tab") ?? fragment.get("tab") ?? "";
-  if (gid && !/^\\d{1,15}$/.test(gid)) {
+  if (gid && !/^\d{1,15}$/.test(gid)) {
     throw new Error("Invalid sheet gid");
   }
   if (tab.length > 120) {
