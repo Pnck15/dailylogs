@@ -48,6 +48,7 @@ from cloud_worker import CloudService
 from cloud_db import CloudDB
 from workers import run_async
 from sale_api_monitor import SaleAPIMonitor
+from viewer_sources import is_viewer_file_url, make_viewer_gateway_url, with_viewer_tab, viewer_target
 from sheet_monitor import NotificationPresenter
 from update_checker import UpdateChecker
 from notify_channels import NotificationChannels
@@ -67,7 +68,7 @@ APP_NAME = "DailyLog"
 APP_DISPLAY_NAME = "GAC日記"
 
 DEFAULT_ACCENT = "#2563EB"
-APP_VERSION = "1.2.17"
+APP_VERSION = "1.2.18"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 
 UPDATE_CHECK_DELAY_MS = 2500
@@ -2722,8 +2723,8 @@ class DailyLog(QWidget):
             "Main Notification Sources"
         )
         dialog.resize(
-            760,
-            470,
+            810,
+            560,
         )
 
         root = QHBoxLayout(
@@ -2766,6 +2767,18 @@ class DailyLog(QWidget):
 
         right = QVBoxLayout()
 
+        right.addWidget(QLabel("Viewer Gateway (ตั้งค่าครั้งเดียวสำหรับชีตทุกไฟล์)"))
+        gateway_row = QHBoxLayout()
+        gateway_input = QLineEdit()
+        gateway_input.setObjectName("viewerGatewayUrl")
+        gateway_input.setPlaceholderText(
+            "https://script.google.com/macros/s/.../exec?token=..."
+        )
+        gateway_button = QPushButton("Save Gateway")
+        gateway_row.addWidget(gateway_input, 1)
+        gateway_row.addWidget(gateway_button)
+        right.addLayout(gateway_row)
+
         right.addWidget(
             QLabel(
                 "Source Name"
@@ -2781,16 +2794,19 @@ class DailyLog(QWidget):
 
         right.addWidget(
             QLabel(
-                "Apps Script Web App URL"
+                "Google Sheets/Excel Viewer URL หรือ Apps Script Web App URL"
             )
         )
         url_input = QLineEdit()
         url_input.setPlaceholderText(
-            "https://script.google.com/macros/s/.../exec"
+            "https://docs.google.com/spreadsheets/d/.../edit?gid=... "
+            "หรือ https://script.google.com/macros/s/.../exec"
         )
-        right.addWidget(
-            url_input
-        )
+        right.addWidget(url_input)
+        right.addWidget(QLabel("ชื่อแท็บสำหรับไฟล์ Excel .xlsx (ถ้ามีหลายแท็บ)"))
+        tab_input = QLineEdit()
+        tab_input.setPlaceholderText("เช่น 04-红牌ชีตnew | Google Sheets ปกติไม่จำเป็น")
+        right.addWidget(tab_input)
 
         enabled_check = QCheckBox(
             "Enable monitoring"
@@ -2883,6 +2899,8 @@ class DailyLog(QWidget):
             2,
         )
 
+        dialog._viewer_gateway_input = gateway_input
+        dialog._viewer_tab_input = tab_input
         dialog._source_list = (
             source_list
         )
@@ -2907,6 +2925,7 @@ class DailyLog(QWidget):
             source_list.clearSelection()
             name_input.clear()
             url_input.clear()
+            tab_input.clear()
             enabled_check.setChecked(
                 True
             )
@@ -2955,15 +2974,12 @@ class DailyLog(QWidget):
                     or ""
                 )
             )
-            url_input.setText(
-                str(
-                    row.get(
-                        "gas_url",
-                        "",
-                    )
-                    or ""
-                )
-            )
+            saved_url = str(row.get("gas_url") or "")
+            url_input.setText(saved_url)
+            if is_viewer_file_url(saved_url):
+                tab_input.setText(viewer_target(saved_url).get("tab", ""))
+            else:
+                tab_input.clear()
             enabled_check.setChecked(
                 bool(
                     row.get(
@@ -2988,86 +3004,63 @@ class DailyLog(QWidget):
             )
 
         def test_connection():
-            url = (
-                url_input.text()
-                .strip()
-                .replace(
-                    "https:https://",
-                    "https://",
-                    1,
-                )
-            )
-
+            url = url_input.text().strip().replace("https:https://", "https://", 1)
             if not url:
-                QMessageBox.warning(
-                    dialog,
-                    "Main Notification Source",
-                    "กรุณาใส่ Apps Script Web App URL",
-                )
+                QMessageBox.warning(dialog, "Main Notification Source", "ใส่ URL ก่อน")
                 return
-
-            if (
-                "docs.google.com/spreadsheets"
-                in url
-                or "/spreadsheets/d/"
-                in url
-            ):
-                QMessageBox.warning(
-                    dialog,
-                    "URL ไม่ถูกต้อง",
-                    (
-                        "ต้องใช้ Apps Script Web App URL "
-                        "ที่ลงท้ายด้วย /exec"
-                    ),
-                )
+            try:
+                if is_viewer_file_url(url):
+                    sheet_url = with_viewer_tab(url, tab_input.text())
+                    api_url = make_viewer_gateway_url(gateway_input.text(), sheet_url)
+                else:
+                    api_url = url
+                monitor = SaleAPIMonitor(api_url)
+            except (ValueError, RuntimeError) as error:
+                status.setText("❌ "+str(error))
                 return
-
-            status.setText(
-                "กำลังทดสอบ Connection..."
-            )
-            test_button.setEnabled(
-                False
-            )
-
-            monitor = SaleAPIMonitor(
-                url
-            )
+            status.setText("กำลังตรวจการอ่านข้อมูลแบบ Viewer..." if is_viewer_file_url(url)
+                           else "กำลังทดสอบ Connection...")
+            test_button.setEnabled(False)
 
             def ok(result):
-                test_button.setEnabled(
-                    True
-                )
-                version = str(
-                    result.get(
-                        "version",
-                        "",
-                    )
-                    or ""
-                ).strip()
+                test_button.setEnabled(True)
                 status.setText(
-                    "✅ Connection สำเร็จ"
-                    + (
-                        f" | API: {version}"
-                        if version
-                        else ""
-                    )
+                    "✅ อ่านไฟล์ผ่าน Viewer Gateway สำเร็จ" if is_viewer_file_url(url)
+                    else "✅ Connection สำเร็จ"
                 )
 
             def failed(message):
-                test_button.setEnabled(
-                    True
-                )
-                status.setText(
-                    "❌ Connection ไม่สำเร็จ\n"
-                    f"{message}"
-                )
+                test_button.setEnabled(True)
+                status.setText("❌ Connection ไม่สำเร็จ\n"+str(message)[:450])
 
-            run_async(
-                self,
-                monitor.ping,
-                ok,
-                failed,
+            run_async(self, monitor.ping, ok, failed)
+
+        def save_gateway():
+            endpoint = gateway_input.text().strip()
+            try:
+                # Validate endpoint and require a protected token; no source
+                # data is fetched when storing the gateway.
+                from urllib.parse import urlsplit, parse_qsl
+                parts = urlsplit(endpoint)
+                values = dict(parse_qsl(parts.query))
+                if not (
+                    parts.scheme == "https" and
+                    parts.hostname == "script.google.com" and
+                    parts.path.rstrip("/").endswith("/exec") and
+                    values.get("token")
+                ):
+                    raise ValueError("Gateway ต้องเป็น URL /exec?token=... ที่ Deploy แล้ว")
+            except ValueError as error:
+                status.setText("❌ "+str(error))
+                return
+            gateway_button.setEnabled(False)
+            status.setText("กำลังบันทึก Viewer Gateway สำหรับ Workspace...")
+            request_id = self.cloud.call(
+                "upsert_monitor_source", "main_viewer_gateway",
+                "Viewer Reader Gateway", "viewer_gateway", endpoint,
+                False, False, 9999
             )
+            self._cloud_pending[request_id] = ("main_source_save", dialog)
 
         def save_source():
             name = (
@@ -3085,33 +3078,19 @@ class DailyLog(QWidget):
             )
 
             if not name or not url:
-                QMessageBox.warning(
-                    dialog,
-                    "Main Notification Source",
-                    "กรุณาใส่ Source Name และ Web App URL",
-                )
+                QMessageBox.warning(dialog, "Main Notification Source", "ใส่ Source Name และ URL")
                 return
-
-            if (
-                "docs.google.com/spreadsheets"
-                in url
-                or "/spreadsheets/d/"
-                in url
-                or not url.startswith(
-                    (
-                        "http://",
-                        "https://",
-                    )
-                )
-            ):
-                QMessageBox.warning(
-                    dialog,
-                    "URL ไม่ถูกต้อง",
-                    (
-                        "ต้องใช้ Apps Script Web App URL "
-                        "ที่ลงท้ายด้วย /exec"
-                    ),
-                )
+            is_viewer = is_viewer_file_url(url)
+            try:
+                if is_viewer:
+                    url = with_viewer_tab(url, tab_input.text())
+                    viewer_target(url)
+                    make_viewer_gateway_url(gateway_input.text(), url)
+                else:
+                    # Legacy GAS URLs retain their previous behavior.
+                    SaleAPIMonitor(url)
+            except ValueError as error:
+                status.setText("❌ "+str(error))
                 return
 
             source_key = (
@@ -3151,7 +3130,7 @@ class DailyLog(QWidget):
                 "upsert_monitor_source",
                 source_key,
                 name,
-                "structured",
+                "viewer" if is_viewer else "structured",
                 url,
                 enabled_check.isChecked(),
                 notify_check.isChecked(),
@@ -3217,6 +3196,7 @@ class DailyLog(QWidget):
                 dialog
             )
         )
+        gateway_button.clicked.connect(save_gateway)
         test_button.clicked.connect(
             test_connection
         )
@@ -3292,14 +3272,18 @@ class DailyLog(QWidget):
                 or ""
             ).strip()
 
-            if not key.startswith(
-                "main_"
-            ):
+            if key == "main_viewer_gateway":
+                if hasattr(dialog, "_viewer_gateway_input"):
+                    dialog._viewer_gateway_input.setText(
+                        str(row.get("gas_url") or "")
+                    )
+                    for button in dialog.findChildren(QPushButton):
+                        if button.text() == "Save Gateway":
+                            button.setEnabled(True)
                 continue
-
-            source_rows[
-                key
-            ] = row
+            if not key.startswith("main_"):
+                continue
+            source_rows[key] = row
 
         dialog._source_rows = (
             source_rows

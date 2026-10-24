@@ -104,6 +104,48 @@ function actionUrl(url: string, action: string) {
   return target.toString();
 }
 
+/**
+ * Viewer sheets are never fetched directly from Supabase. The workspace
+ * owner's one-time GAS gateway executes using an authorized Google identity.
+ * URL parsing is strict: no arbitrary endpoints/SSRF or user-controlled hosts.
+ */
+function viewerGatewayRequest(gatewayUrl: string, fileUrl: string) {
+  if (!gatewayUrl) {
+    throw new Error("Viewer Gateway ยังไม่ตั้งค่าใน Main Notification Sources");
+  }
+  const gateway = new URL(gatewayUrl);
+  if (gateway.protocol !== "https:" ||
+      gateway.hostname !== "script.google.com" ||
+      !gateway.pathname.endsWith("/exec") ||
+      !gateway.searchParams.get("token")) {
+    throw new Error("Viewer Gateway URL ต้องลงท้าย /exec?token=...");
+  }
+  const source = new URL(fileUrl);
+  const document = source.hostname === "docs.google.com"
+    ? /^\\/spreadsheets\\/d\\/([A-Za-z0-9_-]{15,})(?:\\/|$)/.exec(source.pathname)
+    : source.hostname === "drive.google.com"
+      ? /^\\/file\\/d\\/([A-Za-z0-9_-]{15,})(?:\\/|$)/.exec(source.pathname)
+      : null;
+  if (source.protocol !== "https:" || !document) {
+    throw new Error("Source URL ต้องเป็น Google Sheets/Drive ของจริง");
+  }
+  const fragment = new URLSearchParams(source.hash.replace(/^#/, ""));
+  const gid = source.searchParams.get("gid") ?? fragment.get("gid") ?? "";
+  const tab = source.searchParams.get("tab") ?? fragment.get("tab") ?? "";
+  if (gid && !/^\\d{1,15}$/.test(gid)) {
+    throw new Error("Invalid sheet gid");
+  }
+  if (tab.length > 120) {
+    throw new Error("Sheet tab name is too long");
+  }
+  gateway.searchParams.set("id", document[1]);
+  if (gid) gateway.searchParams.set("gid", gid);
+  else gateway.searchParams.delete("gid");
+  if (tab) gateway.searchParams.set("tab", tab);
+  else gateway.searchParams.delete("tab");
+  return gateway.toString();
+}
+
 async function fetchGasJson(url: string) {
   const controller = new AbortController();
   const timeout = setTimeout(
@@ -1474,6 +1516,7 @@ async function processStructured(
 
 async function processSource(
   source: SourceRow,
+  viewerGatewayUrl = "",
 ) {
   const state = await getState(
     source.workspace_id,
@@ -1483,7 +1526,9 @@ async function processSource(
   try {
     // Cursor-based RedPlateNotify.gs uses &after=N instead of a replay queue.
     // Other Sale/SA and structured monitors retain their original URL logic.
-    let gasUrl = source.gas_url;
+    let gasUrl = source.source_type === "viewer"
+      ? viewerGatewayRequest(viewerGatewayUrl, source.gas_url)
+      : source.gas_url;
     if (source.source_type === "structured") {
       const configured = new URL(gasUrl);
       if (configured.searchParams.has("key")) {
@@ -1595,6 +1640,20 @@ Deno.serve(async (req) => {
   }
 
   const sources = (data ?? []) as SourceRow[];
+  const { data: gateways, error: gatewayError } = await db
+    .from("monitor_sources")
+    .select("workspace_id,source_key,source_type,gas_url")
+    .eq("source_key", "main_viewer_gateway")
+    .eq("source_type", "viewer_gateway");
+  if (gatewayError) {
+    return new Response(JSON.stringify({
+      ok: false, error: gatewayError.message,
+    }), { status: 500, headers: { "Content-Type": "application/json" } });
+  }
+  const gatewayByWorkspace = new Map<string,string>();
+  for (const row of gateways ?? []) {
+    gatewayByWorkspace.set(String(row.workspace_id), String(row.gas_url));
+  }
 
   // Process sources sequentially. Heavy Google Sheets/GAS reads
   // should never compete with each other in the same worker execution.
@@ -1604,6 +1663,7 @@ Deno.serve(async (req) => {
     results.push(
       await processSource(
         source,
+        gatewayByWorkspace.get(source.workspace_id) ?? "",
       ),
     );
   }
