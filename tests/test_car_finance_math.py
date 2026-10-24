@@ -17,7 +17,7 @@ class FinanceTests(unittest.TestCase):
         self.assertEqual(q["commission_gross"], Decimal("1693.44"))
         self.assertEqual(q["commission_base"], Decimal("1582.65"))
         self.assertEqual(q["commission_vat"], Decimal("110.79"))
-        self.assertIn("5602.80", quote_text(q, "EV", "กล้อง"))
+        self.assertIn("5,602.80", quote_text(q, "EV", "กล้อง"))
 
     def test_zero_flat_interest(self):
         q = finance_quote(1000000, 50, 5, 0)
