@@ -2533,6 +2533,7 @@ class NotifyApp(QWidget):
             ]
 
             # Preserve the saved account/source choices and restart into the tray.
+            # Show the main window after installation instead of silently hiding in tray.
             args.append("--after-update")
 
             self.status.setText(
