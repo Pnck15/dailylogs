@@ -117,7 +117,11 @@ def test_finance(app):
     assert "ค่างวดต่อเดือนสุทธิ" in finance_calc.result_text.toPlainText()
     colored_html = finance_calc.result_text.toHtml().lower()
     assert "#fde047" in colored_html or "rgb(253, 224, 71)" in colored_html
-    assert "<b>" in colored_html or "font-weight:600" in colored_html
+    from PySide6.QtGui import QFont
+    for label in ("ยอดจัดไฟแนนซ์", "ค่างวดต่อเดือนสุทธิ"):
+        cursor = finance_calc.result_text.document().find(label)
+        assert not cursor.isNull(), label
+        assert cursor.charFormat().fontWeight() >= QFont.Weight.Bold, label
     receipt = finance_calc
     assert receipt.receipt_down_combo.count() == 10
     assert receipt.receipt_down_combo.findData(40) >= 0
