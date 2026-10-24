@@ -25,7 +25,7 @@ class FinanceTests(unittest.TestCase):
         self.assertEqual(q["commission_gross"], Decimal("0.00"))
 
     def test_options_and_invalid_inputs(self):
-        self.assertEqual(DOWN_OPTIONS, (5, 10, 15, 20, 25, 30, 35, 45, 50))
+        self.assertEqual(DOWN_OPTIONS, (5, 10, 15, 20, 25, 30, 35, 40, 45, 50))
         for value in ("NaN", "-5", "infinity", "bad"):
             with self.assertRaises(ValueError):
                 finance_quote(value, 20, 4, 2)

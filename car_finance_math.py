@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 SATANG = Decimal("0.01")
 ONE = Decimal("1")
 VAT = Decimal("0.07")
-DOWN_OPTIONS = (5, 10, 15, 20, 25, 30, 35, 45, 50)
+DOWN_OPTIONS = (5, 10, 15, 20, 25, 30, 35, 40, 45, 50)
 
 
 def money(value):

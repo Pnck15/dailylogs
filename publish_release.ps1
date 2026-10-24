@@ -50,6 +50,11 @@ $updaterHash = (
     Get-FileHash "release\DailyLogUpdater.exe" -Algorithm SHA256
 ).Hash.ToLowerInvariant()
 
+$financeSource = Get-Content "car_finance_ui.py" -Raw
+$financeVersionMatch = [regex]::Match($financeSource, 'CAR_CALCULATOR_VERSION\s*=\s*["'']([^"'']+)["'']')
+if (-not $financeVersionMatch.Success) { throw "Finance calculator version missing." }
+$financeVersion = $financeVersionMatch.Groups[1].Value
+$financeHash = (Get-FileHash "release\FinanceCalculator.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
 $downloadUrl = "https://github.com/$GitHubRepo/releases/download/$tag/DailyLog.exe"
 
 $manifest = [ordered]@{
@@ -58,6 +63,9 @@ $manifest = [ordered]@{
     sha256 = $hash
     updater_download_url = "https://github.com/$GitHubRepo/releases/download/$tag/DailyLogUpdater.exe"
     updater_sha256 = $updaterHash
+    finance_version = $financeVersion
+    finance_download_url = "https://github.com/$GitHubRepo/releases/download/$tag/FinanceCalculator.exe"
+    finance_sha256 = $financeHash
     source_commit = $commit
     published_at = (
         Get-Date

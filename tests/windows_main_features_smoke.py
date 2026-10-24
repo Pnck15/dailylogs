@@ -105,8 +105,10 @@ def test_finance(app):
     finance_calc = CarFinanceCalculator()
     assert bool(finance_calc.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
     assert finance_calc.tabs.count() == 1
-    assert finance_calc.down_buttons.buttons() and len(finance_calc.down_buttons.buttons()) == 9
-    finance_calc.price_input.setValue(315000)
+    assert finance_calc.down_combo.count() == 10
+    assert finance_calc.down_combo.itemData(7) == 40
+    assert finance_calc.down_combo.currentData() == 20
+    finance_calc.price_input.setText("315000")
     finance_calc.years_input.setValue(4)
     finance_calc.interest_input.setValue(1.68)
     finance_calc.calculate()
@@ -114,7 +116,13 @@ def test_finance(app):
     finance_calc.copy_all()
     assert "ยอดจัดไฟแนนซ์" in app.clipboard().text()
     finance_calc.clear_inputs()
-    assert finance_calc.price_input.value() == 0
+    assert finance_calc.price_input.text() == ""
+    assert finance_calc.width() <= 420
+    assert finance_calc.minimumHeight() < finance_calc.height()
+    assert finance_calc.windowOpacity() < 0.9
+    assert finance_calc.findChild(QPushButton, "financeCalculateButton") is not None
+    assert "background:#DC2626" in finance_calc.styleSheet()
+    assert "by 王纯真" in finance_calc.findChild(QLabel, "financeDeveloperCredit").text()
     finance_calc.close()
     calc = WithholdingCalculator()
     assert calc.width() <= 450

@@ -1,83 +1,101 @@
-"""Always-on-top car finance calculator, shared by DailyLog and standalone EXE."""
+"""Compact finance calculator shared by DailyLog and standalone Windows EXE."""
 import os
+import subprocess
 import sys
+import time
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QLocale, QRegularExpression, QSettings, QTimer, Qt
+from PySide6.QtGui import QRegularExpressionValidator
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QCheckBox, QDialog, QDoubleSpinBox,
-    QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
-    QPushButton, QSpinBox, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QApplication, QComboBox, QDialog, QDoubleSpinBox, QHBoxLayout, QLabel,
+    QLineEdit, QMenu, QMessageBox, QPushButton, QSpinBox, QTabWidget,
+    QTextEdit, QVBoxLayout, QWidget,
 )
 
 from car_finance_math import DOWN_OPTIONS, finance_quote, quote_text
+from workers import run_async
 
-CAR_CALCULATOR_VERSION = "1.0.0"
+CAR_CALCULATOR_VERSION = "1.1.0"
+DEVELOPER = "by 王纯真"
 
 
 def set_start_with_windows(enabled, executable=None):
-    """HKCU Run entry; only the standalone frozen EXE can register startup."""
+    """Use HKCU Run (no admin permission); standalone EXE only."""
     if executable is None:
         executable = sys.executable if getattr(sys, "frozen", False) else ""
     if not executable or not Path(executable).is_file():
-        raise ValueError("ต้องใช้ FinanceCalculator.exe เวอร์ชัน Build สำหรับ Startup")
-    registry = QSettings(
+        raise ValueError("ใช้ FinanceCalculator.exe ที่ Build แล้วสำหรับเปิดพร้อม Windows")
+    key = QSettings(
         r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run",
         QSettings.Format.NativeFormat,
     )
     if enabled:
-        registry.setValue("DailyLogFinanceCalculator", f'"{executable}"')
+        key.setValue("DailyLogFinanceCalculator", f'"{executable}"')
     else:
-        registry.remove("DailyLogFinanceCalculator")
-    registry.sync()
-    if registry.status() != QSettings.Status.NoError:
+        key.remove("DailyLogFinanceCalculator")
+    key.sync()
+    if key.status() != QSettings.Status.NoError:
         raise OSError("ไม่สามารถบันทึก Windows Startup Registry ได้")
-    return bool(registry.value("DailyLogFinanceCalculator", ""))
+    return bool(key.value("DailyLogFinanceCalculator", ""))
 
 
 class CarFinanceCalculator(QDialog):
-    """Top-level, non-modal calculator; stays above other windows until minimized."""
-
     def __init__(self, parent=None, standalone=False):
         super().__init__(parent)
-        self.setWindowFlags(
-            Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.WindowMinimizeButtonHint | Qt.WindowType.WindowCloseButtonHint
-        )
-        self.setModal(False)
-        self.setWindowTitle("คำนวณเงินดาวน์ / ดอกเบี้ย / ค่าคอมมิชชั่น")
-        self.resize(515, 685)
-        self.setMinimumSize(465, 570)
-        self.setObjectName("carFinanceCalculator")
         self._standalone = bool(standalone)
         self._settings = QSettings("MiniDailyLog", "FinanceCalculator")
-        self.setStyleSheet(
-            "QDialog,QWidget {background:#111827;color:#F9FAFB;}"
-            "QLabel {color:#F9FAFB;}"
-            "QLineEdit,QDoubleSpinBox,QSpinBox {background:#1F2937;color:#FFFFFF;"
-            "border:1px solid #475569;border-radius:5px;padding:6px;}"
-            "QTextEdit {background:#18212E;color:#FFFFFF;"
-            "border:1px solid #475569;border-radius:5px;padding:5px;}"
-            "QPushButton {background:#334155;color:white;border:1px solid #64748B;"
-            "padding:5px 8px;border-radius:5px;}"
-            "QPushButton:hover {background:#475569;}"
-            "QPushButton:checked {background:#1D4ED8;border-color:#60A5FA;}"
-            "QTabWidget::pane {border:1px solid #475569;}"
-            "QTabBar::tab {background:#334155;color:white;padding:7px 9px;}"
-            "QTabBar::tab:selected {background:#1D4ED8;}"
+        self._checking_update = False
+        self._last_update_attempt = 0.0
+        self.setWindowFlags(
+            Qt.WindowType.Window
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.WindowMinimizeButtonHint
+            | Qt.WindowType.WindowMaximizeButtonHint
+            | Qt.WindowType.WindowCloseButtonHint
         )
-        root = QVBoxLayout(self)
-        root.setContentsMargins(10, 8, 10, 8)
-        root.setSpacing(7)
+        self.setWindowTitle("Finance Calculator")
+        self.setModal(False)
+        # The native window border remains freely resizable vertically.
+        self.resize(402, 510)
+        self.setMinimumSize(355, 385)
+        self.setWindowOpacity(0.82)
+        self.setObjectName("carFinanceCalculator")
+        self.setStyleSheet(
+            "QDialog, QWidget { background:#1A202B; color:#F9FAFB; }"
+            "QLabel {color:#E5E7EB; font-size:11px;}"
+            "QLineEdit,QDoubleSpinBox,QSpinBox,QComboBox {background:#283342;"
+            "color:#FFFFFF; border:1px solid #475569; border-radius:4px;"
+            "padding:4px 5px; min-height:21px;}"
+            "QComboBox QAbstractItemView {background:#283342;color:white;"
+            "selection-background-color:#991B1B;}"
+            "QTextEdit {background:#18212E;color:#FFFFFF;"
+            "border:1px solid #475569;border-radius:5px;padding:3px;}"
+            "QPushButton {background:#344255;color:#FFFFFF;"
+            "border:1px solid #475569;border-radius:5px;padding:5px 7px;}"
+            "QPushButton:hover {background:#46566B;}"
+            "QPushButton#financeCalculateButton {background:#2563EB;"
+            "border:1px solid #3B82F6;font-weight:700;}"
+            "QPushButton#financeCalculateButton:hover {background:#1D4ED8;}"
+            "QTabWidget::pane {border:1px solid #7F1D1D;}"
+            "QTabBar::tab {background:#7F1D1D;color:#FFFFFF;"
+            "padding:6px 11px;border:1px solid #991B1B;}"
+            "QTabBar::tab:selected {background:#DC2626;color:#FFFFFF;"
+            "font-weight:700;border:1px solid #EF4444;}"
+            "QMenu {background:#202A37;color:#FFFFFF;}"
+        )
 
-        tools = QHBoxLayout()
-        self.app_title = QLabel("🚗 เงินดาวน์ • ดอกเบี้ย Flat Rate • ค่าคอมมิชชั่น")
-        tools.addWidget(self.app_title, 1)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(8, 6, 8, 6)
+        root.setSpacing(4)
+        head = QHBoxLayout()
+        head.addWidget(QLabel("🚗 เงินดาวน์ · ดอกเบี้ย · คอมมิชชั่น"), 1)
         self.menu_button = QPushButton("☰")
         self.menu_button.setObjectName("calculatorOptionsMenu")
-        self.menu_button.setFixedWidth(42)
-        tools.addWidget(self.menu_button)
-        root.addLayout(tools)
+        self.menu_button.setFixedWidth(34)
+        head.addWidget(self.menu_button)
+        root.addLayout(head)
+
         self.menu = QMenu(self)
         self.on_top_action = self.menu.addAction("อยู่ด้านบนสุด (Always on Top)")
         self.on_top_action.setCheckable(True)
@@ -85,154 +103,255 @@ class CarFinanceCalculator(QDialog):
         self.on_top_action.triggered.connect(self._update_on_top)
         self.startup_action = self.menu.addAction("เปิดอัตโนมัติเมื่อเข้า Windows")
         self.startup_action.setCheckable(True)
-        self.startup_action.setEnabled(self._standalone and getattr(sys, "frozen", False))
+        self.startup_action.setEnabled(
+            self._standalone and bool(getattr(sys, "frozen", False))
+        )
         self.startup_action.setChecked(self._startup_enabled())
         self.startup_action.triggered.connect(self._update_startup)
+        self.auto_update_action = self.menu.addAction("อัปเดตอัตโนมัติ")
+        self.auto_update_action.setCheckable(True)
+        self.auto_update_action.setChecked(
+            self._settings.value("updates/auto_enabled", True, type=bool)
+        )
+        self.auto_update_action.setEnabled(self._can_self_update())
+        self.auto_update_action.triggered.connect(self._toggle_auto_update)
+        self.manual_update_action = self.menu.addAction("ตรวจสอบอัปเดต")
+        self.manual_update_action.setEnabled(self._can_self_update())
+        self.manual_update_action.triggered.connect(
+            lambda: self.check_for_updates(manual=True)
+        )
+        self.menu.addSeparator()
+        self.menu.addAction(f"Finance Calculator v{CAR_CALCULATOR_VERSION} · {DEVELOPER}")
         self.menu_button.setMenu(self.menu)
 
-        self.tabs = QTabWidget()
+        self.tabs = QTabWidget(self)
         root.addWidget(self.tabs, 1)
-        finance_tab = QWidget()
-        form_root = QVBoxLayout(finance_tab)
-        form_root.setSpacing(6)
-        form = QFormLayout()
-        form.setSpacing(7)
+        first = QWidget()
+        frame = QVBoxLayout(first)
+        frame.setContentsMargins(7, 8, 7, 5)
+        frame.setSpacing(6)
+
+        # All four fields align in precisely two compact columns.
         self.model_input = QLineEdit()
-        self.model_input.setPlaceholderText("ไม่บังคับ")
+        self.model_input.setObjectName("financeModel")
+        self.model_input.setPlaceholderText("รุ่นรถ (ไม่บังคับ)")
         self.accessories_input = QLineEdit()
-        self.accessories_input.setPlaceholderText("ไม่บังคับ")
-        form.addRow("ชื่อรุ่นรถ:", self.model_input)
-        form.addRow("พร้อมอุปกรณ์:", self.accessories_input)
-        self.price_input = QDoubleSpinBox()
+        self.accessories_input.setObjectName("financeAccessories")
+        self.accessories_input.setPlaceholderText("อุปกรณ์ (ไม่บังคับ)")
+        frame.addLayout(self._field_row([
+            ("รุ่นรถ", self.model_input, 1),
+            ("พร้อมอุปกรณ์", self.accessories_input, 1),
+        ]))
+
+        self.price_input = QLineEdit()
         self.price_input.setObjectName("financeCarPrice")
-        self.price_input.setRange(0, 100_000_000)
-        self.price_input.setDecimals(2)
-        self.price_input.setGroupSeparatorShown(True)
-        self.price_input.setSuffix(" บาท")
-        self.price_input.setSingleStep(10000)
-        form.addRow("ราคาเต็มรถ:", self.price_input)
-        form_root.addLayout(form)
+        self.price_input.setPlaceholderText("เช่น 315000")
+        # ASCII 0–9 and optional decimal separator only. No Thai numerals.
+        self.price_input.setValidator(
+            QRegularExpressionValidator(
+                QRegularExpression(r"^[0-9]{0,9}(?:\.[0-9]{0,2})?$"),
+                self.price_input,
+            )
+        )
+        self.down_combo = QComboBox()
+        self.down_combo.setObjectName("financeDownPercent")
+        for percent in DOWN_OPTIONS:
+            self.down_combo.addItem(f"{percent}%", percent)
+        self.down_combo.setCurrentIndex(self.down_combo.findData(20))
+        frame.addLayout(self._field_row([
+            ("ราคาเต็มรถ (บาท)", self.price_input, 2),
+            ("เงินดาวน์ (%)", self.down_combo, 1),
+        ]))
 
-        form_root.addWidget(QLabel("เลือกเงินดาวน์ (%)"))
-        down_grid = QVBoxLayout()
-        self.down_buttons = QButtonGroup(self)
-        self.down_buttons.setExclusive(True)
-        self.selected_down = 20
-        for start in range(0, len(DOWN_OPTIONS), 5):
-            row = QHBoxLayout()
-            for percent in DOWN_OPTIONS[start:start + 5]:
-                button = QPushButton(f"{percent}%")
-                button.setCheckable(True)
-                button.setObjectName(f"down{percent}Percent")
-                button.setProperty("downPercent", percent)
-                button.clicked.connect(
-                    lambda checked=False, p=percent: self._choose_down(p)
-                )
-                self.down_buttons.addButton(button, percent)
-                if percent == self.selected_down:
-                    button.setChecked(True)
-                row.addWidget(button)
-            down_grid.addLayout(row)
-        form_root.addLayout(down_grid)
-
-        extra = QFormLayout()
         self.years_input = QSpinBox()
         self.years_input.setObjectName("financeYears")
+        self.years_input.setLocale(QLocale.c())
         self.years_input.setRange(1, 15)
         self.years_input.setValue(4)
-        self.years_input.setSuffix(" ปี")
         self.interest_input = QDoubleSpinBox()
         self.interest_input.setObjectName("financeAnnualFlatRate")
+        self.interest_input.setLocale(QLocale.c())
         self.interest_input.setRange(0, 100)
         self.interest_input.setDecimals(3)
         self.interest_input.setSingleStep(0.1)
-        self.interest_input.setSuffix("% ต่อปี")
         self.commission_input = QDoubleSpinBox()
         self.commission_input.setObjectName("financeCommissionRate")
+        self.commission_input.setLocale(QLocale.c())
         self.commission_input.setRange(0, 100)
         self.commission_input.setDecimals(3)
         self.commission_input.setSingleStep(0.1)
-        self.commission_input.setSuffix("%")
-        extra.addRow("ระยะเวลาผ่อน:", self.years_input)
-        extra.addRow("ดอกเบี้ย Flat Rate:", self.interest_input)
-        extra.addRow("ค่าคอมมิชชั่น:", self.commission_input)
-        form_root.addLayout(extra)
+        frame.addLayout(self._field_row([
+            ("ผ่อน (ปี)", self.years_input, 1),
+            ("ดอกเบี้ย/ปี (%)", self.interest_input, 1),
+            ("คอมมิชชั่น (%)", self.commission_input, 1),
+        ]))
 
         self.result_text = QTextEdit()
         self.result_text.setObjectName("financeQuoteSummary")
         self.result_text.setReadOnly(True)
-        self.result_text.setPlaceholderText("กรอกราคา เลือกดาวน์ แล้วกดคำนวณ")
-        form_root.addWidget(self.result_text, 1)
+        self.result_text.setPlaceholderText("กรอกราคาแล้วกดคำนวณ")
+        frame.addWidget(self.result_text, 1)
 
-        button_row = QHBoxLayout()
-        self.calculate_button = QPushButton("คำนวณใหม่")
+        buttons = QHBoxLayout()
         self.clear_button = QPushButton("ล้างข้อมูล")
-        self.copy_button = QPushButton("คัดลอกทั้งหมด")
-        button_row.addWidget(self.clear_button)
-        button_row.addWidget(self.calculate_button)
-        button_row.addWidget(self.copy_button)
-        form_root.addLayout(button_row)
-
-        self.calculate_button.clicked.connect(self.calculate)
-        self.clear_button.clicked.connect(self.clear_inputs)
-        self.copy_button.clicked.connect(self.copy_all)
-        self.tabs.addTab(finance_tab, "1. คำนวณเงินดาวน์")
+        self.calculate_button = QPushButton("คำนวณใหม่")
+        self.calculate_button.setObjectName("financeCalculateButton")
         self.calculate_button.setDefault(True)
+        self.copy_button = QPushButton("คัดลอกทั้งหมด")
+        buttons.addWidget(self.clear_button)
+        buttons.addWidget(self.calculate_button)
+        buttons.addWidget(self.copy_button)
+        frame.addLayout(buttons)
+        self.clear_button.clicked.connect(self.clear_inputs)
+        self.calculate_button.clicked.connect(self.calculate)
+        self.copy_button.clicked.connect(self.copy_all)
+        self.tabs.addTab(first, "1. คำนวณเงินดาวน์")
+        credit = QLabel(DEVELOPER)
+        credit.setObjectName("financeDeveloperCredit")
+        credit.setAlignment(Qt.AlignmentFlag.AlignRight)
+        root.addWidget(credit)
+        if self._can_self_update():
+            self.update_timer = QTimer(self)
+            self.update_timer.setInterval(15 * 60 * 1000)
+            self.update_timer.timeout.connect(self._auto_update_tick)
+            self.update_timer.start()
+            QTimer.singleShot(8000, self._auto_update_tick)
 
-    def _choose_down(self, percent):
-        self.selected_down = int(percent)
+    @staticmethod
+    def _field_row(fields):
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        for title, widget, ratio in fields:
+            column = QVBoxLayout()
+            column.setSpacing(2)
+            column.addWidget(QLabel(title))
+            column.addWidget(widget)
+            row.addLayout(column, ratio)
+        return row
+
+    @property
+    def selected_down(self):
+        return int(self.down_combo.currentData())
 
     def calculate(self):
         try:
             result = finance_quote(
-                self.price_input.value(), self.selected_down,
+                self.price_input.text(), self.selected_down,
                 self.years_input.value(), self.interest_input.value(),
-                self.commission_input.value(),
+                self.commission_input.value()
             )
-        except ValueError as error:
-            QMessageBox.warning(self, "ตรวจสอบข้อมูล", str(error))
+        except ValueError as exc:
+            QMessageBox.warning(self, "ตรวจสอบข้อมูล", str(exc))
             return
         self.result_text.setPlainText(
-            quote_text(result, self.model_input.text(), self.accessories_input.text())
+            quote_text(result, self.model_input.text(),
+                       self.accessories_input.text())
         )
 
     def clear_inputs(self):
         self.model_input.clear()
         self.accessories_input.clear()
-        self.price_input.setValue(0)
+        self.price_input.clear()
+        self.down_combo.setCurrentIndex(self.down_combo.findData(20))
         self.years_input.setValue(4)
         self.interest_input.setValue(0)
         self.commission_input.setValue(0)
-        self.selected_down = 20
-        self.down_buttons.button(20).setChecked(True)
         self.result_text.clear()
 
     def copy_all(self):
-        # Only copy a valid quote; never accidentally copy old calculations.
         if not self.result_text.toPlainText().strip():
             self.calculate()
         if self.result_text.toPlainText().strip():
             QApplication.clipboard().setText(self.result_text.toPlainText())
 
     def _update_on_top(self, checked):
-        was_visible = self.isVisible()
+        visible = self.isVisible()
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, bool(checked))
-        if was_visible:
+        if visible:
             self.show()
 
     def _startup_enabled(self):
-        if not getattr(sys, "frozen", False) or not self._standalone:
+        if not self._can_self_update():
             return False
-        run = QSettings(
+        registry = QSettings(
             r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run",
             QSettings.Format.NativeFormat,
         )
-        return bool(run.value("DailyLogFinanceCalculator", ""))
+        return bool(registry.value("DailyLogFinanceCalculator", ""))
 
     def _update_startup(self, checked):
         try:
-            actual = set_start_with_windows(bool(checked))
-            self.startup_action.setChecked(actual)
-        except (OSError, ValueError) as error:
+            self.startup_action.setChecked(set_start_with_windows(checked))
+        except (ValueError, OSError) as exc:
             self.startup_action.setChecked(self._startup_enabled())
-            QMessageBox.warning(self, "Start with Windows", str(error))
+            QMessageBox.warning(self, "Start with Windows", str(exc))
+
+    def _can_self_update(self):
+        return bool(
+            self._standalone and getattr(sys, "frozen", False)
+            and Path(sys.executable).name.lower() == "financecalculator.exe"
+        )
+
+    def _toggle_auto_update(self, checked):
+        self._settings.setValue("updates/auto_enabled", bool(checked))
+        self._settings.sync()
+
+    def _auto_update_tick(self):
+        if self.auto_update_action.isChecked():
+            self.check_for_updates()
+
+    def check_for_updates(self, manual=False):
+        """Check and stage updates in the background, then relaunch with updater."""
+        if not self._can_self_update():
+            if manual:
+                QMessageBox.information(
+                    self, "Finance Calculator", "โปรแกรมรุ่นใน DailyLog.exe "
+                    "จะอัปเดตพร้อมโปรแกรมหลัก"
+                )
+            return
+        if self._checking_update:
+            return
+        if not manual and time.time()-self._last_update_attempt < 15*60:
+            return
+        self._checking_update = True
+        self._last_update_attempt = time.time()
+        from car_finance_updates import fetch_finance_update, prepare_finance_update
+
+        def lookup():
+            result = fetch_finance_update(CAR_CALCULATOR_VERSION)
+            if result.get("available"):
+                result = prepare_finance_update(result, Path(sys.executable).parent)
+            return result
+
+        def success(result):
+            self._checking_update = False
+            if not result.get("available"):
+                if manual:
+                    QMessageBox.information(
+                        self, "Finance Calculator", "เป็นเวอร์ชันล่าสุดแล้ว "
+                        f"v{CAR_CALCULATOR_VERSION}\n{DEVELOPER}"
+                    )
+                return
+            updater = Path(sys.executable).parent / "DailyLogUpdater.exe"
+            cmd = [
+                str(updater), str(os.getpid()), sys.executable,
+                result["prepared_file"], result["finance_sha256"],
+            ]
+            try:
+                subprocess.Popen(cmd, close_fds=True)
+                QApplication.quit()
+            except (OSError, ValueError) as exc:
+                QMessageBox.warning(
+                    self, "Finance Calculator Update",
+                    f"เริ่มอัปเดตไม่ได้: {exc}"
+                )
+
+        def failure(error):
+            self._checking_update = False
+            if manual:
+                QMessageBox.warning(
+                    self, "Finance Calculator Update",
+                    "ตรวจสอบอัปเดตไม่สำเร็จ: " + str(error)[:240]
+                )
+
+        run_async(self, lookup, success, failure)

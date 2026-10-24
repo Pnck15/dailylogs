@@ -42,6 +42,17 @@ assert manifest["version"] == version
 assert release["target_commitish"] == manifest["source_commit"], "Release source commit mismatch"
 
 assert "FinanceCalculator.exe" in assets and assets["FinanceCalculator.exe"]["size"] > 100 * 1024
+assert manifest["finance_download_url"] == assets["FinanceCalculator.exe"]["browser_download_url"]
+assert manifest["finance_sha256"] == assets["FinanceCalculator.exe"]["digest"].split(":", 1)[1]
+ui_tree = ast.parse((root / "car_finance_ui.py").read_text(encoding="utf-8"))
+finance_version = next(
+    node.value.value for node in ui_tree.body
+    if isinstance(node, ast.Assign) and any(
+        isinstance(target, ast.Name) and target.id == "CAR_CALCULATOR_VERSION"
+        for target in node.targets
+    )
+)
+assert manifest["finance_version"] == finance_version
 
 for name, field in [
     ("DailyLog.exe", "sha256"),
