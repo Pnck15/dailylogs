@@ -103,7 +103,7 @@ def test_popup(app):
     assert "ลูกค้า: ตัวอย่าง" in visible
 
     assert popup.size().width() == 335 and popup.size().height() == 160
-    assert 0.84 < popup.windowOpacity() < 0.88
+    assert 0.74 < popup.windowOpacity() < 0.78
     buttons = popup.findChildren(QPushButton)
     assert len(buttons) == 2, "Only X and the centered History action remain"
     assert not any(b.text() == "Copy All" for b in buttons)

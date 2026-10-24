@@ -41,7 +41,7 @@ from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.21"
+APP_VERSION = "1.5.22"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
@@ -718,7 +718,7 @@ class NotifyPopup(QDialog):
         # Logical pixels: approximately the size of a Windows toast.
         # Opacity belongs to this popup only, never to the history window.
         self.setFixedSize(335, 160)
-        self.setWindowOpacity(0.86)
+        self.setWindowOpacity(0.76)
         self.setStyleSheet(
             """
             QDialog {

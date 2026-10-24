@@ -85,7 +85,7 @@ class SaMessageCleanerTests(unittest.TestCase):
         self.assertNotIn('copy_button = QPushButton(', SOURCE)
         self.assertIn("def copy_all(self):", SOURCE)
         self.assertIn("self.setFixedSize(335, 160)", SOURCE)
-        self.assertIn("self.setWindowOpacity(0.86)", SOURCE)
+        self.assertIn("self.setWindowOpacity(0.76)", SOURCE)
         self.assertIn("root.setContentsMargins(8, 3, 8, 5)", SOURCE)
         self.assertIn("title_label.setFixedHeight(18)", SOURCE)
         self.assertIn("title_font.setPixelSize(10)", SOURCE)
