@@ -104,7 +104,8 @@ def test_finance(app):
 
     finance_calc = CarFinanceCalculator()
     assert bool(finance_calc.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
-    assert finance_calc.tabs.count() == 1
+    assert finance_calc.tabs.count() == 2
+    assert finance_calc.tabs.tabText(1) == "2. ใบเสร็จรับเงินค่ารถ"
     assert finance_calc.down_combo.count() == 10
     assert finance_calc.down_combo.itemData(7) == 40
     assert finance_calc.down_combo.currentData() == 20
@@ -113,6 +114,27 @@ def test_finance(app):
     finance_calc.interest_input.setValue(1.68)
     finance_calc.calculate()
     assert "5,602.80" in finance_calc.result_text.toPlainText()
+    assert "ค่างวดต่อเดือนสุทธิ" in finance_calc.result_text.toPlainText()
+    colored_html = finance_calc.result_text.toHtml().lower()
+    assert "#fde047" in colored_html or "rgb(253, 224, 71)" in colored_html
+    assert "<b>" in colored_html or "font-weight:600" in colored_html
+    receipt = finance_calc
+    assert receipt.receipt_down_combo.count() == 10
+    assert receipt.receipt_down_combo.findData(40) >= 0
+    receipt.receipt_price_input.setText("315000")
+    receipt.receipt_years_input.setValue(4)
+    receipt.receipt_interest_input.setValue(1.68)
+    receipt.receipt_down_discount.setText("5000")
+    receipt.receipt_other_discount.setText("2500")
+    receipt.calculate_receipt()
+    assert "55,500.00" in receipt.receipt_result_text.toPlainText()
+    assert "ยอดจัดไฟแนนซ์: 252,000.00" in receipt.receipt_result_text.toPlainText()
+    assert "ค่างวดต่อเดือนสุทธิ: 5,602.80" in receipt.receipt_result_text.toPlainText()
+    assert "#fde047" in receipt.receipt_result_text.toHtml().lower()
+    receipt.copy_receipt()
+    assert "ส่วนลดอื่นๆ" in app.clipboard().text()
+    receipt.clear_receipt_inputs()
+    assert receipt.receipt_price_input.text() == ""
     finance_calc.copy_all()
     assert "ยอดจัดไฟแนนซ์" in app.clipboard().text()
     finance_calc.clear_inputs()
@@ -122,7 +144,8 @@ def test_finance(app):
     assert finance_calc.windowOpacity() < 0.9
     assert finance_calc.findChild(QPushButton, "financeCalculateButton") is not None
     assert "background:#DC2626" in finance_calc.styleSheet()
-    assert "by 王纯真" in finance_calc.findChild(QLabel, "financeDeveloperCredit").text()
+    assert finance_calc.findChild(QLabel, "financeDeveloperCredit") is None
+    assert "by 王纯真" in [action.text() for action in finance_calc.menu.actions()][-1]
     finance_calc.close()
     calc = WithholdingCalculator()
     assert calc.width() <= 450

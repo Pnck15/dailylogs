@@ -86,7 +86,7 @@ def quote_text(result, model="", accessories=""):
             f"ดอกเบี้ยต่อปี: {n('annual_interest')} บาท\n"
             f"ดอกเบี้ยรวม: {n('total_interest')} บาท\n"
             f"ดอกเบี้ยต่อเดือน: {n('monthly_interest')} บาท\n"
-            f"ค่างวดต่อเดือน: {n('monthly_payment')} บาท\n"
+            f"ค่างวดต่อเดือนสุทธิ: {n('monthly_payment')} บาท\n"
             f"ยอดรวมค่างวด: {n('total_installments')} บาท\n"
             f"ค่าคอมมิชชั่น: {r['commission_percent']}%\n"
             f"ค่าคอมมิชชั่นรวม VAT 7%: {n('commission_gross')} บาท\n"
@@ -94,3 +94,54 @@ def quote_text(result, model="", accessories=""):
             f"VAT 7% ของค่าคอมมิชชั่น: {n('commission_vat')} บาท\n"
             "หมายเหตุ: ค่างวดประมาณการแบบ Flat Rate "
             "ไม่รวมค่าธรรมเนียม/ประกัน/ส่วนลดที่ไม่ได้ระบุ")
+
+
+def vehicle_receipt_quote(price, down_percent, years, interest_percent,
+                          down_discount=0, other_discount=0):
+    """Discounts change ONLY what the customer pays as a down payment.
+
+    Contracted financed principal and the resulting interest/instalments
+    intentionally remain based on the ORIGINAL down-payment percentage.
+    """
+    result = finance_quote(price, down_percent, years, interest_percent)
+    discount_down = baht(money(down_discount))
+    discount_other = baht(money(other_discount))
+    total_discount = baht(discount_down + discount_other)
+    if total_discount > result["down"]:
+        raise ValueError("ยอดส่วนลดรวมต้องไม่เกินเงินดาวน์ก่อนหักส่วนลด")
+    result.update(
+        down_discount=discount_down,
+        other_discount=discount_other,
+        total_discount=total_discount,
+        receipt_down_due=baht(result["down"] - total_discount),
+    )
+    return result
+
+
+def vehicle_receipt_text(result, model="", accessories=""):
+    """Full plain-text breakdown for the receipt tab and clipboard."""
+    r = result
+
+    def n(key):
+        return format(r[key], ",.2f")
+
+    return (
+        "คำนวณใบเสร็จรับเงินค่ารถ\n"
+        f"รุ่นรถ: {model.strip() or '-'}\n"
+        f"พร้อมอุปกรณ์: {accessories.strip() or '-'}\n"
+        f"ราคาเต็มรถ: {n('price')} บาท\n"
+        f"เงินดาวน์ก่อนส่วนลด ({r['down_percent']}%): {n('down')} บาท\n"
+        f"ส่วนลดเงินดาวน์: -{n('down_discount')} บาท\n"
+        f"ส่วนลดอื่นๆ รวม: -{n('other_discount')} บาท\n"
+        f"ส่วนลดรวม: {n('total_discount')} บาท\n"
+        f"เงินดาวน์สุทธิที่ต้องชำระ: {n('receipt_down_due')} บาท\n"
+        f"ยอดจัดไฟแนนซ์: {n('financed')} บาท\n"
+        f"ผ่อน: {r['years']} ปี ({r['months']} เดือน)\n"
+        f"ดอกเบี้ย Flat Rate: {r['interest_percent']}% ต่อปี\n"
+        f"ดอกเบี้ยรวม: {n('total_interest')} บาท\n"
+        f"เงินต้นต่อเดือน: {n('monthly_principal')} บาท\n"
+        f"ดอกเบี้ยต่อเดือน: {n('monthly_interest')} บาท\n"
+        f"ค่างวดต่อเดือนสุทธิ: {n('monthly_payment')} บาท\n"
+        "ส่วนลดหักจากเงินดาวน์เท่านั้น "
+        "ไม่เปลี่ยนยอดจัดไฟแนนซ์และค่างวด"
+    )

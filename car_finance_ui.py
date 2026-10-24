@@ -1,5 +1,7 @@
 """Compact finance calculator shared by DailyLog and standalone Windows EXE."""
+import html
 import os
+import re
 import subprocess
 import sys
 import time
@@ -13,10 +15,13 @@ from PySide6.QtWidgets import (
     QTextEdit, QVBoxLayout, QWidget,
 )
 
-from car_finance_math import DOWN_OPTIONS, finance_quote, quote_text
+from car_finance_math import (
+    DOWN_OPTIONS, finance_quote, quote_text,
+    vehicle_receipt_quote, vehicle_receipt_text,
+)
 from workers import run_async
 
-CAR_CALCULATOR_VERSION = "1.1.0"
+CAR_CALCULATOR_VERSION = "1.2.0"
 DEVELOPER = "by 王纯真"
 
 
@@ -206,10 +211,7 @@ class CarFinanceCalculator(QDialog):
         self.calculate_button.clicked.connect(self.calculate)
         self.copy_button.clicked.connect(self.copy_all)
         self.tabs.addTab(first, "1. คำนวณเงินดาวน์")
-        credit = QLabel(DEVELOPER)
-        credit.setObjectName("financeDeveloperCredit")
-        credit.setAlignment(Qt.AlignmentFlag.AlignRight)
-        root.addWidget(credit)
+        self._build_receipt_tab()
         if self._can_self_update():
             self.update_timer = QTimer(self)
             self.update_timer.setInterval(15 * 60 * 1000)
@@ -243,10 +245,180 @@ class CarFinanceCalculator(QDialog):
         except ValueError as exc:
             QMessageBox.warning(self, "ตรวจสอบข้อมูล", str(exc))
             return
-        self.result_text.setPlainText(
+        self._show_calculation(
+            self.result_text,
             quote_text(result, self.model_input.text(),
                        self.accessories_input.text())
         )
+
+
+    @staticmethod
+    def _money_input(object_name, placeholder="0.00"):
+        """Numeric ASCII money input with optional two decimal places."""
+        field = QLineEdit()
+        field.setObjectName(object_name)
+        field.setPlaceholderText(placeholder)
+        field.setValidator(
+            QRegularExpressionValidator(
+                QRegularExpression(r"^[0-9]{0,9}(?:\.[0-9]{0,2})?$"),
+                field,
+            )
+        )
+        return field
+
+    @staticmethod
+    def _show_calculation(widget, plain):
+        """Yellow numeric values, bold financed principal and monthly payment."""
+        segments = []
+        bold_keys = (
+            "ยอดจัดไฟแนนซ์:",
+            "ค่างวดต่อเดือนสุทธิ:",
+            "เงินดาวน์สุทธิที่ต้องชำระ:",
+        )
+        for line in plain.splitlines():
+            safe = html.escape(line)
+            safe = re.sub(
+                r"(?<![0-9])[0-9][0-9,.]*%?",
+                lambda match: '<span style="color:#FDE047;">'
+                              + match.group(0) + "</span>",
+                safe,
+            )
+            if line.startswith(bold_keys):
+                safe = "<b>" + safe + "</b>"
+            segments.append(
+                '<div style="margin:0;padding:0;line-height:1.25;">'
+                + safe + "</div>"
+            )
+        widget.setHtml(
+            "<html><body style='color:#FFFFFF; font-family:Segoe UI;"
+            "font-size:9pt;'>" + "".join(segments) + "</body></html>"
+        )
+
+    def _build_receipt_tab(self):
+        receipt = QWidget()
+        receipt.setObjectName("financeReceiptTab")
+        form = QVBoxLayout(receipt)
+        form.setContentsMargins(7, 8, 7, 5)
+        form.setSpacing(6)
+
+        self.receipt_model_input = QLineEdit()
+        self.receipt_model_input.setObjectName("receiptCarModel")
+        self.receipt_model_input.setPlaceholderText("รุ่นรถ (ไม่บังคับ)")
+        self.receipt_accessories_input = QLineEdit()
+        self.receipt_accessories_input.setObjectName("receiptAccessories")
+        self.receipt_accessories_input.setPlaceholderText("อุปกรณ์ (ไม่บังคับ)")
+        form.addLayout(self._field_row([
+            ("รุ่นรถ", self.receipt_model_input, 1),
+            ("พร้อมอุปกรณ์", self.receipt_accessories_input, 1),
+        ]))
+
+        self.receipt_price_input = self._money_input(
+            "receiptCarPrice", "เช่น 315000"
+        )
+        form.addLayout(self._field_row([
+            ("ราคาเต็มรถ (บาท)", self.receipt_price_input, 1),
+        ]))
+
+        self.receipt_down_combo = QComboBox()
+        self.receipt_down_combo.setObjectName("receiptDownPercent")
+        for percent in DOWN_OPTIONS:
+            self.receipt_down_combo.addItem(f"{percent}%", percent)
+        self.receipt_down_combo.setCurrentIndex(
+            self.receipt_down_combo.findData(20)
+        )
+        self.receipt_years_input = QSpinBox()
+        self.receipt_years_input.setObjectName("receiptYears")
+        self.receipt_years_input.setLocale(QLocale.c())
+        self.receipt_years_input.setRange(1, 15)
+        self.receipt_years_input.setValue(4)
+        self.receipt_interest_input = QDoubleSpinBox()
+        self.receipt_interest_input.setObjectName("receiptAnnualFlatRate")
+        self.receipt_interest_input.setLocale(QLocale.c())
+        self.receipt_interest_input.setRange(0, 100)
+        self.receipt_interest_input.setDecimals(3)
+        self.receipt_interest_input.setSingleStep(0.1)
+        form.addLayout(self._field_row([
+            ("เงินดาวน์ (%)", self.receipt_down_combo, 1),
+            ("ผ่อน (ปี)", self.receipt_years_input, 1),
+            ("ดอกเบี้ย/ปี (%)", self.receipt_interest_input, 1),
+        ]))
+
+        # Discounts are deductions from cash DOWN PAYMENT only.
+        # Do not change the contracted financed balance or interest.
+        self.receipt_down_discount = self._money_input(
+            "receiptDownDiscount", "0"
+        )
+        self.receipt_other_discount = self._money_input(
+            "receiptOtherDiscount", "0"
+        )
+        form.addLayout(self._field_row([
+            ("ส่วนลดเงินดาวน์ (บาท)", self.receipt_down_discount, 1),
+            ("ส่วนลดอื่นๆ รวม (บาท)", self.receipt_other_discount, 1),
+        ]))
+        self.receipt_result_text = QTextEdit()
+        self.receipt_result_text.setObjectName("receiptQuoteSummary")
+        self.receipt_result_text.setReadOnly(True)
+        self.receipt_result_text.setPlaceholderText(
+            "คำนวณเงินดาวน์หลังหักส่วนลดสำหรับใบเสร็จ"
+        )
+        form.addWidget(self.receipt_result_text, 1)
+
+        buttons = QHBoxLayout()
+        self.receipt_clear_button = QPushButton("ล้างข้อมูล")
+        self.receipt_calculate_button = QPushButton("คำนวณใหม่")
+        self.receipt_calculate_button.setObjectName("financeCalculateButton")
+        self.receipt_copy_button = QPushButton("คัดลอกทั้งหมด")
+        buttons.addWidget(self.receipt_clear_button)
+        buttons.addWidget(self.receipt_calculate_button)
+        buttons.addWidget(self.receipt_copy_button)
+        form.addLayout(buttons)
+        self.receipt_clear_button.clicked.connect(self.clear_receipt_inputs)
+        self.receipt_calculate_button.clicked.connect(self.calculate_receipt)
+        self.receipt_copy_button.clicked.connect(self.copy_receipt)
+        self.tabs.addTab(receipt, "2. ใบเสร็จรับเงินค่ารถ")
+
+    def calculate_receipt(self):
+        try:
+            result = vehicle_receipt_quote(
+                self.receipt_price_input.text(),
+                self.receipt_down_combo.currentData(),
+                self.receipt_years_input.value(),
+                self.receipt_interest_input.value(),
+                self.receipt_down_discount.text() or "0",
+                self.receipt_other_discount.text() or "0",
+            )
+        except ValueError as exc:
+            self.receipt_result_text.clear()
+            QMessageBox.warning(self, "ตรวจสอบข้อมูล", str(exc))
+            return
+        self._show_calculation(
+            self.receipt_result_text,
+            vehicle_receipt_text(
+                result, self.receipt_model_input.text(),
+                self.receipt_accessories_input.text(),
+            ),
+        )
+
+    def clear_receipt_inputs(self):
+        self.receipt_model_input.clear()
+        self.receipt_accessories_input.clear()
+        self.receipt_price_input.clear()
+        self.receipt_down_combo.setCurrentIndex(
+            self.receipt_down_combo.findData(20)
+        )
+        self.receipt_years_input.setValue(4)
+        self.receipt_interest_input.setValue(0)
+        self.receipt_down_discount.clear()
+        self.receipt_other_discount.clear()
+        self.receipt_result_text.clear()
+
+    def copy_receipt(self):
+        if not self.receipt_result_text.toPlainText().strip():
+            self.calculate_receipt()
+        if self.receipt_result_text.toPlainText().strip():
+            QApplication.clipboard().setText(
+                self.receipt_result_text.toPlainText()
+            )
 
     def clear_inputs(self):
         self.model_input.clear()
