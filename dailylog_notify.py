@@ -41,7 +41,7 @@ from notify_updates import fetch_update, prepare_update
 from workers import run_async
 
 
-APP_VERSION = "1.5.22"
+APP_VERSION = "1.5.23"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 ORG = "MiniDailyLog"
 APP = "DailyLogNotify"
@@ -1211,6 +1211,7 @@ class NotifyApp(QWidget):
         # -----------------------------------------
 
         self.enable_startup()
+        self.ensure_recovery_task()
 
         # -----------------------------------------
         # Central receiver
@@ -2386,6 +2387,30 @@ class NotifyApp(QWidget):
             self.startup_label.setToolTip(str(error))
             print("[Notify Startup] Registry setup failed")
 
+    def ensure_recovery_task(self):
+        """Best-effort per-user Windows watchdog; no admin rights required.
+
+        The 5-minute task re-launches a failed receiver without reboot.
+        QLockFile ensures a healthy running instance cannot be duplicated.
+        Does not force logins on revoked sessions, and cannot install itself
+        on machines whose Notify process is already completely stopped.
+        """
+        if os.name != "nt" or not getattr(sys, "frozen", False):
+            return
+        try:
+            command = f'"{sys.executable}" --startup'
+            subprocess.run(
+                ["schtasks", "/Create", "/F", "/SC", "MINUTE", "/MO", "5",
+                 "/TN", "DailyLogNotify-Recovery", "/TR", command],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=12, check=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            # The HKCU Run startup path still works even if Task Scheduler
+            # policy denies standard users permission to create a task.
+            print("[Notify Recovery] Task Scheduler unavailable; using HKCU Run.")
+
     def _fetch_update_info(self):
         data = fetch_update(APP_VERSION)
         if getattr(sys, "frozen", False):
@@ -2508,7 +2533,7 @@ class NotifyApp(QWidget):
             ]
 
             # Preserve the saved account/source choices and restart into the tray.
-            args.append("--startup")
+            args.append("--after-update")
 
             self.status.setText(
                 (
@@ -2670,6 +2695,8 @@ if __name__ == "__main__":
 
     if "--startup" not in sys.argv:
         window.show()
+        if "--after-update" in sys.argv:
+            QTimer.singleShot(1000, lambda: (window.raise_(), window.activateWindow()))
 
     sys.exit(
         app.exec()

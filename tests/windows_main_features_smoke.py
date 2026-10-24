@@ -16,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QStackedWidget, QWidget, QPushButton, QLineEdit, QLabel, QListWidget, QTextEdit, QMessageBox, QCheckBox
+from car_finance_ui import CarFinanceCalculator
+from car_finance_math import finance_quote
 from dailylog_finance import invoice_withholding_3_percent, base_plus_vat_withholding_3_percent, settlement_3_percent, three_percent_adjustments, WithholdingCalculator
 from dailylog_forms import RED_PLATE_HEADER, RedPlateForm, serialize_red_plate, parse_red_plate, split_log_plate, with_log_plate, STRUCTURED_FORM_SPECS, StructuredLogForm, serialize_structured_log, parse_structured_log
 from main import DailyLog, session_hidden_after_24h
@@ -100,6 +102,20 @@ def test_finance(app):
         else:
             raise AssertionError("Three-percent tool accepted invalid amount")
 
+    finance_calc = CarFinanceCalculator()
+    assert bool(finance_calc.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
+    assert finance_calc.tabs.count() == 1
+    assert finance_calc.down_buttons.buttons() and len(finance_calc.down_buttons.buttons()) == 9
+    finance_calc.price_input.setValue(315000)
+    finance_calc.years_input.setValue(4)
+    finance_calc.interest_input.setValue(1.68)
+    finance_calc.calculate()
+    assert "5,602.80" in finance_calc.result_text.toPlainText()
+    finance_calc.copy_all()
+    assert "ยอดจัดไฟแนนซ์" in app.clipboard().text()
+    finance_calc.clear_inputs()
+    assert finance_calc.price_input.value() == 0
+    finance_calc.close()
     calc = WithholdingCalculator()
     assert calc.width() <= 450
     assert calc.tabs.count() == 3

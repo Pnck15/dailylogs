@@ -41,6 +41,8 @@ manifest = manifest_response.json()
 assert manifest["version"] == version
 assert release["target_commitish"] == manifest["source_commit"], "Release source commit mismatch"
 
+assert "FinanceCalculator.exe" in assets and assets["FinanceCalculator.exe"]["size"] > 100 * 1024
+
 for name, field in [
     ("DailyLog.exe", "sha256"),
     ("DailyLogUpdater.exe", "updater_sha256"),

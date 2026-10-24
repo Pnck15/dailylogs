@@ -33,6 +33,7 @@ on:
       - tests/windows_notify_sources_smoke.py
       - tests/windows_notify_heartbeat_smoke.py
       - tests/windows_update_smoke.py
+      - tests/test_notify_relaunch_contract.py
       - tests/verify_notify_release.py
       - .github/workflows/notify-release.yml
   workflow_dispatch:

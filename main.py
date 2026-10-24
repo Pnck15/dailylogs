@@ -53,6 +53,7 @@ from sheet_monitor import NotificationPresenter
 from update_checker import UpdateChecker
 from notify_channels import NotificationChannels
 from dailylog_finance import WithholdingCalculator
+from car_finance_ui import CarFinanceCalculator
 from dailylog_notification_history import NotificationLogsDialog
 from dailylog_notification_visibility import LocalNotificationVisibility, to_utc
 from dailylog_forms import (
@@ -68,7 +69,7 @@ APP_NAME = "DailyLog"
 APP_DISPLAY_NAME = "GAC日記"
 
 DEFAULT_ACCENT = "#2563EB"
-APP_VERSION = "1.2.18"
+APP_VERSION = "1.2.19"
 DEVELOPER_CREDIT = "Developed by 王纯真"
 
 UPDATE_CHECK_DELAY_MS = 2500
@@ -114,8 +115,8 @@ class DailyLog(QWidget):
         self.setWindowTitle(APP_DISPLAY_NAME)
 
         self.expanded_width = 580
-        self.expanded_height = 280
-        self.collapsed_height = 47
+        self.expanded_height = 310
+        self.collapsed_height = 76
 
         self.setFixedSize(
             self.expanded_width,
@@ -427,6 +428,12 @@ class DailyLog(QWidget):
         self.calculator_shortcut_button.clicked.connect(
             self.open_withholding_calculator
         )
+        self.finance_calculator_button = QPushButton("🚗 คำนวณเงินดาวน์")
+        self.finance_calculator_button.setObjectName("financeCalculatorShortcutButton")
+        self.finance_calculator_button.setToolTip(
+            "ดาวน์ • ยอดจัดไฟแนนซ์ • ดอกเบี้ย Flat Rate • ค่าคอมมิชชั่น"
+        )
+        self.finance_calculator_button.clicked.connect(self.open_car_finance_calculator)
 
         # =========================================
         # Sale Deli Sathorn Button
@@ -515,6 +522,7 @@ class DailyLog(QWidget):
             self.sa_notify_button,
             self.multi_notify_button,
             self.calculator_shortcut_button,
+            self.finance_calculator_button,
         ):
             button.setFixedHeight(24)
 
@@ -525,12 +533,12 @@ class DailyLog(QWidget):
         self.multi_notify_button.setFixedWidth(112)
         # Reclaim disk-save shortcut space for this dedicated calculator.
         self.calculator_shortcut_button.setFixedWidth(112)
+        self.finance_calculator_button.setFixedWidth(150)
 
         header.addWidget(self.sale_alert_button)
         header.addWidget(self.sale_alert_button_srinakarin)
         header.addWidget(self.sa_notify_button)
         header.addWidget(self.multi_notify_button)
-        header.addWidget(self.calculator_shortcut_button)
 
         header.addStretch()
 
@@ -561,9 +569,14 @@ class DailyLog(QWidget):
         # Assemble
         # =========================================
 
-        main_layout.addLayout(
-            header
-        )
+        main_layout.addLayout(header)
+        # Second header line: finance shortcuts below the Sathorn controls.
+        finance_shortcuts = QHBoxLayout()
+        finance_shortcuts.setSpacing(6)
+        finance_shortcuts.addWidget(self.calculator_shortcut_button)
+        finance_shortcuts.addWidget(self.finance_calculator_button)
+        finance_shortcuts.addStretch(1)
+        main_layout.addLayout(finance_shortcuts)
 
         main_layout.addWidget(
             self.pages
@@ -1968,6 +1981,18 @@ class DailyLog(QWidget):
         )
         if dialog._multi_list.count():
             dialog._multi_list.setCurrentRow(0)
+
+    def open_car_finance_calculator(self):
+        window = getattr(self, "_finance_calculator_dialog", None)
+        if window is None:
+            window = CarFinanceCalculator()
+            self._finance_calculator_dialog = window
+        if window.isMinimized():
+            window.showNormal()
+        else:
+            window.show()
+        window.raise_()
+        window.activateWindow()
 
     def open_withholding_calculator(self):
         # Non-modal, independent top-level window: the user can still

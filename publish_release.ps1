@@ -18,6 +18,8 @@ if (-not (Test-Path "release\DailyLog.exe")) {
     throw "release\DailyLog.exe not found. Run build_release.ps1 first."
 }
 
+if (-not (Test-Path "release\FinanceCalculator.exe")) { throw "Standalone FinanceCalculator.exe missing from release" }
+
 if (-not (Test-Path "release\DailyLogUpdater.exe")) {
     throw "release\DailyLogUpdater.exe not found. Run build_release.ps1 first."
 }
@@ -92,6 +94,7 @@ if ($exists) {
 gh release create $tag `
     "release\DailyLog.exe" `
     "release\DailyLogUpdater.exe" `
+    "release\FinanceCalculator.exe" `
     "version.json" `
     --repo $GitHubRepo `
     --target $commit `
