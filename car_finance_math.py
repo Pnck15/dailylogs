@@ -92,8 +92,8 @@ def quote_text(result, model="", accessories=""):
             f"ค่าคอมมิชชั่นรวม VAT 7%: {n('commission_gross')} บาท\n"
             f"ค่าคอมมิชชั่นก่อน VAT: {n('commission_base')} บาท\n"
             f"VAT 7% ของค่าคอมมิชชั่น: {n('commission_vat')} บาท\n"
-            "หมายเหตุ: ค่างวดประมาณการแบบ Flat Rate "
-            "ไม่รวมค่าธรรมเนียม/ประกัน/ส่วนลดที่ไม่ได้ระบุ")
+            "\nหมายเหตุ: ค่างวดประมาณการแบบ Flat Rate "
+            "ไม่รวมค่าธรรมเนียม/ประกัน/ส่วนลดที่ไม่ได้ระบุ").replace(": ", ":   ")
 
 
 def vehicle_receipt_quote(price, down_percent, years, interest_percent,
@@ -142,6 +142,6 @@ def vehicle_receipt_text(result, model="", accessories=""):
         f"เงินต้นต่อเดือน: {n('monthly_principal')} บาท\n"
         f"ดอกเบี้ยต่อเดือน: {n('monthly_interest')} บาท\n"
         f"ค่างวดต่อเดือนสุทธิ: {n('monthly_payment')} บาท\n"
-        "ส่วนลดหักจากเงินดาวน์เท่านั้น "
+        "\nหมายเหตุ: ส่วนลดหักจากเงินดาวน์เท่านั้น "
         "ไม่เปลี่ยนยอดจัดไฟแนนซ์และค่างวด"
-    )
+    ).replace(": ", ":   ")

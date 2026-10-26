@@ -41,6 +41,19 @@ manifest = manifest_response.json()
 assert manifest["version"] == version
 assert release["target_commitish"] == manifest["source_commit"], "Release source commit mismatch"
 
+assert "VATCalculator.exe" in assets and assets["VATCalculator.exe"]["size"] > 100 * 1024
+assert manifest["vat_download_url"] == assets["VATCalculator.exe"]["browser_download_url"]
+assert manifest["vat_sha256"] == assets["VATCalculator.exe"]["digest"].split(":", 1)[1]
+vat_tree = ast.parse((root / "vat_calculator_ui.py").read_text(encoding="utf-8"))
+vat_version = next(
+    node.value.value for node in vat_tree.body
+    if isinstance(node, ast.Assign) and any(
+        isinstance(target, ast.Name) and target.id == "VAT_CALCULATOR_VERSION"
+        for target in node.targets
+    )
+)
+assert manifest["vat_version"] == vat_version
+
 assert "FinanceCalculator.exe" in assets and assets["FinanceCalculator.exe"]["size"] > 100 * 1024
 assert manifest["finance_download_url"] == assets["FinanceCalculator.exe"]["browser_download_url"]
 assert manifest["finance_sha256"] == assets["FinanceCalculator.exe"]["digest"].split(":", 1)[1]

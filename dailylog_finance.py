@@ -167,7 +167,7 @@ class WithholdingCalculator(QDialog):
         # child that blocks mouse/keyboard input in DailyLog.exe.
         self.setWindowFlag(Qt.WindowType.Window, True)
         self.setModal(False)
-        self.setWindowTitle("เครื่องคิดเลข VAT 7% / หัก ณ ที่จ่าย 3%")
+        self.setWindowTitle("VAT Calculator 增值税计算器")
         self.resize(440, 415)
         self.setMinimumWidth(415)
         self.setStyleSheet(
@@ -178,11 +178,12 @@ class WithholdingCalculator(QDialog):
             "border: 1px solid #64748B; border-radius: 5px; padding: 5px; } "
             "QTextEdit { background: #18212E; color: white; "
             "border: 1px solid #475569; border-radius: 6px; } "
-            "QPushButton { padding: 5px 8px; } "
+            "QPushButton { background: #B91C1C; color: #FFFFFF; padding: 5px 8px; border: 1px solid #EF4444; border-radius: 5px; } "
+            "QPushButton:hover { background: #DC2626; } "
             "QTabWidget::pane { border: 1px solid #475569; } "
             "QTabBar::tab { background: #334155; color: #FFFFFF; "
             "padding: 7px 9px; border: 1px solid #475569; } "
-            "QTabBar::tab:selected { background: #1D4ED8; color: #FFFFFF; "
+            "QTabBar::tab:selected { background: #DC2626; color: #FFFFFF; "
             "font-weight: 600; }"
         )
 
@@ -338,11 +339,15 @@ class WithholdingCalculator(QDialog):
         for key, title in cls.LABELS:
             value = data[key]
             color = "#FF5252" if value < 0 else "#FDE047"
-            lines.append(
-                '<div style="margin:2px 0;">'
+            notable_tax = key in {"vat", "withheld"}
+            line_markup = (
                 f'<span style="color:#F9FAFB;">{escape(title)}:</span> '
                 f'<b style="color:{color};">{escape(baht(value))}</b>'
-                '</div>'
+            )
+            if notable_tax:
+                line_markup = f"<u>{line_markup}</u>"
+            lines.append(
+                '<div style="margin:2px 0;">' + line_markup + '</div>'
             )
         area.setHtml(
             '<html><body style="font-size:11pt;background:#18212E;">'
@@ -451,11 +456,14 @@ class WithholdingCalculator(QDialog):
                 value = data[key]
                 plain_lines.append(f"  {label}: {baht(value)}")
                 color = "#FF5252" if value < 0 else "#FDE047"
-                html_lines.append(
-                    '<div style="margin:1px 0;">'
+                row_markup = (
                     f'<span style="color:#F9FAFB;">{escape(label)}:</span> '
                     f'<b style="color:{color};">{escape(baht(value))}</b>'
-                    '</div>'
+                )
+                if "3%" in label or "7%" in label:
+                    row_markup = f"<u>{row_markup}</u>"
+                html_lines.append(
+                    '<div style="margin:1px 0;">' + row_markup + '</div>'
                 )
             plain_lines.append("")
         self._adjust_plain_result = "\n".join(plain_lines).strip()

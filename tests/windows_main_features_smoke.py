@@ -114,6 +114,8 @@ def test_finance(app):
     finance_calc.interest_input.setValue(1.68)
     finance_calc.calculate()
     assert "5,602.80" in finance_calc.result_text.toPlainText()
+    assert "ยอดจัดไฟแนนซ์:   " in finance_calc.result_text.toPlainText()
+    assert "\nหมายเหตุ:" in finance_calc.result_text.toPlainText()
     assert "ค่างวดต่อเดือนสุทธิ" in finance_calc.result_text.toPlainText()
     colored_html = finance_calc.result_text.toHtml().lower()
     assert "#fde047" in colored_html or "rgb(253, 224, 71)" in colored_html
@@ -145,13 +147,20 @@ def test_finance(app):
     assert finance_calc.price_input.text() == ""
     assert finance_calc.width() <= 420
     assert finance_calc.minimumHeight() < finance_calc.height()
-    assert finance_calc.windowOpacity() < 0.9
+    assert 0.9 <= finance_calc.windowOpacity() < 1.0
+    assert finance_calc.windowTitle() == "Car - Finance Calculator 购车分期付款计算器"
+    assert finance_calc.calculate_button.text() == "คำนวน 计算"
+    assert finance_calc.receipt_calculate_button.text() == "คำนวน 计算"
+    assert "background:#DC2626" in finance_calc.styleSheet()
     assert finance_calc.findChild(QPushButton, "financeCalculateButton") is not None
     assert "background:#DC2626" in finance_calc.styleSheet()
     assert finance_calc.findChild(QLabel, "financeDeveloperCredit") is None
     assert "by 王纯真" in [action.text() for action in finance_calc.menu.actions()][-1]
     finance_calc.close()
     calc = WithholdingCalculator()
+    assert calc.windowTitle() == "VAT Calculator 增值税计算器"
+    assert "#B91C1C" in calc.styleSheet()
+    assert "#DC2626" in calc.styleSheet()
     assert calc.width() <= 450
     assert calc.tabs.count() == 3
     assert not calc.isModal()
@@ -159,6 +168,11 @@ def test_finance(app):
     calc.gross_input.setText("5,000.00")
     assert "4,859.81" in calc.answer.toPlainText()
     assert "#fde047" in calc.answer.toHtml().lower()
+    from PySide6.QtGui import QFont
+    for vat_label in ("ภาษีมูลค่าเพิ่ม 7%", "หัก ณ ที่จ่าย 3%"):
+        vat_cursor = calc.answer.document().find(vat_label)
+        assert not vat_cursor.isNull()
+        assert vat_cursor.charFormat().fontUnderline(), vat_label
     calc.paid_input.setText("5,001")
     assert "-141.19" in calc.answer.toPlainText()
     assert "#ff5252" in calc.answer.toHtml().lower()

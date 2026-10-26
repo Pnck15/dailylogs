@@ -19,6 +19,7 @@ if (-not (Test-Path "release\DailyLog.exe")) {
 }
 
 if (-not (Test-Path "release\FinanceCalculator.exe")) { throw "Standalone FinanceCalculator.exe missing from release" }
+if (-not (Test-Path "release\VATCalculator.exe")) { throw "Standalone VATCalculator.exe missing from release" }
 
 if (-not (Test-Path "release\DailyLogUpdater.exe")) {
     throw "release\DailyLogUpdater.exe not found. Run build_release.ps1 first."
@@ -55,6 +56,11 @@ $financeVersionMatch = [regex]::Match($financeSource, 'CAR_CALCULATOR_VERSION\s*
 if (-not $financeVersionMatch.Success) { throw "Finance calculator version missing." }
 $financeVersion = $financeVersionMatch.Groups[1].Value
 $financeHash = (Get-FileHash "release\FinanceCalculator.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+$vatSource = Get-Content "vat_calculator_ui.py" -Raw
+$vatVersionMatch = [regex]::Match($vatSource, 'VAT_CALCULATOR_VERSION\s*=\s*["'']([^"'']+)["'']')
+if (-not $vatVersionMatch.Success) { throw "VAT calculator version missing." }
+$vatVersion = $vatVersionMatch.Groups[1].Value
+$vatHash = (Get-FileHash "release\VATCalculator.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
 $downloadUrl = "https://github.com/$GitHubRepo/releases/download/$tag/DailyLog.exe"
 
 $manifest = [ordered]@{
@@ -66,6 +72,9 @@ $manifest = [ordered]@{
     finance_version = $financeVersion
     finance_download_url = "https://github.com/$GitHubRepo/releases/download/$tag/FinanceCalculator.exe"
     finance_sha256 = $financeHash
+    vat_version = $vatVersion
+    vat_download_url = "https://github.com/$GitHubRepo/releases/download/$tag/VATCalculator.exe"
+    vat_sha256 = $vatHash
     source_commit = $commit
     published_at = (
         Get-Date
@@ -103,6 +112,7 @@ gh release create $tag `
     "release\DailyLog.exe" `
     "release\DailyLogUpdater.exe" `
     "release\FinanceCalculator.exe" `
+    "release\VATCalculator.exe" `
     "version.json" `
     --repo $GitHubRepo `
     --target $commit `

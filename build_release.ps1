@@ -21,7 +21,7 @@ if ($GitHubRepo.Trim()) {
 }
 
 .\.venv\Scripts\python.exe -m pip install -r requirements-main-build.txt
-foreach ($spec in @("main.spec", "updater.spec", "FinanceCalculator.spec")) {
+foreach ($spec in @("main.spec", "updater.spec", "FinanceCalculator.spec", "VATCalculator.spec")) {
     & .\.venv\Scripts\python.exe -m PyInstaller --clean --noconfirm $spec
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed: $spec" }
 }
@@ -30,4 +30,5 @@ New-Item -ItemType Directory -Force -Path "release" | Out-Null
 Copy-Item "dist\DailyLog.exe" "release\DailyLog.exe" -Force
 Copy-Item "dist\DailyLogUpdater.exe" "release\DailyLogUpdater.exe" -Force
 Copy-Item "dist\FinanceCalculator.exe" "release\FinanceCalculator.exe" -Force
+Copy-Item "dist\VATCalculator.exe" "release\VATCalculator.exe" -Force
 Write-Host "Release ready: release\DailyLog.exe + release\DailyLogUpdater.exe"

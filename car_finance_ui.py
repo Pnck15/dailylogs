@@ -21,7 +21,7 @@ from car_finance_math import (
 )
 from workers import run_async
 
-CAR_CALCULATOR_VERSION = "1.2.0"
+CAR_CALCULATOR_VERSION = "1.3.0"
 DEVELOPER = "by 王纯真"
 
 
@@ -59,12 +59,12 @@ class CarFinanceCalculator(QDialog):
             | Qt.WindowType.WindowMaximizeButtonHint
             | Qt.WindowType.WindowCloseButtonHint
         )
-        self.setWindowTitle("Finance Calculator")
+        self.setWindowTitle("Car - Finance Calculator 购车分期付款计算器")
         self.setModal(False)
         # The native window border remains freely resizable vertically.
         self.resize(402, 510)
         self.setMinimumSize(355, 385)
-        self.setWindowOpacity(0.82)
+        self.setWindowOpacity(0.93)
         self.setObjectName("carFinanceCalculator")
         self.setStyleSheet(
             "QDialog, QWidget { background:#1A202B; color:#F9FAFB; }"
@@ -79,9 +79,9 @@ class CarFinanceCalculator(QDialog):
             "QPushButton {background:#344255;color:#FFFFFF;"
             "border:1px solid #475569;border-radius:5px;padding:5px 7px;}"
             "QPushButton:hover {background:#46566B;}"
-            "QPushButton#financeCalculateButton {background:#2563EB;"
-            "border:1px solid #3B82F6;font-weight:700;}"
-            "QPushButton#financeCalculateButton:hover {background:#1D4ED8;}"
+            "QPushButton#financeCalculateButton {background:#DC2626;"
+            "border:1px solid #EF4444;font-weight:700;}"
+            "QPushButton#financeCalculateButton:hover {background:#B91C1C;}"
             "QTabWidget::pane {border:1px solid #7F1D1D;}"
             "QTabBar::tab {background:#7F1D1D;color:#FFFFFF;"
             "padding:6px 11px;border:1px solid #991B1B;}"
@@ -199,7 +199,7 @@ class CarFinanceCalculator(QDialog):
 
         buttons = QHBoxLayout()
         self.clear_button = QPushButton("ล้างข้อมูล")
-        self.calculate_button = QPushButton("คำนวณใหม่")
+        self.calculate_button = QPushButton("คำนวน 计算")
         self.calculate_button.setObjectName("financeCalculateButton")
         self.calculate_button.setDefault(True)
         self.copy_button = QPushButton("คัดลอกทั้งหมด")
@@ -276,7 +276,7 @@ class CarFinanceCalculator(QDialog):
             "เงินดาวน์สุทธิที่ต้องชำระ:",
         )
         for line in plain.splitlines():
-            safe = html.escape(line)
+            safe = html.escape(line).replace(":   ", ":&nbsp;&nbsp;&nbsp;")
             safe = re.sub(
                 r"(?<![0-9])[0-9][0-9,.]*%?",
                 lambda match: '<span style="color:#FDE047;">'
@@ -365,7 +365,7 @@ class CarFinanceCalculator(QDialog):
 
         buttons = QHBoxLayout()
         self.receipt_clear_button = QPushButton("ล้างข้อมูล")
-        self.receipt_calculate_button = QPushButton("คำนวณใหม่")
+        self.receipt_calculate_button = QPushButton("คำนวน 计算")
         self.receipt_calculate_button.setObjectName("financeCalculateButton")
         self.receipt_copy_button = QPushButton("คัดลอกทั้งหมด")
         buttons.addWidget(self.receipt_clear_button)
