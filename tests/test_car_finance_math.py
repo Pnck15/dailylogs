@@ -38,8 +38,8 @@ class FinanceTests(unittest.TestCase):
             self.assertEqual(invoice[key], base[key], key)
         text = vehicle_receipt_text(invoice, "EV", "กล้อง")
         self.assertIn("55,500.00", text)
-        self.assertIn("ยอดจัดไฟแนนซ์: 252,000.00", text)
-        self.assertIn("ค่างวดต่อเดือนสุทธิ: 5,602.80", text)
+        self.assertIn("ยอดจัดไฟแนนซ์:   252,000.00", text)
+        self.assertIn("ค่างวดต่อเดือนสุทธิ:   5,602.80", text)
         self.assertNotIn("คอมมิชชั่น", text)
 
     def test_vehicle_receipt_zero_and_discount_limits(self):
