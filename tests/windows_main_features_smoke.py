@@ -105,7 +105,7 @@ def test_finance(app):
     finance_calc = CarFinanceCalculator()
     assert bool(finance_calc.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
     assert finance_calc.tabs.count() == 2
-    assert finance_calc.tabs.tabText(1) == "2. ใบเสร็จรับเงินค่ารถ"
+    assert finance_calc.tabs.tabText(1) == "2. ใบเสร็จรับเงินค่ารถ / 购车款收据"
     assert finance_calc.down_combo.count() == 10
     assert finance_calc.down_combo.itemData(7) == 40
     assert finance_calc.down_combo.currentData() == 20
@@ -114,8 +114,8 @@ def test_finance(app):
     finance_calc.interest_input.setValue(1.68)
     finance_calc.calculate()
     assert "5,602.80" in finance_calc.result_text.toPlainText()
-    assert "ยอดจัดไฟแนนซ์:" in finance_calc.result_text.toPlainText()
-    assert "หมายเหตุ:" in finance_calc.result_text.toPlainText()
+    assert "ยอดจัดไฟแนนซ์ / 贷款金额:" in finance_calc.result_text.toPlainText()
+    assert "หมายเหตุ / 备注:" in finance_calc.result_text.toPlainText()
     assert "ค่างวดต่อเดือนสุทธิ" in finance_calc.result_text.toPlainText()
     colored_html = finance_calc.result_text.toHtml().lower()
     assert "#fde047" in colored_html or "rgb(253, 224, 71)" in colored_html
@@ -134,8 +134,8 @@ def test_finance(app):
     receipt.receipt_other_discount.setText("2500")
     receipt.calculate_receipt()
     assert "55,500.00" in receipt.receipt_result_text.toPlainText()
-    assert "ยอดจัดไฟแนนซ์:" in receipt.receipt_result_text.toPlainText()
-    assert "ค่างวดต่อเดือนสุทธิ:" in receipt.receipt_result_text.toPlainText()
+    assert "ยอดจัดไฟแนนซ์ / 贷款金额:" in receipt.receipt_result_text.toPlainText()
+    assert "ค่างวดต่อเดือนสุทธิ / 每月应还款额:" in receipt.receipt_result_text.toPlainText()
     assert "#fde047" in receipt.receipt_result_text.toHtml().lower()
     receipt.copy_receipt()
     assert "ส่วนลดอื่นๆ" in app.clipboard().text()
@@ -145,12 +145,12 @@ def test_finance(app):
     assert "ยอดจัดไฟแนนซ์" in app.clipboard().text()
     finance_calc.clear_inputs()
     assert finance_calc.price_input.text() == ""
-    assert finance_calc.width() <= 420
+    assert finance_calc.width() <= 550
     assert finance_calc.minimumHeight() < finance_calc.height()
     assert 0.9 <= finance_calc.windowOpacity() < 1.0
     assert finance_calc.windowTitle() == "Car - Finance Calculator 购车分期付款计算器"
-    assert finance_calc.calculate_button.text() == "คำนวน 计算"
-    assert finance_calc.receipt_calculate_button.text() == "คำนวน 计算"
+    assert finance_calc.calculate_button.text() == "คำนวน / 计算"
+    assert finance_calc.receipt_calculate_button.text() == "คำนวน / 计算"
     assert "background:#DC2626" in finance_calc.styleSheet()
     assert finance_calc.findChild(QPushButton, "financeCalculateButton") is not None
     assert "background:#DC2626" in finance_calc.styleSheet()
@@ -161,8 +161,13 @@ def test_finance(app):
     assert calc.windowTitle() == "VAT Calculator 增值税计算器"
     assert "#B91C1C" in calc.styleSheet()
     assert "#DC2626" in calc.styleSheet()
-    assert calc.width() <= 450
+    assert calc.width() <= 650
     assert calc.tabs.count() == 3
+    assert "含税账单" in calc.tabs.tabText(0)
+    assert "加税扣税" in calc.tabs.tabText(1)
+    assert "加减3%" in calc.tabs.tabText(2)
+    assert "账单总额" in calc.LABELS[0][1]
+    assert "预扣税" in calc.LABELS[3][1]
     assert not calc.isModal()
     assert bool(calc.windowFlags() & Qt.WindowType.Window)
     calc.gross_input.setText("5,000.00")
@@ -177,7 +182,7 @@ def test_finance(app):
     assert "-141.19" in calc.answer.toPlainText()
     assert "#ff5252" in calc.answer.toHtml().lower()
     calc.copy_result()
-    assert "140.19 บาท" in app.clipboard().text()
+    assert "140.19 บาท（泰铢）" in app.clipboard().text()
 
     # Partition 2 must be independently editable/copyable from Partition 1.
     calc.tabs.setCurrentIndex(1)

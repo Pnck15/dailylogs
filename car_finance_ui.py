@@ -21,7 +21,7 @@ from car_finance_math import (
 )
 from workers import run_async
 
-CAR_CALCULATOR_VERSION = "1.3.0"
+CAR_CALCULATOR_VERSION = "1.4.0"
 DEVELOPER = "by 王纯真"
 
 
@@ -30,7 +30,7 @@ def set_start_with_windows(enabled, executable=None):
     if executable is None:
         executable = sys.executable if getattr(sys, "frozen", False) else ""
     if not executable or not Path(executable).is_file():
-        raise ValueError("ใช้ FinanceCalculator.exe ที่ Build แล้วสำหรับเปิดพร้อม Windows")
+        raise ValueError("ใช้ FinanceCalculator.exe ที่ Build แล้วสำหรับเปิดพร้อม Windows / 请使用已打包的FinanceCalculator.exe设置开机启动")
     key = QSettings(
         r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run",
         QSettings.Format.NativeFormat,
@@ -41,7 +41,7 @@ def set_start_with_windows(enabled, executable=None):
         key.remove("DailyLogFinanceCalculator")
     key.sync()
     if key.status() != QSettings.Status.NoError:
-        raise OSError("ไม่สามารถบันทึก Windows Startup Registry ได้")
+        raise OSError("ไม่สามารถบันทึก Windows Startup Registry ได้ / 无法保存开机启动设置")
     return bool(key.value("DailyLogFinanceCalculator", ""))
 
 
@@ -62,8 +62,8 @@ class CarFinanceCalculator(QDialog):
         self.setWindowTitle("Car - Finance Calculator 购车分期付款计算器")
         self.setModal(False)
         # The native window border remains freely resizable vertically.
-        self.resize(402, 510)
-        self.setMinimumSize(355, 385)
+        self.resize(510, 535)
+        self.setMinimumSize(455, 390)
         self.setWindowOpacity(0.93)
         self.setObjectName("carFinanceCalculator")
         self.setStyleSheet(
@@ -94,7 +94,7 @@ class CarFinanceCalculator(QDialog):
         root.setContentsMargins(8, 6, 8, 6)
         root.setSpacing(4)
         head = QHBoxLayout()
-        head.addWidget(QLabel("🚗 เงินดาวน์ · ดอกเบี้ย · คอมมิชชั่น"), 1)
+        head.addWidget(QLabel("🚗 เงินดาวน์ / 首付款 · ดอกเบี้ย / 利息 · คอมมิชชั่น / 佣金"), 1)
         self.menu_button = QPushButton("☰")
         self.menu_button.setObjectName("calculatorOptionsMenu")
         self.menu_button.setFixedWidth(34)
@@ -102,25 +102,25 @@ class CarFinanceCalculator(QDialog):
         root.addLayout(head)
 
         self.menu = QMenu(self)
-        self.on_top_action = self.menu.addAction("อยู่ด้านบนสุด (Always on Top)")
+        self.on_top_action = self.menu.addAction("อยู่ด้านบนสุด / 窗口置顶 (Always on Top)")
         self.on_top_action.setCheckable(True)
         self.on_top_action.setChecked(True)
         self.on_top_action.triggered.connect(self._update_on_top)
-        self.startup_action = self.menu.addAction("เปิดอัตโนมัติเมื่อเข้า Windows")
+        self.startup_action = self.menu.addAction("เปิดอัตโนมัติเมื่อเข้า Windows / 开机自动启动")
         self.startup_action.setCheckable(True)
         self.startup_action.setEnabled(
             self._standalone and bool(getattr(sys, "frozen", False))
         )
         self.startup_action.setChecked(self._startup_enabled())
         self.startup_action.triggered.connect(self._update_startup)
-        self.auto_update_action = self.menu.addAction("อัปเดตอัตโนมัติ")
+        self.auto_update_action = self.menu.addAction("อัปเดตอัตโนมัติ / 自动更新")
         self.auto_update_action.setCheckable(True)
         self.auto_update_action.setChecked(
             self._settings.value("updates/auto_enabled", True, type=bool)
         )
         self.auto_update_action.setEnabled(self._can_self_update())
         self.auto_update_action.triggered.connect(self._toggle_auto_update)
-        self.manual_update_action = self.menu.addAction("ตรวจสอบอัปเดต")
+        self.manual_update_action = self.menu.addAction("ตรวจสอบอัปเดต / 检查更新")
         self.manual_update_action.setEnabled(self._can_self_update())
         self.manual_update_action.triggered.connect(
             lambda: self.check_for_updates(manual=True)
@@ -139,18 +139,18 @@ class CarFinanceCalculator(QDialog):
         # All four fields align in precisely two compact columns.
         self.model_input = QLineEdit()
         self.model_input.setObjectName("financeModel")
-        self.model_input.setPlaceholderText("รุ่นรถ (ไม่บังคับ)")
+        self.model_input.setPlaceholderText("รุ่นรถ (ไม่บังคับ) / 车型（选填）")
         self.accessories_input = QLineEdit()
         self.accessories_input.setObjectName("financeAccessories")
-        self.accessories_input.setPlaceholderText("อุปกรณ์ (ไม่บังคับ)")
+        self.accessories_input.setPlaceholderText("อุปกรณ์ (ไม่บังคับ) / 配件（选填）")
         frame.addLayout(self._field_row([
-            ("รุ่นรถ", self.model_input, 1),
-            ("พร้อมอุปกรณ์", self.accessories_input, 1),
+            ("รุ่นรถ / 车型", self.model_input, 1),
+            ("พร้อมอุปกรณ์ / 随车配件", self.accessories_input, 1),
         ]))
 
         self.price_input = QLineEdit()
         self.price_input.setObjectName("financeCarPrice")
-        self.price_input.setPlaceholderText("เช่น 315000")
+        self.price_input.setPlaceholderText("เช่น 315000 / 例如 315000")
         # ASCII 0–9 and optional decimal separator only. No Thai numerals.
         self.price_input.setValidator(
             QRegularExpressionValidator(
@@ -164,8 +164,8 @@ class CarFinanceCalculator(QDialog):
             self.down_combo.addItem(f"{percent}%", percent)
         self.down_combo.setCurrentIndex(self.down_combo.findData(20))
         frame.addLayout(self._field_row([
-            ("ราคาเต็มรถ (บาท)", self.price_input, 2),
-            ("เงินดาวน์ (%)", self.down_combo, 1),
+            ("ราคาเต็มรถ / 车价 (บาท)", self.price_input, 2),
+            ("เงินดาวน์ / 首付 (%)", self.down_combo, 1),
         ]))
 
         self.years_input = QSpinBox()
@@ -186,23 +186,23 @@ class CarFinanceCalculator(QDialog):
         self.commission_input.setDecimals(3)
         self.commission_input.setSingleStep(0.1)
         frame.addLayout(self._field_row([
-            ("ผ่อน (ปี)", self.years_input, 1),
-            ("ดอกเบี้ย/ปี (%)", self.interest_input, 1),
-            ("คอมมิชชั่น (%)", self.commission_input, 1),
+            ("ผ่อน / 年限 (ปี)", self.years_input, 1),
+            ("ดอกเบี้ย/ปี / 年息 (%)", self.interest_input, 1),
+            ("คอมมิชชั่น / 佣金 (%)", self.commission_input, 1),
         ]))
 
         self.result_text = QTextEdit()
         self.result_text.setObjectName("financeQuoteSummary")
         self.result_text.setReadOnly(True)
-        self.result_text.setPlaceholderText("กรอกราคาแล้วกดคำนวณ")
+        self.result_text.setPlaceholderText("กรอกราคาแล้วกดคำนวณ / 请输入车价并点击计算")
         frame.addWidget(self.result_text, 1)
 
         buttons = QHBoxLayout()
-        self.clear_button = QPushButton("ล้างข้อมูล")
-        self.calculate_button = QPushButton("คำนวน 计算")
+        self.clear_button = QPushButton("ล้างข้อมูล / 清空")
+        self.calculate_button = QPushButton("คำนวน / 计算")
         self.calculate_button.setObjectName("financeCalculateButton")
         self.calculate_button.setDefault(True)
-        self.copy_button = QPushButton("คัดลอกทั้งหมด")
+        self.copy_button = QPushButton("คัดลอกทั้งหมด / 复制全部")
         buttons.addWidget(self.clear_button)
         buttons.addWidget(self.calculate_button)
         buttons.addWidget(self.copy_button)
@@ -210,7 +210,7 @@ class CarFinanceCalculator(QDialog):
         self.clear_button.clicked.connect(self.clear_inputs)
         self.calculate_button.clicked.connect(self.calculate)
         self.copy_button.clicked.connect(self.copy_all)
-        self.tabs.addTab(first, "1. คำนวณเงินดาวน์")
+        self.tabs.addTab(first, "1. คำนวณเงินดาวน์ / 首付款计算")
         self._build_receipt_tab()
         if self._can_self_update():
             self.update_timer = QTimer(self)
@@ -243,7 +243,7 @@ class CarFinanceCalculator(QDialog):
                 self.commission_input.value()
             )
         except ValueError as exc:
-            QMessageBox.warning(self, "ตรวจสอบข้อมูล", str(exc))
+            QMessageBox.warning(self, "ตรวจสอบข้อมูล / 检查输入", str(exc))
             return
         self._show_calculation(
             self.result_text,
@@ -271,9 +271,9 @@ class CarFinanceCalculator(QDialog):
         """Yellow numeric values, bold financed principal and monthly payment."""
         segments = []
         bold_keys = (
-            "ยอดจัดไฟแนนซ์:",
-            "ค่างวดต่อเดือนสุทธิ:",
-            "เงินดาวน์สุทธิที่ต้องชำระ:",
+            "ยอดจัดไฟแนนซ์",
+            "ค่างวดต่อเดือนสุทธิ",
+            "เงินดาวน์สุทธิที่ต้องชำระ",
         )
         for line in plain.splitlines():
             safe = html.escape(line).replace(":   ", ":&nbsp;&nbsp;&nbsp;")
@@ -303,20 +303,20 @@ class CarFinanceCalculator(QDialog):
 
         self.receipt_model_input = QLineEdit()
         self.receipt_model_input.setObjectName("receiptCarModel")
-        self.receipt_model_input.setPlaceholderText("รุ่นรถ (ไม่บังคับ)")
+        self.receipt_model_input.setPlaceholderText("รุ่นรถ (ไม่บังคับ) / 车型（选填）")
         self.receipt_accessories_input = QLineEdit()
         self.receipt_accessories_input.setObjectName("receiptAccessories")
-        self.receipt_accessories_input.setPlaceholderText("อุปกรณ์ (ไม่บังคับ)")
+        self.receipt_accessories_input.setPlaceholderText("อุปกรณ์ (ไม่บังคับ) / 配件（选填）")
         form.addLayout(self._field_row([
-            ("รุ่นรถ", self.receipt_model_input, 1),
-            ("พร้อมอุปกรณ์", self.receipt_accessories_input, 1),
+            ("รุ่นรถ / 车型", self.receipt_model_input, 1),
+            ("พร้อมอุปกรณ์ / 随车配件", self.receipt_accessories_input, 1),
         ]))
 
         self.receipt_price_input = self._money_input(
-            "receiptCarPrice", "เช่น 315000"
+            "receiptCarPrice", "เช่น 315000 / 例如 315000"
         )
         form.addLayout(self._field_row([
-            ("ราคาเต็มรถ (บาท)", self.receipt_price_input, 1),
+            ("ราคาเต็มรถ / 车价 (บาท)", self.receipt_price_input, 1),
         ]))
 
         self.receipt_down_combo = QComboBox()
@@ -338,9 +338,9 @@ class CarFinanceCalculator(QDialog):
         self.receipt_interest_input.setDecimals(3)
         self.receipt_interest_input.setSingleStep(0.1)
         form.addLayout(self._field_row([
-            ("เงินดาวน์ (%)", self.receipt_down_combo, 1),
-            ("ผ่อน (ปี)", self.receipt_years_input, 1),
-            ("ดอกเบี้ย/ปี (%)", self.receipt_interest_input, 1),
+            ("เงินดาวน์ / 首付 (%)", self.receipt_down_combo, 1),
+            ("ผ่อน / 年限 (ปี)", self.receipt_years_input, 1),
+            ("ดอกเบี้ย/ปี / 年息 (%)", self.receipt_interest_input, 1),
         ]))
 
         # Discounts are deductions from cash DOWN PAYMENT only.
@@ -352,22 +352,22 @@ class CarFinanceCalculator(QDialog):
             "receiptOtherDiscount", "0"
         )
         form.addLayout(self._field_row([
-            ("ส่วนลดเงินดาวน์ (บาท)", self.receipt_down_discount, 1),
-            ("ส่วนลดอื่นๆ รวม (บาท)", self.receipt_other_discount, 1),
+            ("ส่วนลดเงินดาวน์ / 首付优惠 (บาท)", self.receipt_down_discount, 1),
+            ("ส่วนลดอื่นๆ รวม / 其他优惠 (บาท)", self.receipt_other_discount, 1),
         ]))
         self.receipt_result_text = QTextEdit()
         self.receipt_result_text.setObjectName("receiptQuoteSummary")
         self.receipt_result_text.setReadOnly(True)
         self.receipt_result_text.setPlaceholderText(
-            "คำนวณเงินดาวน์หลังหักส่วนลดสำหรับใบเสร็จ"
+            "คำนวณเงินดาวน์หลังหักส่วนลดสำหรับใบเสร็จ / 计算收据实付首付款"
         )
         form.addWidget(self.receipt_result_text, 1)
 
         buttons = QHBoxLayout()
-        self.receipt_clear_button = QPushButton("ล้างข้อมูล")
-        self.receipt_calculate_button = QPushButton("คำนวน 计算")
+        self.receipt_clear_button = QPushButton("ล้างข้อมูล / 清空")
+        self.receipt_calculate_button = QPushButton("คำนวน / 计算")
         self.receipt_calculate_button.setObjectName("financeCalculateButton")
-        self.receipt_copy_button = QPushButton("คัดลอกทั้งหมด")
+        self.receipt_copy_button = QPushButton("คัดลอกทั้งหมด / 复制全部")
         buttons.addWidget(self.receipt_clear_button)
         buttons.addWidget(self.receipt_calculate_button)
         buttons.addWidget(self.receipt_copy_button)
@@ -375,7 +375,7 @@ class CarFinanceCalculator(QDialog):
         self.receipt_clear_button.clicked.connect(self.clear_receipt_inputs)
         self.receipt_calculate_button.clicked.connect(self.calculate_receipt)
         self.receipt_copy_button.clicked.connect(self.copy_receipt)
-        self.tabs.addTab(receipt, "2. ใบเสร็จรับเงินค่ารถ")
+        self.tabs.addTab(receipt, "2. ใบเสร็จรับเงินค่ารถ / 购车款收据")
 
     def calculate_receipt(self):
         try:
@@ -389,7 +389,7 @@ class CarFinanceCalculator(QDialog):
             )
         except ValueError as exc:
             self.receipt_result_text.clear()
-            QMessageBox.warning(self, "ตรวจสอบข้อมูล", str(exc))
+            QMessageBox.warning(self, "ตรวจสอบข้อมูล / 检查输入", str(exc))
             return
         self._show_calculation(
             self.receipt_result_text,
@@ -477,8 +477,8 @@ class CarFinanceCalculator(QDialog):
         if not self._can_self_update():
             if manual:
                 QMessageBox.information(
-                    self, "Finance Calculator", "โปรแกรมรุ่นใน DailyLog.exe "
-                    "จะอัปเดตพร้อมโปรแกรมหลัก"
+                    self, "Car - Finance Calculator 购车分期付款计算器", "โปรแกรมรุ่นใน DailyLog.exe / DailyLog内置版 "
+                    "จะอัปเดตพร้อมโปรแกรมหลัก / 将随主程序一起更新"
                 )
             return
         if self._checking_update:
@@ -500,7 +500,7 @@ class CarFinanceCalculator(QDialog):
             if not result.get("available"):
                 if manual:
                     QMessageBox.information(
-                        self, "Finance Calculator", "เป็นเวอร์ชันล่าสุดแล้ว "
+                        self, "Car - Finance Calculator 购车分期付款计算器", "เป็นเวอร์ชันล่าสุดแล้ว / 已是最新版本 "
                         f"v{CAR_CALCULATOR_VERSION}\n{DEVELOPER}"
                     )
                 return
@@ -515,7 +515,7 @@ class CarFinanceCalculator(QDialog):
             except (OSError, ValueError) as exc:
                 QMessageBox.warning(
                     self, "Finance Calculator Update",
-                    f"เริ่มอัปเดตไม่ได้: {exc}"
+                    f"เริ่มอัปเดตไม่ได้ / 无法启动更新: {exc}"
                 )
 
         def failure(error):
@@ -523,7 +523,7 @@ class CarFinanceCalculator(QDialog):
             if manual:
                 QMessageBox.warning(
                     self, "Finance Calculator Update",
-                    "ตรวจสอบอัปเดตไม่สำเร็จ: " + str(error)[:240]
+                    "ตรวจสอบอัปเดต / 检查更新ไม่สำเร็จ / 检查更新失败: " + str(error)[:240]
                 )
 
         run_async(self, lookup, success, failure)

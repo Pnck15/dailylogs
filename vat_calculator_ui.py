@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from dailylog_finance import WithholdingCalculator
 from workers import run_async
 
-VAT_CALCULATOR_VERSION = "1.0.0"
+VAT_CALCULATOR_VERSION = "1.1.0"
 VAT_DISPLAY_TITLE = "VAT Calculator 增值税计算器"
 VAT_CREDIT = "by 王纯真"
 RUN_KEY = "DailyLogVATCalculator"
@@ -24,7 +24,7 @@ def set_vat_start_with_windows(enabled, executable=None):
     """Enable/disable HKCU per-user startup, no administrator access needed."""
     executable = executable or (sys.executable if getattr(sys, "frozen", False) else "")
     if not executable or not Path(executable).is_file():
-        raise ValueError("เปิดพร้อม Windows ต้องใช้โปรแกรม VATCalculator.exe")
+        raise ValueError("เปิดพร้อม Windows ต้องใช้โปรแกรม VATCalculator.exe / 开机启动需要安装VATCalculator.exe")
     settings = QSettings(
         r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run",
         QSettings.Format.NativeFormat,
@@ -35,7 +35,7 @@ def set_vat_start_with_windows(enabled, executable=None):
         settings.remove(RUN_KEY)
     settings.sync()
     if settings.status() != QSettings.Status.NoError:
-        raise OSError("ไม่สามารถบันทึก Windows Startup ได้")
+        raise OSError("ไม่สามารถบันทึก Windows Startup ได้ / 无法保存开机启动设置")
     return bool(settings.value(RUN_KEY, ""))
 
 
@@ -63,23 +63,23 @@ class VATCalculatorWindow(WithholdingCalculator):
         header.addWidget(self.menu_button)
         self.layout().insertLayout(0, header)
         self.menu = QMenu(self)
-        self.top_action = self.menu.addAction("อยู่ด้านบนสุด (Always on Top)")
+        self.top_action = self.menu.addAction("อยู่ด้านบนสุด / 窗口置顶 (Always on Top)")
         self.top_action.setCheckable(True)
         self.top_action.setChecked(True)
         self.top_action.triggered.connect(self._on_top)
-        self.startup_action = self.menu.addAction("เปิดอัตโนมัติเมื่อเข้า Windows")
+        self.startup_action = self.menu.addAction("เปิดอัตโนมัติเมื่อเข้า Windows / 开机自动启动")
         self.startup_action.setCheckable(True)
         self.startup_action.setEnabled(self._can_self_update())
         self.startup_action.setChecked(self._is_startup_enabled())
         self.startup_action.triggered.connect(self._set_startup)
-        self.auto_action = self.menu.addAction("อัปเดตอัตโนมัติ")
+        self.auto_action = self.menu.addAction("อัปเดตอัตโนมัติ / 自动更新")
         self.auto_action.setCheckable(True)
         self.auto_action.setChecked(
             self._settings.value("updates/auto_enabled", True, type=bool)
         )
         self.auto_action.setEnabled(self._can_self_update())
         self.auto_action.triggered.connect(self._toggle_auto)
-        self.check_action = self.menu.addAction("ตรวจสอบอัปเดต")
+        self.check_action = self.menu.addAction("ตรวจสอบอัปเดต / 检查更新")
         self.check_action.setEnabled(self._can_self_update())
         self.check_action.triggered.connect(
             lambda: self.check_for_updates(manual=True)
@@ -139,7 +139,7 @@ class VATCalculatorWindow(WithholdingCalculator):
             if manual:
                 QMessageBox.information(
                     self, VAT_DISPLAY_TITLE,
-                    "ตัวที่เปิดจาก DailyLog.exe จะอัปเดตพร้อมโปรแกรมหลัก\n"
+                    "ตัวที่เปิดจาก DailyLog.exe จะอัปเดตพร้อมโปรแกรมหลัก / 内置版将随主程序更新\n"
                     + VAT_CREDIT,
                 )
             return
@@ -164,15 +164,15 @@ class VATCalculatorWindow(WithholdingCalculator):
                 if manual:
                     QMessageBox.information(
                         self, VAT_DISPLAY_TITLE,
-                        f"คุณใช้เวอร์ชันล่าสุดแล้ว v{VAT_CALCULATOR_VERSION}\n"
+                        f"คุณใช้เวอร์ชันล่าสุดแล้ว / 当前已是最新版本 v{VAT_CALCULATOR_VERSION}\n"
                         + VAT_CREDIT,
                     )
                 return
             if manual:
                 choice = QMessageBox.question(
                     self, VAT_DISPLAY_TITLE + " — Update",
-                    f"พบ VAT Calculator v{info['latest']}\n"
-                    "ติดตั้งอัปเดตและเปิดโปรแกรมใหม่หรือไม่?\n\n"
+                    f"พบ VAT Calculator เวอร์ชันใหม่ / 发现新版本 v{info['latest']}\n"
+                    "ติดตั้งอัปเดตและเปิดโปรแกรมใหม่หรือไม่? / 是否安装更新并重新打开程序？\n\n"
                     + VAT_CREDIT,
                     QMessageBox.StandardButton.Yes
                     | QMessageBox.StandardButton.No,
@@ -190,7 +190,7 @@ class VATCalculatorWindow(WithholdingCalculator):
             except (OSError, ValueError) as error:
                 QMessageBox.warning(
                     self, VAT_DISPLAY_TITLE + " — Update",
-                    f"เริ่มอัปเดตไม่สำเร็จ: {error}\n\n{VAT_CREDIT}",
+                    f"เริ่มอัปเดตไม่สำเร็จ / 无法启动更新: {error}\n\n{VAT_CREDIT}",
                 )
 
         def failed(error):
@@ -198,7 +198,7 @@ class VATCalculatorWindow(WithholdingCalculator):
             if manual:
                 QMessageBox.warning(
                     self, VAT_DISPLAY_TITLE + " — Update",
-                    f"ตรวจสอบอัปเดตไม่สำเร็จ: {str(error)[:240]}\n\n{VAT_CREDIT}",
+                    f"ตรวจสอบอัปเดต / 检查更新ไม่สำเร็จ / 检查更新失败: {str(error)[:240]}\n\n{VAT_CREDIT}",
                 )
 
         run_async(self, lookup, success, failed)

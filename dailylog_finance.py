@@ -20,9 +20,9 @@ def amount(value):
     try:
         result = Decimal(value)
     except (InvalidOperation, ValueError) as error:
-        raise ValueError("กรุณาระบุยอดเงินเป็นตัวเลขที่ถูกต้อง") from error
+        raise ValueError("กรุณาระบุยอดเงินเป็นตัวเลขที่ถูกต้อง / 请输入有效金额") from error
     if not result.is_finite() or result < 0:
-        raise ValueError("ยอดเงินต้องเป็นตัวเลขที่ไม่ติดลบ")
+        raise ValueError("ยอดเงินต้องเป็นตัวเลขที่ไม่ติดลบ / 金额不得为负数")
     return result.quantize(SATANG, rounding=ROUND_HALF_UP)
 
 
@@ -75,7 +75,7 @@ def settlement_3_percent(tax_base, invoice_amount=None, already_paid=0):
 
 
 def baht(value):
-    return f"{value:,.2f} บาท"
+    return f"{value:,.2f} บาท（泰铢）"
 
 
 def base_plus_vat_withholding_3_percent(base_before_vat, already_paid=0):
@@ -152,13 +152,13 @@ class WithholdingCalculator(QDialog):
     Tab 3: +3%, extracting included 3%, and grossing up a net amount.\n\n    No tab makes a cloud request or touches saved Daily Logs.
     """
     LABELS = (
-        ("gross", "ยอดรวมบิล (รวม VAT 7%)"),
-        ("tax_base", "ฐานก่อน VAT 7%"),
-        ("vat", "ภาษีมูลค่าเพิ่ม 7%"),
-        ("withheld", "หัก ณ ที่จ่าย 3%"),
-        ("net", "ยอดสุทธิหลังหัก 3%"),
-        ("paid", "ลูกค้าชำระแล้ว"),
-        ("balance", "ส่วนต่างคงเหลือ / รับเกิน"),
+        ("gross", "ยอดรวมบิล (รวม VAT 7%) / 账单总额（含7%增值税）"),
+        ("tax_base", "ฐานก่อน VAT 7% / 未税金额（不含7%增值税）"),
+        ("vat", "ภาษีมูลค่าเพิ่ม 7% / 增值税7%"),
+        ("withheld", "หัก ณ ที่จ่าย 3% / 预扣税3%"),
+        ("net", "ยอดสุทธิหลังหัก 3% / 扣除3%预扣税后净额"),
+        ("paid", "ลูกค้าชำระแล้ว / 客户已付款"),
+        ("balance", "ส่วนต่างคงเหลือ / รับเกิน · 应付余额 / 多收款"),
     )
 
     def __init__(self, parent=None):
@@ -168,8 +168,8 @@ class WithholdingCalculator(QDialog):
         self.setWindowFlag(Qt.WindowType.Window, True)
         self.setModal(False)
         self.setWindowTitle("VAT Calculator 增值税计算器")
-        self.resize(440, 415)
-        self.setMinimumWidth(415)
+        self.resize(605, 465)
+        self.setMinimumWidth(535)
         self.setStyleSheet(
             "QDialog { background: #111827; color: white; } "
             "QWidget#calculatorTab { background: #111827; } "
@@ -200,8 +200,8 @@ class WithholdingCalculator(QDialog):
         existing_layout = QVBoxLayout(existing)
         existing_layout.setSpacing(7)
         note = QLabel(
-            "ส่วนที่ 1: กรอกยอดบิลที่รวม VAT 7% แล้ว\n"
-            "ถอดฐานก่อน VAT แล้วหัก ณ ที่จ่าย 3% จากฐานนั้น"
+            "ส่วนที่ 1 / 第1部分：กรอกยอดบิลที่รวม VAT 7% แล้ว / 输入含税账单总额\n"
+            "ถอดฐานก่อน VAT แล้วหัก ณ ที่จ่าย 3% / 预扣税3% จากฐานนั้น / 从未税金额中扣除3%预扣税"
         )
         note.setWordWrap(True)
         existing_layout.addWidget(note)
@@ -209,18 +209,18 @@ class WithholdingCalculator(QDialog):
         existing_form = QFormLayout()
         self.gross_input = QLineEdit()
         self.gross_input.setObjectName("grossIncludingVat")
-        self.gross_input.setPlaceholderText("เช่น 5,000.00")
+        self.gross_input.setPlaceholderText("เช่น 5,000.00 / 例如 5,000.00")
         self.paid_input = QLineEdit()
-        self.paid_input.setPlaceholderText("ลูกค้าจ่ายแล้ว (ว่าง = 0)")
-        existing_form.addRow("รวม VAT 7%:", self.gross_input)
-        existing_form.addRow("ชำระแล้ว:", self.paid_input)
+        self.paid_input.setPlaceholderText("ลูกค้าจ่ายแล้ว / 已付款（留空为0）")
+        existing_form.addRow("รวม VAT 7% / 含7%增值税:", self.gross_input)
+        existing_form.addRow("ชำระแล้ว / 已付款:", self.paid_input)
         existing_layout.addLayout(existing_form)
         self.answer = self._make_result_area("invoiceSummary")
         existing_layout.addWidget(self.answer, 1)
         existing_buttons = QHBoxLayout()
-        self.copy_button = QPushButton("คัดลอก")
-        self.clear_button = QPushButton("ล้างค่า")
-        close_existing = QPushButton("ปิด")
+        self.copy_button = QPushButton("คัดลอก / 复制")
+        self.clear_button = QPushButton("ล้างค่า / 清空")
+        close_existing = QPushButton("ปิด / 关闭")
         self.copy_button.clicked.connect(self.copy_result)
         self.clear_button.clicked.connect(self.clear)
         close_existing.clicked.connect(self.accept)
@@ -229,7 +229,7 @@ class WithholdingCalculator(QDialog):
         existing_buttons.addWidget(self.copy_button)
         existing_buttons.addWidget(close_existing)
         existing_layout.addLayout(existing_buttons)
-        self.tabs.addTab(existing, "1. บิลรวม VAT")
+        self.tabs.addTab(existing, "1. บิลรวม VAT / 含税账单")
 
         # ----- Partition 2: compute VAT 7% then withhold 3% -----
         forward = QWidget(self.tabs)
@@ -237,8 +237,8 @@ class WithholdingCalculator(QDialog):
         forward_layout = QVBoxLayout(forward)
         forward_layout.setSpacing(7)
         forward_note = QLabel(
-            "ส่วนที่ 2: กรอกฐานก่อน VAT → เพิ่ม VAT 7%\n"
-            "จากนั้นหัก ณ ที่จ่าย 3% ของฐานก่อน VAT"
+            "ส่วนที่ 2 / 第2部分：กรอกฐานก่อน VAT → เพิ่ม VAT 7% / 未税金额加计7%增值税\n"
+            "จากนั้นหัก ณ ที่จ่าย 3% / 预扣税3% ของฐานก่อน VAT / 按未税金额扣除3%预扣税"
         )
         forward_note.setWordWrap(True)
         forward_layout.addWidget(forward_note)
@@ -246,18 +246,18 @@ class WithholdingCalculator(QDialog):
         forward_form = QFormLayout()
         self.base_input = QLineEdit()
         self.base_input.setObjectName("baseBeforeVat")
-        self.base_input.setPlaceholderText("เช่น 5,000.00 (ยังไม่รวม VAT)")
+        self.base_input.setPlaceholderText("เช่น 5,000.00 / 例如：未含增值税")
         self.forward_paid_input = QLineEdit()
-        self.forward_paid_input.setPlaceholderText("ลูกค้าจ่ายแล้ว (ว่าง = 0)")
-        forward_form.addRow("ฐานก่อน VAT 7%:", self.base_input)
-        forward_form.addRow("ชำระแล้ว:", self.forward_paid_input)
+        self.forward_paid_input.setPlaceholderText("ลูกค้าจ่ายแล้ว / 已付款（留空为0）")
+        forward_form.addRow("ฐานก่อน VAT 7% / 未税金额（不含7%增值税）:", self.base_input)
+        forward_form.addRow("ชำระแล้ว / 已付款:", self.forward_paid_input)
         forward_layout.addLayout(forward_form)
         self.forward_answer = self._make_result_area("forwardVatSummary")
         forward_layout.addWidget(self.forward_answer, 1)
         forward_buttons = QHBoxLayout()
-        self.forward_copy_button = QPushButton("คัดลอก")
-        self.forward_clear_button = QPushButton("ล้างค่า")
-        close_forward = QPushButton("ปิด")
+        self.forward_copy_button = QPushButton("คัดลอก / 复制")
+        self.forward_clear_button = QPushButton("ล้างค่า / 清空")
+        close_forward = QPushButton("ปิด / 关闭")
         self.forward_copy_button.clicked.connect(self.copy_forward_result)
         self.forward_clear_button.clicked.connect(self.clear_forward)
         close_forward.clicked.connect(self.accept)
@@ -266,7 +266,7 @@ class WithholdingCalculator(QDialog):
         forward_buttons.addWidget(self.forward_copy_button)
         forward_buttons.addWidget(close_forward)
         forward_layout.addLayout(forward_buttons)
-        self.tabs.addTab(forward, "2. เพิ่ม VAT / หัก 3%")
+        self.tabs.addTab(forward, "2. เพิ่ม VAT / หัก 3% · 加税扣税")
 
         # Tab 3 includes both meanings of "ถอด 3%" so users do not
         # confuse extracting included 3% (÷1.03) with net WHT (÷0.97).
@@ -275,24 +275,24 @@ class WithholdingCalculator(QDialog):
         adjustment_layout = QVBoxLayout(adjustment)
         adjustment_layout.setSpacing(7)
         adjust_note = QLabel(
-            "ส่วนที่ 3: หัก 3% จากยอดที่กรอก (ตัวอย่าง 30,927.84 → 30,000.00) "
-            "หรือบวก 3% และย้อนฐานราคาที่บวก 3% มาแล้ว (ไม่รวม VAT 7%)"
+            "ส่วนที่ 3 / 第3部分：หัก 3% จากยอดที่กรอก / 从输入金额扣除3% (ตัวอย่าง 30,927.84 → 30,000.00) "
+            "หรือบวก 3% และย้อนฐานราคาที่บวก 3% มาแล้ว / 加收3%或反推加收前金额（不含增值税）"
         )
         adjust_note.setWordWrap(True)
         adjustment_layout.addWidget(adjust_note)
         adjustment_form = QFormLayout()
         self.adjust_input = QLineEdit()
         self.adjust_input.setObjectName("threePercentAmount")
-        self.adjust_input.setPlaceholderText("เช่น 1,000.00")
-        adjustment_form.addRow("ยอดเงิน:", self.adjust_input)
+        self.adjust_input.setPlaceholderText("เช่น 1,000.00 / 例如 1,000.00")
+        adjustment_form.addRow("ยอดเงิน / 金额:", self.adjust_input)
         adjustment_layout.addLayout(adjustment_form)
         self.adjust_answer = self._make_result_area("threePercentSummary")
         self.adjust_answer.setMinimumHeight(200)
         adjustment_layout.addWidget(self.adjust_answer, 1)
         adjustment_buttons = QHBoxLayout()
-        self.adjust_copy_button = QPushButton("คัดลอก")
-        self.adjust_clear_button = QPushButton("ล้างค่า")
-        adjust_close = QPushButton("ปิด")
+        self.adjust_copy_button = QPushButton("คัดลอก / 复制")
+        self.adjust_clear_button = QPushButton("ล้างค่า / 清空")
+        adjust_close = QPushButton("ปิด / 关闭")
         self.adjust_copy_button.clicked.connect(self.copy_adjust_result)
         self.adjust_clear_button.clicked.connect(self.clear_adjust)
         adjust_close.clicked.connect(self.accept)
@@ -301,7 +301,7 @@ class WithholdingCalculator(QDialog):
         adjustment_buttons.addWidget(self.adjust_copy_button)
         adjustment_buttons.addWidget(adjust_close)
         adjustment_layout.addLayout(adjustment_buttons)
-        self.tabs.addTab(adjustment, "3. บวก / ถอด 3%")
+        self.tabs.addTab(adjustment, "3. บวก / ถอด 3% · 加减3%")
 
         self._adjust_result = None
         self._adjust_plain_result = ""
@@ -362,7 +362,7 @@ class WithholdingCalculator(QDialog):
             self._plain_result = ""
             self.copy_button.setEnabled(False)
             self.answer.setPlainText(
-                "กรอกยอดบิลที่มี VAT 7% แล้ว เช่น 5,000 บาท"
+                "กรอกยอดบิลที่มี VAT 7% แล้ว / 请输入含税金额，例如 5,000 บาท"
             )
             return
         try:
@@ -386,7 +386,7 @@ class WithholdingCalculator(QDialog):
             self._forward_plain_result = ""
             self.forward_copy_button.setEnabled(False)
             self.forward_answer.setPlainText(
-                "กรอกฐานก่อน VAT เช่น 5,000 บาท เพื่อเพิ่ม VAT 7%"
+                "กรอกฐานก่อน VAT / 请输入未税金额，例如 5,000 บาท เพื่อเพิ่ม VAT 7% / 加计增值税"
             )
             return
         try:
@@ -412,7 +412,7 @@ class WithholdingCalculator(QDialog):
             self._adjust_plain_result = ""
             self.adjust_copy_button.setEnabled(False)
             self.adjust_answer.setPlainText(
-                "กรอกยอดเงิน เช่น 1,000 บาท เพื่อคำนวณบวกหรือถอด 3%"
+                "กรอกยอดเงิน / 请输入金额，例如 1,000 บาท เพื่อคำนวณบวกหรือถอด 3% / 加减3%"
             )
             return
         try:
@@ -426,22 +426,22 @@ class WithholdingCalculator(QDialog):
         self._adjust_result = data
         self.adjust_copy_button.setEnabled(True)
         sections = (
-            ("ยอดตั้งต้น (ไม่รวม VAT 7%)", (("entered", "ยอดมี 3% / ยอดเงินที่กรอก"),)),
-            ("ถอด 3% แบบหัก ณ ที่จ่าย (คูณ 97%)", (
-                ("deducted_3_percent", "ภาษีหัก ณ ที่จ่าย 3%"),
-                ("deducted_total", "ยอดถอด 3% / ยอดสุทธิหลังหัก"),
+            ("ยอดตั้งต้น (ไม่รวม VAT 7%) / 初始金额（不含增值税）", (("entered", "ยอดมี 3% / ยอดเงินที่กรอก · 输入金额"),)),
+            ("ถอด 3% แบบหัก ณ ที่จ่าย (คูณ 97%) / 扣除3%预扣税（×97%）", (
+                ("deducted_3_percent", "ภาษีหัก ณ ที่จ่าย 3% / 预扣税3% / 3%预扣税额"),
+                ("deducted_total", "ยอดถอด 3% / ยอดสุทธิหลังหัก · 扣税后净额"),
             )),
-            ("บวก 3% ของฐาน (คูณ 1.03)", (
-                ("added_tax", "ยอดบวกเพิ่ม 3%"),
-                ("plus_total", "ยอดหลังบวก 3%"),
+            ("บวก 3% ของฐาน (คูณ 1.03) / 加收3%（×1.03）", (
+                ("added_tax", "ยอดบวกเพิ่ม 3% / 加收3%金额"),
+                ("plus_total", "ยอดหลังบวก 3% / 加收后总额"),
             )),
-            ("ถอดส่วนที่บวก 3% มาแล้ว (หาร 1.03 — คนละสูตร)", (
-                ("included_base", "ฐานราคาก่อนบวก 3%"),
-                ("included_tax", "จำนวน 3% ที่รวมมาแล้ว"),
+            ("ถอดส่วนที่บวก 3% มาแล้ว (หาร 1.03 — คนละสูตร) / 反推已加收3%的基数（÷1.03）", (
+                ("included_base", "ฐานราคาก่อนบวก 3% / 加收前基数"),
+                ("included_tax", "จำนวน 3% ที่รวมมาแล้ว / 内含3%金额"),
             )),
-            ("หายอดก่อนหัก 3% จากยอดสุทธิ (หาร 0.97)", (
-                ("gross_up", "ยอดก่อนถูกหัก ณ ที่จ่าย"),
-                ("gross_up_withheld", "จำนวนเงินภาษี 3%"),
+            ("หายอดก่อนหัก 3% จากยอดสุทธิ (หาร 0.97) / 由净额反推税前金额（÷0.97）", (
+                ("gross_up", "ยอดก่อนถูกหัก ณ ที่จ่าย / 预扣税前总额"),
+                ("gross_up_withheld", "จำนวนเงินภาษี 3% / 3%预扣税额"),
             )),
         )
         plain_lines = []

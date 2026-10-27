@@ -19,6 +19,8 @@ class FinanceTests(unittest.TestCase):
         self.assertEqual(q["commission_base"], Decimal("1582.65"))
         self.assertEqual(q["commission_vat"], Decimal("110.79"))
         self.assertIn("5,602.80", quote_text(q, "EV", "กล้อง"))
+        self.assertIn("贷款金额", quote_text(q, "EV", "กล้อง"))
+        self.assertIn("未税佣金", quote_text(q, "EV", "กล้อง"))
 
     def test_zero_flat_interest(self):
         q = finance_quote(1000000, 50, 5, 0)
@@ -38,8 +40,8 @@ class FinanceTests(unittest.TestCase):
             self.assertEqual(invoice[key], base[key], key)
         text = vehicle_receipt_text(invoice, "EV", "กล้อง")
         self.assertIn("55,500.00", text)
-        self.assertIn("ยอดจัดไฟแนนซ์:   252,000.00", text)
-        self.assertIn("ค่างวดต่อเดือนสุทธิ:   5,602.80", text)
+        self.assertIn("ยอดจัดไฟแนนซ์ / 贷款金额:   252,000.00", text)
+        self.assertIn("ค่างวดต่อเดือนสุทธิ / 每月应还款额:   5,602.80", text)
         self.assertNotIn("คอมมิชชั่น", text)
 
     def test_vehicle_receipt_zero_and_discount_limits(self):

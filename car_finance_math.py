@@ -16,9 +16,9 @@ def money(value):
     try:
         amount = Decimal(str(value).replace(",", "").strip())
     except (InvalidOperation, ValueError, AttributeError):
-        raise ValueError("กรอกจำนวนเงินเป็นตัวเลข") from None
+        raise ValueError("กรอกจำนวนเงินเป็นตัวเลข / 请输入有效金额") from None
     if not amount.is_finite() or amount < 0:
-        raise ValueError("จำนวนเงินต้องไม่ติดลบและไม่ใช่ NaN/Infinity")
+        raise ValueError("จำนวนเงินต้องไม่ติดลบและไม่ใช่ NaN/Infinity / 金额必须是非负的有限数值")
     return amount
 
 
@@ -39,12 +39,12 @@ def finance_quote(price, down_percent, years, interest_percent,
     rate = money(interest_percent)
     cr = money(commission_percent)
     if price <= 0 or yr <= 0 or yr > 15:
-        raise ValueError("ราคารถต้องมากกว่า 0 และผ่อน 1–15 ปี")
+        raise ValueError("ราคารถต้องมากกว่า 0 และผ่อน 1–15 ปี / 车价必须大于0，分期年限为1至15年")
     if dp > 100 or rate > 100 or cr > 100:
-        raise ValueError("เปอร์เซ็นต์ต้องไม่เกิน 100")
+        raise ValueError("เปอร์เซ็นต์ต้องไม่เกิน 100 / 百分比不得超过100")
     months = int(yr * 12)
     if Decimal(months) != yr * 12 or months <= 0:
-        raise ValueError("ระยะเวลาผ่อนต้องเป็นจำนวนเต็มเดือน")
+        raise ValueError("ระยะเวลาผ่อนต้องเป็นจำนวนเต็มเดือน / 分期期限必须为整月")
     down = price * dp / 100
     financed = price - down
     monthly_principal = financed / months
@@ -74,26 +74,26 @@ def quote_text(result, model="", accessories=""):
     r = result
     def n(key):
         return format(r[key], ",.2f")
-    return ("คำนวณเงินดาวน์ / ไฟแนนซ์รถยนต์\n"
-            f"รุ่นรถ: {model.strip() or '-'}\n"
-            f"พร้อมอุปกรณ์: {accessories.strip() or '-'}\n"
-            f"ราคาเต็มรถ: {n('price')} บาท\n"
-            f"ดาวน์: {r['down_percent']}% = {n('down')} บาท\n"
-            f"ยอดจัดไฟแนนซ์: {n('financed')} บาท\n"
-            f"ระยะผ่อน: {r['years']} ปี ({r['months']} เดือน)\n"
-            f"เงินต้นต่อเดือน: {n('monthly_principal')} บาท\n"
-            f"ดอกเบี้ย Flat Rate: {r['interest_percent']}% ต่อปี\n"
-            f"ดอกเบี้ยต่อปี: {n('annual_interest')} บาท\n"
-            f"ดอกเบี้ยรวม: {n('total_interest')} บาท\n"
-            f"ดอกเบี้ยต่อเดือน: {n('monthly_interest')} บาท\n"
-            f"ค่างวดต่อเดือนสุทธิ: {n('monthly_payment')} บาท\n"
-            f"ยอดรวมค่างวด: {n('total_installments')} บาท\n"
-            f"ค่าคอมมิชชั่น: {r['commission_percent']}%\n"
-            f"ค่าคอมมิชชั่นรวม VAT 7%: {n('commission_gross')} บาท\n"
-            f"ค่าคอมมิชชั่นก่อน VAT: {n('commission_base')} บาท\n"
-            f"VAT 7% ของค่าคอมมิชชั่น: {n('commission_vat')} บาท\n"
-            "\nหมายเหตุ: ค่างวดประมาณการแบบ Flat Rate "
-            "ไม่รวมค่าธรรมเนียม/ประกัน/ส่วนลดที่ไม่ได้ระบุ").replace(": ", ":   ")
+    return ("คำนวณเงินดาวน์ / ไฟแนนซ์รถยนต์ · 首付款及汽车分期付款计算\n"
+            f"รุ่นรถ / 车型: {model.strip() or '-'}\n"
+            f"พร้อมอุปกรณ์ / 随车配件: {accessories.strip() or '-'}\n"
+            f"ราคาเต็มรถ / 整车原价: {n('price')} บาท（泰铢）\n"
+            f"ดาวน์ / 首付款: {r['down_percent']}% = {n('down')} บาท（泰铢）\n"
+            f"ยอดจัดไฟแนนซ์ / 贷款金额: {n('financed')} บาท（泰铢）\n"
+            f"ระยะผ่อน / 分期期限: {r['years']} ปี（年）({r['months']} เดือน（月）)\n"
+            f"เงินต้นต่อเดือน / 每月应还本金: {n('monthly_principal')} บาท（泰铢）\n"
+            f"ดอกเบี้ย Flat Rate / 平息利率: {r['interest_percent']}% ต่อปี（年）\n"
+            f"ดอกเบี้ยต่อปี / 年利息: {n('annual_interest')} บาท（泰铢）\n"
+            f"ดอกเบี้ยรวม / 总利息: {n('total_interest')} บาท（泰铢）\n"
+            f"ดอกเบี้ยต่อเดือน / 每月利息: {n('monthly_interest')} บาท（泰铢）\n"
+            f"ค่างวดต่อเดือนสุทธิ / 每月应还款额: {n('monthly_payment')} บาท（泰铢）\n"
+            f"ยอดรวมค่างวด / 分期付款总额: {n('total_installments')} บาท（泰铢）\n"
+            f"ค่าคอมมิชชั่น / 佣金比例: {r['commission_percent']}%\n"
+            f"ค่าคอมมิชชั่นรวม VAT 7% / 含7%增值税佣金: {n('commission_gross')} บาท（泰铢）\n"
+            f"ค่าคอมมิชชั่นก่อน VAT / 未税佣金: {n('commission_base')} บาท（泰铢）\n"
+            f"VAT 7% ของค่าคอมมิชชั่น / 佣金增值税（7%）: {n('commission_vat')} บาท（泰铢）\n"
+            "\nหมายเหตุ / 备注: ค่างวดประมาณการแบบ Flat Rate / 月供按平息计算，"
+            "ไม่รวมค่าธรรมเนียม/ประกัน/ส่วนลดที่ไม่ได้ระบุ / 不含未列明的手续费、保险及优惠").replace(": ", ":   ")
 
 
 def vehicle_receipt_quote(price, down_percent, years, interest_percent,
@@ -108,7 +108,7 @@ def vehicle_receipt_quote(price, down_percent, years, interest_percent,
     discount_other = baht(money(other_discount))
     total_discount = baht(discount_down + discount_other)
     if total_discount > result["down"]:
-        raise ValueError("ยอดส่วนลดรวมต้องไม่เกินเงินดาวน์ก่อนหักส่วนลด")
+        raise ValueError("ยอดส่วนลดรวมต้องไม่เกินเงินดาวน์ก่อนหักส่วนลด / 优惠总额不得超过优惠前首付款")
     result.update(
         down_discount=discount_down,
         other_discount=discount_other,
@@ -126,22 +126,22 @@ def vehicle_receipt_text(result, model="", accessories=""):
         return format(r[key], ",.2f")
 
     return (
-        "คำนวณใบเสร็จรับเงินค่ารถ\n"
-        f"รุ่นรถ: {model.strip() or '-'}\n"
-        f"พร้อมอุปกรณ์: {accessories.strip() or '-'}\n"
-        f"ราคาเต็มรถ: {n('price')} บาท\n"
-        f"เงินดาวน์ก่อนส่วนลด ({r['down_percent']}%): {n('down')} บาท\n"
-        f"ส่วนลดเงินดาวน์: -{n('down_discount')} บาท\n"
-        f"ส่วนลดอื่นๆ รวม: -{n('other_discount')} บาท\n"
-        f"ส่วนลดรวม: {n('total_discount')} บาท\n"
-        f"เงินดาวน์สุทธิที่ต้องชำระ: {n('receipt_down_due')} บาท\n"
-        f"ยอดจัดไฟแนนซ์: {n('financed')} บาท\n"
-        f"ผ่อน: {r['years']} ปี ({r['months']} เดือน)\n"
-        f"ดอกเบี้ย Flat Rate: {r['interest_percent']}% ต่อปี\n"
-        f"ดอกเบี้ยรวม: {n('total_interest')} บาท\n"
-        f"เงินต้นต่อเดือน: {n('monthly_principal')} บาท\n"
-        f"ดอกเบี้ยต่อเดือน: {n('monthly_interest')} บาท\n"
-        f"ค่างวดต่อเดือนสุทธิ: {n('monthly_payment')} บาท\n"
-        "\nหมายเหตุ: ส่วนลดหักจากเงินดาวน์เท่านั้น "
-        "ไม่เปลี่ยนยอดจัดไฟแนนซ์และค่างวด"
+        "คำนวณใบเสร็จรับเงินค่ารถ / 购车款收据计算\n"
+        f"รุ่นรถ / 车型: {model.strip() or '-'}\n"
+        f"พร้อมอุปกรณ์ / 随车配件: {accessories.strip() or '-'}\n"
+        f"ราคาเต็มรถ / 整车原价: {n('price')} บาท（泰铢）\n"
+        f"เงินดาวน์ก่อนส่วนลด / 优惠前首付款 ({r['down_percent']}%): {n('down')} บาท（泰铢）\n"
+        f"ส่วนลดเงินดาวน์ / 首付款优惠: -{n('down_discount')} บาท（泰铢）\n"
+        f"ส่วนลดอื่นๆ รวม / 其他优惠合计: -{n('other_discount')} บาท（泰铢）\n"
+        f"ส่วนลดรวม / 优惠总额: {n('total_discount')} บาท（泰铢）\n"
+        f"เงินดาวน์สุทธิที่ต้องชำระ / 实付首付款: {n('receipt_down_due')} บาท（泰铢）\n"
+        f"ยอดจัดไฟแนนซ์ / 贷款金额: {n('financed')} บาท（泰铢）\n"
+        f"ผ่อน / 分期期限: {r['years']} ปี（年）({r['months']} เดือน（月）)\n"
+        f"ดอกเบี้ย Flat Rate / 平息利率: {r['interest_percent']}% ต่อปี（年）\n"
+        f"ดอกเบี้ยรวม / 总利息: {n('total_interest')} บาท（泰铢）\n"
+        f"เงินต้นต่อเดือน / 每月应还本金: {n('monthly_principal')} บาท（泰铢）\n"
+        f"ดอกเบี้ยต่อเดือน / 每月利息: {n('monthly_interest')} บาท（泰铢）\n"
+        f"ค่างวดต่อเดือนสุทธิ / 每月应还款额: {n('monthly_payment')} บาท（泰铢）\n"
+        "\nหมายเหตุ / 备注: ส่วนลดหักจากเงินดาวน์เท่านั้น / 优惠仅抵扣首付款，"
+        "不影响贷款金额及每月分期付款"
     ).replace(": ", ":   ")
