@@ -125,22 +125,51 @@ def test_finance(app):
         assert not cursor.isNull(), label
         assert cursor.charFormat().fontWeight() >= QFont.Weight.Bold, label
     receipt = finance_calc
-    assert receipt.receipt_down_combo.count() == 10
-    assert receipt.receipt_down_combo.findData(40) >= 0
+    assert receipt.receipt_price_type.count() == 2
+    assert receipt.receipt_price_type.itemData(0) == "down_payment"
+    assert receipt.receipt_price_type.itemData(1) == "full_price"
+    assert receipt.receipt_trade_in.count() == 3
+    assert receipt.receipt_trade_in.itemData(1) == "Carsome"
+    assert receipt.receipt_trade_in.itemData(2) == "Just Car"
+    assert len(receipt.receipt_fields) == 11
+    assert not hasattr(receipt, "receipt_interest_input")
+    assert not hasattr(receipt, "receipt_years_input")
+    assert not hasattr(receipt, "receipt_down_combo")
+    receipt.receipt_price_type.setCurrentIndex(1)
+    receipt.receipt_trade_in.setCurrentIndex(1)
     receipt.receipt_price_input.setText("315000")
-    receipt.receipt_years_input.setValue(4)
-    receipt.receipt_interest_input.setValue(1.68)
-    receipt.receipt_down_discount.setText("5000")
-    receipt.receipt_other_discount.setText("2500")
+    charges = {
+        "red_plate_deposit": "2000",
+        "booking_fee": "5000",
+        "discount": "10000",
+        "tax_base": "10000",
+        "other_discount": "2500",
+        "film_upgrade": "3000",
+        "film_discount": "500",
+        "insurance_premium": "8000",
+        "loan_insurance_premium": "1000",
+        "registration_fee": "1500",
+        "other_accessories": "500",
+    }
+    for key, value in charges.items():
+        receipt.receipt_fields[key].setText(value)
     receipt.calculate_receipt()
-    assert "55,500.00" in receipt.receipt_result_text.toPlainText()
-    assert "ยอดจัดไฟแนนซ์ / 贷款金额:" in receipt.receipt_result_text.toPlainText()
-    assert "ค่างวดต่อเดือนสุทธิ / 每月应还款额:" in receipt.receipt_result_text.toPlainText()
+    result_text = receipt.receipt_result_text.toPlainText()
+    assert "313,700.00" in result_text
+    assert "Carsome" in result_text
+    assert "税额" in result_text
+    assert "ดอกเบี้ย" not in result_text
     assert "#fde047" in receipt.receipt_result_text.toHtml().lower()
+    bold_total = receipt.receipt_result_text.document().find("ยอดสุทธิที่ต้องชำระ")
+    assert not bold_total.isNull()
+    assert bold_total.charFormat().fontWeight() >= QFont.Weight.Bold
     receipt.copy_receipt()
-    assert "ส่วนลดอื่นๆ" in app.clipboard().text()
+    assert "313,700.00" in app.clipboard().text()
+    assert "ค่าอัพเกรดติดฟิล์ม" in app.clipboard().text()
     receipt.clear_receipt_inputs()
     assert receipt.receipt_price_input.text() == ""
+    assert receipt.receipt_trade_in.currentData() == ""
+    assert all(not field.text() for field in receipt.receipt_fields.values())
     finance_calc.copy_all()
     assert "ยอดจัดไฟแนนซ์" in app.clipboard().text()
     finance_calc.clear_inputs()

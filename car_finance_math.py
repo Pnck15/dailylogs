@@ -96,52 +96,102 @@ def quote_text(result, model="", accessories=""):
             "ไม่รวมค่าธรรมเนียม/ประกัน/ส่วนลดที่ไม่ได้ระบุ / 不含未列明的手续费、保险及优惠").replace(": ", ":   ")
 
 
-def vehicle_receipt_quote(price, down_percent, years, interest_percent,
-                          down_discount=0, other_discount=0):
-    """Discounts change ONLY what the customer pays as a down payment.
 
-    Contracted financed principal and the resulting interest/instalments
-    intentionally remain based on the ORIGINAL down-payment percentage.
+RECEIPT_PRICE_TYPES = (
+    ("ราคาดาวน์รถ / 首付款金额", "down_payment"),
+    ("ราคาเต็มรถ / 整车原价", "full_price"),
+)
+RECEIPT_TRADE_IN = ("ไม่ระบุ / 未指定", "Carsome", "Just Car")
+
+# key, Thai/Chinese field label, sign used by the receipt.
+RECEIPT_ITEMS = (
+    ("red_plate_deposit", "ค่ามัดจำป้ายแดง / 红牌押金", 1),
+    ("booking_fee", "ค่าเงินจอง / 订车定金", -1),
+    ("discount", "ส่วนลด / 优惠折扣", -1),
+    ("tax_base", "ฐานคำนวณภาษี 7% / 7%税额计算基数", 0),
+    ("other_discount", "ส่วนลดอื่นๆ รวม / 其他优惠合计", -1),
+    ("film_upgrade", "ค่าอัพเกรดติดฟิล์ม / 车膜升级费", 1),
+    ("film_discount", "ส่วนลดติดฟิล์ม / 车膜优惠", -1),
+    ("insurance_premium", "ค่าเบี้ยประกันภัย / 保险费", 1),
+    ("loan_insurance_premium", "ค่าเบี้ยประกันคุ้มครองวงเงินสินเชื่อ / 贷款保障保险费", 1),
+    ("registration_fee", "ค่าจดทะเบียน / 车辆注册费", 1),
+    ("other_accessories", "ค่าอุปกรณ์อื่นๆ / 其他配件费", 1),
+)
+
+
+def vehicle_receipt_quote(price, price_type="down_payment", trade_in="",
+                          **charges):
+    """Compute cash due on a vehicle receipt; no loan/interest calculations.
+
+    Trade-in is an informational company selector ONLY because no trade-in
+    amount or price offset was requested. Tax is tax_base * 7% (not price * 7%).
+    All entry amounts are nonnegative; discount lines are subtracted.
     """
-    result = finance_quote(price, down_percent, years, interest_percent)
-    discount_down = baht(money(down_discount))
-    discount_other = baht(money(other_discount))
-    total_discount = baht(discount_down + discount_other)
-    if total_discount > result["down"]:
-        raise ValueError("ยอดส่วนลดรวมต้องไม่เกินเงินดาวน์ก่อนหักส่วนลด / 优惠总额不得超过优惠前首付款")
-    result.update(
-        down_discount=discount_down,
-        other_discount=discount_other,
-        total_discount=total_discount,
-        receipt_down_due=baht(result["down"] - total_discount),
+    valid_price_types = {code for _, code in RECEIPT_PRICE_TYPES}
+    if price_type not in valid_price_types:
+        raise ValueError("ประเภทของราคาไม่ถูกต้อง / 无效的金额类型")
+    if trade_in not in ("", "Carsome", "Just Car"):
+        raise ValueError("บริษัท Trade-in ไม่ถูกต้อง / 无效的置换服务商")
+    if set(charges) - {key for key, _, _ in RECEIPT_ITEMS}:
+        raise ValueError("พบรายการที่ไม่รองรับ / 存在不支持的收费项目")
+    base = baht(money(price))
+    if base <= 0:
+        raise ValueError("กรุณากรอกยอดเงินตั้งต้นมากกว่า 0 / 请输入大于0的起始金额")
+    amounts = {key: baht(money(charges.get(key, 0) or 0))
+               for key, _, _ in RECEIPT_ITEMS}
+    vat_seven = baht(amounts["tax_base"] * VAT)
+    additions = sum(
+        (amounts[key] for key, _, sign in RECEIPT_ITEMS if sign > 0),
+        Decimal("0"),
+    ) + vat_seven
+    deductions = sum(
+        (amounts[key] for key, _, sign in RECEIPT_ITEMS if sign < 0),
+        Decimal("0"),
     )
-    return result
+    return {
+        "price_type": price_type,
+        "trade_in": trade_in or "ไม่ระบุ / 未指定",
+        "price": base,
+        **amounts,
+        "vat_seven": vat_seven,
+        "additions": baht(additions),
+        "deductions": baht(deductions),
+        "total_due": baht(base + additions - deductions),
+    }
 
 
 def vehicle_receipt_text(result, model="", accessories=""):
-    """Full plain-text breakdown for the receipt tab and clipboard."""
+    """Plain-text bilingual breakdown used for colored results and Copy All."""
     r = result
-
-    def n(key):
-        return format(r[key], ",.2f")
-
-    return (
-        "คำนวณใบเสร็จรับเงินค่ารถ / 购车款收据计算\n"
-        f"รุ่นรถ / 车型: {model.strip() or '-'}\n"
-        f"พร้อมอุปกรณ์ / 随车配件: {accessories.strip() or '-'}\n"
-        f"ราคาเต็มรถ / 整车原价: {n('price')} บาท（泰铢）\n"
-        f"เงินดาวน์ก่อนส่วนลด / 优惠前首付款 ({r['down_percent']}%): {n('down')} บาท（泰铢）\n"
-        f"ส่วนลดเงินดาวน์ / 首付款优惠: -{n('down_discount')} บาท（泰铢）\n"
-        f"ส่วนลดอื่นๆ รวม / 其他优惠合计: -{n('other_discount')} บาท（泰铢）\n"
-        f"ส่วนลดรวม / 优惠总额: {n('total_discount')} บาท（泰铢）\n"
-        f"เงินดาวน์สุทธิที่ต้องชำระ / 实付首付款: {n('receipt_down_due')} บาท（泰铢）\n"
-        f"ยอดจัดไฟแนนซ์ / 贷款金额: {n('financed')} บาท（泰铢）\n"
-        f"ผ่อน / 分期期限: {r['years']} ปี（年）({r['months']} เดือน（月）)\n"
-        f"ดอกเบี้ย Flat Rate / 平息利率: {r['interest_percent']}% ต่อปี（年）\n"
-        f"ดอกเบี้ยรวม / 总利息: {n('total_interest')} บาท（泰铢）\n"
-        f"เงินต้นต่อเดือน / 每月应还本金: {n('monthly_principal')} บาท（泰铢）\n"
-        f"ดอกเบี้ยต่อเดือน / 每月利息: {n('monthly_interest')} บาท（泰铢）\n"
-        f"ค่างวดต่อเดือนสุทธิ / 每月应还款额: {n('monthly_payment')} บาท（泰铢）\n"
-        "\nหมายเหตุ / 备注: ส่วนลดหักจากเงินดาวน์เท่านั้น / 优惠仅抵扣首付款，"
-        "不影响贷款金额及每月分期付款"
-    ).replace(": ", ":   ")
+    fmt = lambda value: f"{value:,.2f} บาท（泰铢）"
+    type_label = dict((code, label) for label, code in RECEIPT_PRICE_TYPES)[
+        r["price_type"]
+    ]
+    lines = [
+        "ใบเสร็จรับเงินค่ารถ / 购车款收据",
+        f"รุ่นรถ / 车型:   {model.strip() or '-'}",
+        f"พร้อมอุปกรณ์ / 随车配件:   {accessories.strip() or '-'}",
+        f"ประเภทของราคา / 金额类型:   {type_label}",
+        f"Trade-in / 车辆置换:   {r['trade_in']}",
+        f"ยอดตั้งต้น / 初始金额:   {fmt(r['price'])}",
+    ]
+    for key, label, sign in RECEIPT_ITEMS:
+        if key == "tax_base":
+            lines.append(f"{label}:   {fmt(r[key])}")
+            lines.append(
+                f"ภาษี 7% ที่บวกเพิ่ม / 加计7%税额:   +{fmt(r['vat_seven'])}"
+            )
+        else:
+            prefix = "+" if sign > 0 else "-"
+            lines.append(f"{label}:   {prefix}{fmt(r[key])}")
+    lines.extend([
+        f"รายการบวกทั้งหมด / 加项合计:   +{fmt(r['additions'])}",
+        f"รายการหักทั้งหมด / 减项合计:   -{fmt(r['deductions'])}",
+        f"ยอดสุทธิที่ต้องชำระ / 最终应付金额:   {fmt(r['total_due'])}",
+        "",
+        "หมายเหตุ / 备注: ยอดภาษีคำนวณจากฐานภาษีที่กรอก × 7% "
+        "/ 税额根据输入的税基乘以7%计算",
+        "Trade-in ระบุบริษัทเท่านั้น ไม่หักยอดขายรถ "
+        "/ 置换仅记录服务商，不影响应付金额",
+    ])
+    return "\n".join(lines)
