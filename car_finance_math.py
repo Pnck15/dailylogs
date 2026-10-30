@@ -27,25 +27,35 @@ def baht(value):
 
 
 def finance_quote(price, down_percent, years, interest_percent,
-                  commission_percent=0):
+                  commission_percent=0, *, down_amount=None):
     """Return monetary amounts in baht, rounded only for display.
 
     Interest: financed_amount * annual flat rate * years.
     Commission: total interest * commission rate, gross includes VAT 7%.
     """
     price = money(price)
-    dp = money(down_percent)
+    manual = down_amount is not None
+    dp = None if manual else money(down_percent)
     yr = money(years)
     rate = money(interest_percent)
     cr = money(commission_percent)
     if price <= 0 or yr <= 0 or yr > 15:
         raise ValueError("ราคารถต้องมากกว่า 0 และผ่อน 1–15 ปี / 车价必须大于0，分期年限为1至15年")
-    if dp > 100 or rate > 100 or cr > 100:
+    if (dp is not None and dp > 100) or rate > 100 or cr > 100:
         raise ValueError("เปอร์เซ็นต์ต้องไม่เกิน 100 / 百分比不得超过100")
     months = int(yr * 12)
     if Decimal(months) != yr * 12 or months <= 0:
         raise ValueError("ระยะเวลาผ่อนต้องเป็นจำนวนเต็มเดือน / 分期期限必须为整月")
-    down = price * dp / 100
+    if manual:
+        down = money(down_amount)
+        if down > price:
+            raise ValueError(
+                "เงินดาวน์ต้องไม่เกินราคาเต็มรถ / 首付款不得超过整车价格"
+            )
+        dp = down * 100 / price
+    else:
+        down = price * dp / 100
+    # Manual and percentage modes share the SAME financed principal.
     financed = price - down
     monthly_principal = financed / months
     annual_interest = financed * rate / 100
@@ -57,6 +67,7 @@ def finance_quote(price, down_percent, years, interest_percent,
     commission_vat = commission_gross - commission_base
     return {
         "price": baht(price), "down_percent": dp, "years": yr,
+        "down_input_mode": "amount" if manual else "percent",
         "months": months, "down": baht(down), "financed": baht(financed),
         "monthly_principal": baht(monthly_principal),
         "interest_percent": rate, "annual_interest": baht(annual_interest),
@@ -78,7 +89,10 @@ def quote_text(result, model="", accessories=""):
             f"รุ่นรถ / 车型: {model.strip() or '-'}\n"
             f"พร้อมอุปกรณ์ / 随车配件: {accessories.strip() or '-'}\n"
             f"ราคาเต็มรถ / 整车原价: {n('price')} บาท（泰铢）\n"
-            f"ดาวน์ / 首付款: {r['down_percent']}% = {n('down')} บาท（泰铢）\n"
+            (f"ดาวน์ / 首付款: กำหนดเอง / 自定义金额 = {n('down')} บาท（泰铢）\n"
+             f"คิดเป็น / 占车价比例: {r['down_percent']:.2f}%\n"
+             if r.get("down_input_mode") == "amount"
+             else f"ดาวน์ / 首付款: {r['down_percent']}% = {n('down')} บาท（泰铢）\n")
             f"ยอดจัดไฟแนนซ์ / 贷款金额: {n('financed')} บาท（泰铢）\n"
             f"ระยะผ่อน / 分期期限: {r['years']} ปี（年）({r['months']} เดือน（月）)\n"
             f"เงินต้นต่อเดือน / 每月应还本金: {n('monthly_principal')} บาท（泰铢）\n"

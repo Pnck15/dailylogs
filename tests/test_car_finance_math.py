@@ -22,6 +22,42 @@ class FinanceTests(unittest.TestCase):
         self.assertIn("贷款金额", quote_text(q, "EV", "กล้อง"))
         self.assertIn("未税佣金", quote_text(q, "EV", "กล้อง"))
 
+    def test_manual_down_amount_changes_financed_principal(self):
+        # Nonpercentage down payment; percent should be derived for display.
+        manual = finance_quote("315000", None, 4, "1.68", 10,
+                               down_amount="60000")
+        self.assertEqual(manual["down"], Decimal("60000.00"))
+        self.assertEqual(manual["financed"], Decimal("255000.00"))
+        self.assertEqual(manual["months"], 48)
+        self.assertEqual(manual["monthly_principal"], Decimal("5312.50"))
+        self.assertEqual(manual["total_interest"], Decimal("17136.00"))
+        self.assertEqual(manual["monthly_interest"], Decimal("357.00"))
+        self.assertEqual(manual["monthly_payment"], Decimal("5669.50"))
+        self.assertEqual(manual["down_input_mode"], "amount")
+        self.assertEqual(manual["down_percent"].quantize(Decimal("0.01")),
+                         Decimal("19.05"))
+        report = quote_text(manual, "EV")
+        self.assertIn("自定义金额", report)
+        self.assertIn("60,000.00", report)
+        self.assertIn("19.05%", report)
+        self.assertIn("5,669.50", report)
+        self.assertEqual(
+            finance_quote("315000", 20, 4, "1.68")["down_input_mode"],
+            "percent",
+        )
+
+    def test_manual_down_amount_validation(self):
+        for amount in ("", "-1", "NaN", "Infinity", "315000.01", "xyz"):
+            with self.subTest(amount=amount), self.assertRaises(ValueError):
+                finance_quote(315000, None, 4, 1.68, down_amount=amount)
+        full_down = finance_quote(315000, None, 4, 1.68,
+                                  down_amount="315000")
+        self.assertEqual(full_down["financed"], Decimal("0.00"))
+        self.assertEqual(full_down["monthly_payment"], Decimal("0.00"))
+        zero_down = finance_quote(315000, None, 4, 1.68,
+                                  down_amount="0")
+        self.assertEqual(zero_down["financed"], Decimal("315000.00"))
+
     def test_zero_flat_interest(self):
         q = finance_quote(1000000, 50, 5, 0)
         self.assertEqual(q["monthly_payment"], Decimal("8333.33"))

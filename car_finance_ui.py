@@ -21,7 +21,7 @@ from car_finance_math import (
 )
 from workers import run_async
 
-CAR_CALCULATOR_VERSION = "1.5.1"
+CAR_CALCULATOR_VERSION = "1.6.0"
 DEVELOPER = "by 王纯真"
 
 
@@ -162,11 +162,32 @@ class CarFinanceCalculator(QDialog):
         self.down_combo.setObjectName("financeDownPercent")
         for percent in DOWN_OPTIONS:
             self.down_combo.addItem(f"{percent}%", percent)
+        self.down_combo.addItem(
+            "กำหนดเอง (บาท) / 自定义金额（泰铢）", "manual"
+        )
         self.down_combo.setCurrentIndex(self.down_combo.findData(20))
         frame.addLayout(self._field_row([
             ("ราคาเต็มรถ / 车价 (บาท)", self.price_input, 2),
-            ("เงินดาวน์ / 首付 (%)", self.down_combo, 1),
+            ("เลือกเงินดาวน์ / 选择首付方式", self.down_combo, 1),
         ]))
+
+        # Manual down payment is shown only for the "กำหนดเอง" selection.
+        # It is ignored whenever a percentage is selected.
+        self.manual_down_panel = QWidget()
+        self.manual_down_panel.setObjectName("financeManualDownPanel")
+        manual_row = QHBoxLayout(self.manual_down_panel)
+        manual_row.setContentsMargins(0, 0, 0, 0)
+        manual_row.setSpacing(6)
+        manual_row.addWidget(QLabel("เงินดาวน์เอง (บาท) / 自定义首付款（泰铢）"))
+        self.manual_down_input = self._money_input(
+            "financeManualDownAmount", "เช่น 60000 / 例如 60000"
+        )
+        manual_row.addWidget(self.manual_down_input, 1)
+        frame.addWidget(self.manual_down_panel)
+        self.down_combo.currentIndexChanged.connect(
+            self._on_down_mode_changed
+        )
+        self._on_down_mode_changed()
 
         self.years_input = QSpinBox()
         self.years_input.setObjectName("financeYears")
@@ -233,16 +254,27 @@ class CarFinanceCalculator(QDialog):
             row.addLayout(column, ratio)
         return row
 
+    def _on_down_mode_changed(self, _index=None):
+        is_manual = self.down_combo.currentData() == "manual"
+        self.manual_down_panel.setVisible(is_manual)
+        if is_manual:
+            self.manual_down_input.setFocus()
+
     @property
     def selected_down(self):
-        return int(self.down_combo.currentData())
+        choice = self.down_combo.currentData()
+        return None if choice == "manual" else int(choice)
 
     def calculate(self):
         try:
             result = finance_quote(
                 self.price_input.text(), self.selected_down,
                 self.years_input.value(), self.interest_input.value(),
-                self.commission_input.value()
+                self.commission_input.value(),
+                down_amount=(
+                    self.manual_down_input.text()
+                    if self.selected_down is None else None
+                ),
             )
         except ValueError as exc:
             QMessageBox.warning(self, "ตรวจสอบข้อมูล / 检查输入", str(exc))
@@ -437,6 +469,7 @@ class CarFinanceCalculator(QDialog):
         self.accessories_input.clear()
         self.price_input.clear()
         self.down_combo.setCurrentIndex(self.down_combo.findData(20))
+        self.manual_down_input.clear()
         self.years_input.setValue(4)
         self.interest_input.setValue(0)
         self.commission_input.setValue(0)

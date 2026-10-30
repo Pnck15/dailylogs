@@ -106,7 +106,9 @@ def test_finance(app):
     assert bool(finance_calc.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
     assert finance_calc.tabs.count() == 2
     assert finance_calc.tabs.tabText(1) == "2. ใบเสร็จรับเงินค่ารถ / 购车款收据"
-    assert finance_calc.down_combo.count() == 10
+    assert finance_calc.down_combo.count() == 11
+    assert finance_calc.down_combo.itemData(10) == "manual"
+    assert not finance_calc.manual_down_panel.isVisible()
     assert finance_calc.down_combo.itemData(7) == 40
     assert finance_calc.down_combo.currentData() == 20
     finance_calc.price_input.setText("315000")
@@ -117,6 +119,19 @@ def test_finance(app):
     assert "ยอดจัดไฟแนนซ์ / 贷款金额:" in finance_calc.result_text.toPlainText()
     assert "หมายเหตุ / 备注:" in finance_calc.result_text.toPlainText()
     assert "ค่างวดต่อเดือนสุทธิ" in finance_calc.result_text.toPlainText()
+    finance_calc.down_combo.setCurrentIndex(10)
+    assert finance_calc.selected_down is None
+    assert not finance_calc.manual_down_panel.isHidden()
+    finance_calc.manual_down_input.setText("60000")
+    finance_calc.calculate()
+    assert "60,000.00" in finance_calc.result_text.toPlainText()
+    assert "255,000.00" in finance_calc.result_text.toPlainText()
+    assert "5,669.50" in finance_calc.result_text.toPlainText()
+    finance_calc.down_combo.setCurrentIndex(finance_calc.down_combo.findData(20))
+    assert finance_calc.selected_down == 20
+    assert finance_calc.manual_down_panel.isHidden()
+    finance_calc.calculate()
+    assert "252,000.00" in finance_calc.result_text.toPlainText()
     colored_html = finance_calc.result_text.toHtml().lower()
     assert "#fde047" in colored_html or "rgb(253, 224, 71)" in colored_html
     from PySide6.QtGui import QFont
@@ -176,6 +191,8 @@ def test_finance(app):
     assert "ยอดจัดไฟแนนซ์" in app.clipboard().text()
     finance_calc.clear_inputs()
     assert finance_calc.price_input.text() == ""
+    assert finance_calc.manual_down_input.text() == ""
+    assert finance_calc.down_combo.currentData() == 20
     assert finance_calc.width() <= 550
     assert finance_calc.minimumHeight() < finance_calc.height()
     assert 0.9 <= finance_calc.windowOpacity() < 1.0
