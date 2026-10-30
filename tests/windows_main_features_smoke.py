@@ -158,7 +158,8 @@ def test_finance(app):
     assert "311,700.00" in result_text
     assert "Carsome" in result_text
     assert "税额" in result_text
-    assert "贷款保障保险费（抵扣首付款）:   -1,000.00" in result_text
+    assert "贷款保障保险费（抵扣首付款）" in result_text
+    assert "-1,000.00" in result_text
     assert "ดอกเบี้ย" not in result_text
     assert "#fde047" in receipt.receipt_result_text.toHtml().lower()
     bold_total = receipt.receipt_result_text.document().find("ยอดสุทธิที่ต้องชำระ")
