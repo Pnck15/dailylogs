@@ -85,14 +85,20 @@ def quote_text(result, model="", accessories=""):
     r = result
     def n(key):
         return format(r[key], ",.2f")
+    if r.get("down_input_mode") == "amount":
+        down_line = (
+            f"ดาวน์ / 首付款: กำหนดเอง / 自定义金额 = {n('down')} บาท（泰铢）\n"
+            f"คิดเป็น / 占车价比例: {r['down_percent']:.2f}%\n"
+        )
+    else:
+        down_line = (
+            f"ดาวน์ / 首付款: {r['down_percent']}% = {n('down')} บาท（泰铢）\n"
+        )
     return ("คำนวณเงินดาวน์ / ไฟแนนซ์รถยนต์ · 首付款及汽车分期付款计算\n"
             f"รุ่นรถ / 车型: {model.strip() or '-'}\n"
             f"พร้อมอุปกรณ์ / 随车配件: {accessories.strip() or '-'}\n"
             f"ราคาเต็มรถ / 整车原价: {n('price')} บาท（泰铢）\n"
-            (f"ดาวน์ / 首付款: กำหนดเอง / 自定义金额 = {n('down')} บาท（泰铢）\n"
-             f"คิดเป็น / 占车价比例: {r['down_percent']:.2f}%\n"
-             if r.get("down_input_mode") == "amount"
-             else f"ดาวน์ / 首付款: {r['down_percent']}% = {n('down')} บาท（泰铢）\n")
+            + down_line +
             f"ยอดจัดไฟแนนซ์ / 贷款金额: {n('financed')} บาท（泰铢）\n"
             f"ระยะผ่อน / 分期期限: {r['years']} ปี（年）({r['months']} เดือน（月）)\n"
             f"เงินต้นต่อเดือน / 每月应还本金: {n('monthly_principal')} บาท（泰铢）\n"
