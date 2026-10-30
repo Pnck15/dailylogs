@@ -21,7 +21,7 @@ from car_finance_math import (
 )
 from workers import run_async
 
-CAR_CALCULATOR_VERSION = "1.5.0"
+CAR_CALCULATOR_VERSION = "1.5.1"
 DEVELOPER = "by 王纯真"
 
 

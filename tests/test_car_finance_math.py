@@ -44,19 +44,42 @@ class FinanceTests(unittest.TestCase):
             other_accessories="500",
         )
         self.assertEqual(receipt["vat_seven"], Decimal("700.00"))
-        self.assertEqual(receipt["additions"], Decimal("16700.00"))
-        self.assertEqual(receipt["deductions"], Decimal("18000.00"))
-        self.assertEqual(receipt["total_due"], Decimal("313700.00"))
+        self.assertEqual(receipt["additions"], Decimal("15700.00"))
+        self.assertEqual(receipt["deductions"], Decimal("19000.00"))
+        self.assertEqual(receipt["total_due"], Decimal("311700.00"))
         self.assertEqual(receipt["price_type"], "full_price")
         self.assertEqual(receipt["trade_in"], "Carsome")
         text = vehicle_receipt_text(receipt, "EV", "กล้อง")
-        self.assertIn("313,700.00", text)
+        self.assertIn("311,700.00", text)
         self.assertIn("Carsome", text)
         self.assertIn("税额", text)
         self.assertNotIn("ดอกเบี้ย", text)
         self.assertNotIn("年息", text)
         self.assertNotIn("贷款金额", text)
         self.assertNotIn("每月", text)
+
+    def test_loan_insurance_deducted_from_down_payment(self):
+        # Changing only this fee must REDUCE (not increase) the cash due.
+        baseline = vehicle_receipt_quote("63000", price_type="down_payment")
+        with_insurance = vehicle_receipt_quote(
+            "63000", price_type="down_payment",
+            loan_insurance_premium="2500",
+        )
+        self.assertEqual(baseline["total_due"], Decimal("63000.00"))
+        self.assertEqual(with_insurance["total_due"], Decimal("60500.00"))
+        self.assertEqual(with_insurance["deductions"], Decimal("2500.00"))
+        self.assertEqual(with_insurance["additions"], Decimal("0.00"))
+        details = vehicle_receipt_text(with_insurance)
+        self.assertIn(
+            "贷款保障保险费（抵扣首付款）:   -2,500.00", details,
+        )
+        # Regular insurance remains an ADDITION.
+        with_both = vehicle_receipt_quote(
+            "63000", price_type="down_payment",
+            insurance_premium="1000",
+            loan_insurance_premium="2500",
+        )
+        self.assertEqual(with_both["total_due"], Decimal("61500.00"))
 
     def test_receipt_trade_in_is_informational(self):
         a = vehicle_receipt_quote("100000", red_plate_deposit=500,

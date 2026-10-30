@@ -155,16 +155,17 @@ def test_finance(app):
         receipt.receipt_fields[key].setText(value)
     receipt.calculate_receipt()
     result_text = receipt.receipt_result_text.toPlainText()
-    assert "313,700.00" in result_text
+    assert "311,700.00" in result_text
     assert "Carsome" in result_text
     assert "税额" in result_text
+    assert "贷款保障保险费（抵扣首付款）:   -1,000.00" in result_text
     assert "ดอกเบี้ย" not in result_text
     assert "#fde047" in receipt.receipt_result_text.toHtml().lower()
     bold_total = receipt.receipt_result_text.document().find("ยอดสุทธิที่ต้องชำระ")
     assert not bold_total.isNull()
     assert bold_total.charFormat().fontWeight() >= QFont.Weight.Bold
     receipt.copy_receipt()
-    assert "313,700.00" in app.clipboard().text()
+    assert "311,700.00" in app.clipboard().text()
     assert "ค่าอัพเกรดติดฟิล์ม" in app.clipboard().text()
     receipt.clear_receipt_inputs()
     assert receipt.receipt_price_input.text() == ""
