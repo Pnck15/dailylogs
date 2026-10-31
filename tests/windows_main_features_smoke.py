@@ -292,6 +292,9 @@ def test_finance(app):
     calc.clear()
     assert calc.saved_tab1_total.text() == "0.00"
     assert not calc._saved_amounts["gross"]
+    # Restore the tab-1 example to verify tab switching preserves its quote.
+    calc.gross_input.setText("5,000.00")
+    calc.paid_input.setText("5,001")
 
     # Partition 2 must be independently editable/copyable from Partition 1.
     calc.tabs.setCurrentIndex(1)
