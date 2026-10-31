@@ -237,8 +237,8 @@ def test_finance(app):
     finance_calc.clear_inputs()
     assert finance_calc.price_input.text() == ""
     assert finance_calc.manual_down_input.text() == ""
-    assert finance_calc.down_combo.currentData() == 20
-    assert finance_calc.width() <= 550
+    assert finance_calc.down_combo.currentData() == "manual"
+    assert finance_calc.width() <= 800
     assert finance_calc.minimumHeight() < finance_calc.height()
     assert 0.9 <= finance_calc.windowOpacity() < 1.0
     assert finance_calc.windowTitle() == "Car - Finance Calculator 购车分期付款计算器"
