@@ -127,6 +127,25 @@ def test_finance(app):
     assert "60,000.00" in finance_calc.result_text.toPlainText()
     assert "255,000.00" in finance_calc.result_text.toPlainText()
     assert "5,669.50" in finance_calc.result_text.toPlainText()
+    # Credit protection premium adds to cash down, not financed/monthly.
+    finance_calc.price_input.setText("1137000")
+    finance_calc.manual_down_input.setText("533048")
+    finance_calc.loan_insurance_input.setText("16952")
+    finance_calc.interest_input.setValue(1.88)
+    finance_calc.calculate()
+    insurance_report = finance_calc.result_text.toPlainText()
+    for expected in ("533,048.00", "16,952.00", "550,000.00",
+                     "603,952.00", "13,528.52", "13,529"):
+        assert expected in insurance_report, expected
+    finance_calc.loan_insurance_input.clear()
+    finance_calc.calculate()
+    without_insurance = finance_calc.result_text.toPlainText()
+    assert "603,952.00" in without_insurance
+    assert "13,528.52" in without_insurance
+    assert "533,048.00" in without_insurance
+    assert "550,000.00" not in without_insurance
+    finance_calc.price_input.setText("315000")
+    finance_calc.interest_input.setValue(1.68)
     finance_calc.down_combo.setCurrentIndex(finance_calc.down_combo.findData(20))
     assert finance_calc.selected_down == 20
     assert finance_calc.manual_down_panel.isHidden()

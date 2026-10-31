@@ -21,7 +21,7 @@ from car_finance_math import (
 )
 from workers import run_async
 
-CAR_CALCULATOR_VERSION = "1.6.0"
+CAR_CALCULATOR_VERSION = "1.7.0"
 DEVELOPER = "by 王纯真"
 
 
@@ -189,6 +189,15 @@ class CarFinanceCalculator(QDialog):
         )
         self._on_down_mode_changed()
 
+        # Added to the cash down total, excluded from financing and interest.
+        self.loan_insurance_input = self._money_input(
+            "financeLoanInsurancePremium", "เช่น 16952 / 例如 16952"
+        )
+        frame.addLayout(self._field_row([
+            ("เงินประกันคุ้มครองสินเชื่อ / 贷款保障保险费 (บาท)",
+             self.loan_insurance_input, 1),
+        ]))
+
         self.years_input = QSpinBox()
         self.years_input.setObjectName("financeYears")
         self.years_input.setLocale(QLocale.c())
@@ -275,6 +284,7 @@ class CarFinanceCalculator(QDialog):
                     self.manual_down_input.text()
                     if self.selected_down is None else None
                 ),
+                loan_insurance_premium=(self.loan_insurance_input.text() or "0"),
             )
         except ValueError as exc:
             QMessageBox.warning(self, "ตรวจสอบข้อมูล / 检查输入", str(exc))
@@ -306,6 +316,7 @@ class CarFinanceCalculator(QDialog):
         segments = []
         bold_keys = (
             "ยอดจัดไฟแนนซ์",
+            "ยอดรวมเงินดาวน์",
             "ค่างวดต่อเดือนสุทธิ",
             "เงินดาวน์สุทธิที่ต้องชำระ",
             "ยอดสุทธิที่ต้องชำระ",
@@ -470,6 +481,7 @@ class CarFinanceCalculator(QDialog):
         self.price_input.clear()
         self.down_combo.setCurrentIndex(self.down_combo.findData(20))
         self.manual_down_input.clear()
+        self.loan_insurance_input.clear()
         self.years_input.setValue(4)
         self.interest_input.setValue(0)
         self.commission_input.setValue(0)

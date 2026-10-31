@@ -46,6 +46,40 @@ class FinanceTests(unittest.TestCase):
             "percent",
         )
 
+    def test_credit_protection_insurance_increases_cash_down_only(self):
+        # Customer example: 1,137,000 - 533,048 = 603,952 financed.
+        # 16,952 insurance is paid separately ON TOP of the cash down.
+        q = finance_quote("1137000", None, 4, "1.88",
+                          down_amount="533048",
+                          loan_insurance_premium="16952")
+        self.assertEqual(q["down"], Decimal("533048.00"))
+        self.assertEqual(q["loan_insurance_premium"], Decimal("16952.00"))
+        self.assertEqual(q["down_total_including_insurance"], Decimal("550000.00"))
+        self.assertEqual(q["financed"], Decimal("603952.00"))
+        self.assertEqual(q["months"], 48)
+        self.assertEqual(q["monthly_payment"], Decimal("13528.52"))
+        report = quote_text(q)
+        self.assertIn("533,048.00", report)
+        self.assertIn("+16,952.00", report)
+        self.assertIn("550,000.00", report)
+        self.assertIn("603,952.00", report)
+        self.assertIn("13,528.52", report)
+        self.assertIn("13,529", report)
+        without = finance_quote("1137000", None, 4, "1.88",
+                                down_amount="533048")
+        self.assertEqual(q["financed"], without["financed"])
+        self.assertEqual(q["monthly_payment"], without["monthly_payment"])
+        percent = finance_quote("1000000", 20, 4, "1.88",
+                                loan_insurance_premium="16952")
+        self.assertEqual(percent["down"], Decimal("200000.00"))
+        self.assertEqual(percent["down_total_including_insurance"], Decimal("216952.00"))
+        self.assertEqual(percent["financed"], Decimal("800000.00"))
+        self.assertEqual(without["loan_insurance_premium"], Decimal("0.00"))
+        for invalid in ("-1", "NaN", "Infinity", "abc"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                finance_quote("1137000", 20, 4, "1.88",
+                              loan_insurance_premium=invalid)
+
     def test_manual_down_amount_validation(self):
         for amount in ("", "-1", "NaN", "Infinity", "315000.01", "xyz"):
             with self.subTest(amount=amount), self.assertRaises(ValueError):
