@@ -10,7 +10,8 @@ if __name__ == "__main__":
         win = CarFinanceCalculator(standalone=True)
         assert win.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
         assert win.tabs.count() >= 1
-        assert win.selected_down == 20
+        assert win.selected_down is None
+        assert win.down_combo.itemData(0) == "manual"
         raise SystemExit(0)
     window = CarFinanceCalculator(standalone=True)
     window.show()
