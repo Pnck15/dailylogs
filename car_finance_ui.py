@@ -21,7 +21,7 @@ from car_finance_math import (
 )
 from workers import run_async
 
-CAR_CALCULATOR_VERSION = "1.7.0"
+CAR_CALCULATOR_VERSION = "1.8.0"
 DEVELOPER = "by 王纯真"
 
 
@@ -62,8 +62,8 @@ class CarFinanceCalculator(QDialog):
         self.setWindowTitle("Car - Finance Calculator 购车分期付款计算器")
         self.setModal(False)
         # The native window border remains freely resizable vertically.
-        self.resize(510, 535)
-        self.setMinimumSize(455, 390)
+        self.resize(760, 575)
+        self.setMinimumSize(680, 440)
         self.setWindowOpacity(0.93)
         self.setObjectName("carFinanceCalculator")
         self.setStyleSheet(
@@ -136,16 +136,20 @@ class CarFinanceCalculator(QDialog):
         frame.setContentsMargins(7, 8, 7, 5)
         frame.setSpacing(6)
 
-        # All four fields align in precisely two compact columns.
+        # Model, accessories and sale type share one compact row.
         self.model_input = QLineEdit()
         self.model_input.setObjectName("financeModel")
         self.model_input.setPlaceholderText("รุ่นรถ (ไม่บังคับ) / 车型（选填）")
         self.accessories_input = QLineEdit()
         self.accessories_input.setObjectName("financeAccessories")
         self.accessories_input.setPlaceholderText("อุปกรณ์ (ไม่บังคับ) / 配件（选填）")
+        self.sale_type_combo = QComboBox()
+        self.sale_type_combo.setObjectName("financeSaleType")
+        self.sale_type_combo.addItems(["Normal", "Trade in"])
         frame.addLayout(self._field_row([
             ("รุ่นรถ / 车型", self.model_input, 1),
             ("พร้อมอุปกรณ์ / 随车配件", self.accessories_input, 1),
+            ("ราคาชนิด / 销售类型", self.sale_type_combo, 1),
         ]))
 
         self.price_input = QLineEdit()
@@ -160,15 +164,21 @@ class CarFinanceCalculator(QDialog):
         )
         self.down_combo = QComboBox()
         self.down_combo.setObjectName("financeDownPercent")
-        for percent in DOWN_OPTIONS:
-            self.down_combo.addItem(f"{percent}%", percent)
+        # Manual amount is FIRST and is the default choice.
         self.down_combo.addItem(
             "กำหนดเอง (บาท) / 自定义金额（泰铢）", "manual"
         )
-        self.down_combo.setCurrentIndex(self.down_combo.findData(20))
+        for percent in DOWN_OPTIONS:
+            self.down_combo.addItem(f"{percent}%", percent)
+        self.down_combo.setCurrentIndex(0)
+        self.loan_insurance_input = self._money_input(
+            "financeLoanInsurancePremium", "เช่น 16952 / 例如 16952"
+        )
         frame.addLayout(self._field_row([
-            ("ราคาเต็มรถ / 车价 (บาท)", self.price_input, 2),
+            ("ราคาเต็มรถ / 车价 (บาท)", self.price_input, 1),
             ("เลือกเงินดาวน์ / 选择首付方式", self.down_combo, 1),
+            ("เงินประกันคุ้มครองสินเชื่อ / 贷款保障保险费",
+             self.loan_insurance_input, 1),
         ]))
 
         # Manual down payment is shown only for the "กำหนดเอง" selection.
@@ -189,15 +199,6 @@ class CarFinanceCalculator(QDialog):
         )
         self._on_down_mode_changed()
 
-        # Added to the cash down total, excluded from financing and interest.
-        self.loan_insurance_input = self._money_input(
-            "financeLoanInsurancePremium", "เช่น 16952 / 例如 16952"
-        )
-        frame.addLayout(self._field_row([
-            ("เงินประกันคุ้มครองสินเชื่อ / 贷款保障保险费 (บาท)",
-             self.loan_insurance_input, 1),
-        ]))
-
         self.years_input = QSpinBox()
         self.years_input.setObjectName("financeYears")
         self.years_input.setLocale(QLocale.c())
@@ -215,10 +216,26 @@ class CarFinanceCalculator(QDialog):
         self.commission_input.setRange(0, 100)
         self.commission_input.setDecimals(3)
         self.commission_input.setSingleStep(0.1)
+        self.bank_combo = QComboBox()
+        self.bank_combo.setObjectName("financeCommissionBank")
+        self.bank_combo.addItems(
+            ["Kbank", "TTB", "ICBC", "Nissan", "Bangkok", "Tisco", "อื่นๆ"]
+        )
+        self.bank_combo.setCurrentText("อื่นๆ")
+        self._bank_rate_autofilled = False
+        self.bank_combo.currentIndexChanged.connect(self._on_bank_changed)
         frame.addLayout(self._field_row([
             ("ผ่อน / 年限 (ปี)", self.years_input, 1),
             ("ดอกเบี้ย/ปี / 年息 (%)", self.interest_input, 1),
             ("คอมมิชชั่น / 佣金 (%)", self.commission_input, 1),
+            ("ธนาคาร / 银行", self.bank_combo, 1),
+        ]))
+        self.actual_commission_input = self._money_input(
+            "financeActualCommissionAmount", "ถ้าทราบยอดจริง เช่น 3666 / 实际金额"
+        )
+        frame.addLayout(self._field_row([
+            ("ค่าคอมมิชชั่นจริง รวม VAT (บาท) / 实际佣金含税（泰铢） - ไม่บังคับ",
+             self.actual_commission_input, 1),
         ]))
 
         self.result_text = QTextEdit()
@@ -269,6 +286,16 @@ class CarFinanceCalculator(QDialog):
         if is_manual:
             self.manual_down_input.setFocus()
 
+    def _on_bank_changed(self, _index=None):
+        # Only Kbank has a rate supported by the supplied real example.
+        # Other banks are selectable without inventing bank-specific rates.
+        if self._bank_rate_autofilled and self.commission_input.value() == 8:
+            self.commission_input.setValue(0)
+        self._bank_rate_autofilled = False
+        if self.bank_combo.currentText() == "Kbank" and self.commission_input.value() == 0:
+            self.commission_input.setValue(8)
+            self._bank_rate_autofilled = True
+
     @property
     def selected_down(self):
         choice = self.down_combo.currentData()
@@ -285,6 +312,11 @@ class CarFinanceCalculator(QDialog):
                     if self.selected_down is None else None
                 ),
                 loan_insurance_premium=(self.loan_insurance_input.text() or "0"),
+                sale_type=self.sale_type_combo.currentText(),
+                bank=self.bank_combo.currentText(),
+                commission_gross_amount=(
+                    self.actual_commission_input.text() or None
+                ),
             )
         except ValueError as exc:
             QMessageBox.warning(self, "ตรวจสอบข้อมูล / 检查输入", str(exc))
@@ -317,6 +349,8 @@ class CarFinanceCalculator(QDialog):
         bold_keys = (
             "ยอดจัดไฟแนนซ์",
             "ยอดรวมเงินดาวน์",
+            "ยอดรวมที่ธนาคารจ่าย",
+            "ค่าคอมมิชชั่นสุทธิหลังหัก 3%",
             "ค่างวดต่อเดือนสุทธิ",
             "เงินดาวน์สุทธิที่ต้องชำระ",
             "ยอดสุทธิที่ต้องชำระ",
@@ -479,9 +513,12 @@ class CarFinanceCalculator(QDialog):
         self.model_input.clear()
         self.accessories_input.clear()
         self.price_input.clear()
-        self.down_combo.setCurrentIndex(self.down_combo.findData(20))
+        self.down_combo.setCurrentIndex(0)
         self.manual_down_input.clear()
         self.loan_insurance_input.clear()
+        self.sale_type_combo.setCurrentText("Normal")
+        self.bank_combo.setCurrentText("อื่นๆ")
+        self.actual_commission_input.clear()
         self.years_input.setValue(4)
         self.interest_input.setValue(0)
         self.commission_input.setValue(0)

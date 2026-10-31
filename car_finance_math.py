@@ -10,6 +10,9 @@ SATANG = Decimal("0.01")
 ONE = Decimal("1")
 VAT = Decimal("0.07")
 DOWN_OPTIONS = (5, 10, 15, 20, 25, 30, 35, 40, 45, 50)
+BANK_OPTIONS = ("Kbank", "TTB", "ICBC", "Nissan", "Bangkok", "Tisco", "อื่นๆ")
+SALE_TYPES = ("Normal", "Trade in")
+WHT_RATE = Decimal("0.03")
 
 
 def money(value):
@@ -28,7 +31,8 @@ def baht(value):
 
 def finance_quote(price, down_percent, years, interest_percent,
                   commission_percent=0, *, down_amount=None,
-                  loan_insurance_premium=0):
+                  loan_insurance_premium=0, sale_type="Normal",
+                  bank="อื่นๆ", commission_gross_amount=None):
     """Return monetary amounts in baht, rounded only for display.
 
     Interest: financed_amount * annual flat rate * years.
@@ -41,6 +45,8 @@ def finance_quote(price, down_percent, years, interest_percent,
     rate = money(interest_percent)
     cr = money(commission_percent)
     insurance = money(loan_insurance_premium)
+    if sale_type not in SALE_TYPES or bank not in BANK_OPTIONS:
+        raise ValueError("ประเภทการขายหรือธนาคารไม่ถูกต้อง / 销售类型或银行无效")
     if price <= 0 or yr <= 0 or yr > 15:
         raise ValueError("ราคารถต้องมากกว่า 0 และผ่อน 1–15 ปี / 车价必须大于0，分期年限为1至15年")
     if (dp is not None and dp > 100) or rate > 100 or cr > 100:
@@ -66,11 +72,23 @@ def finance_quote(price, down_percent, years, interest_percent,
     total_interest = annual_interest * yr
     monthly_interest = total_interest / months
     monthly_payment = monthly_principal + monthly_interest
-    commission_gross = total_interest * cr / 100
-    commission_base = commission_gross / (ONE + VAT)
+    # The entered bank commission is the actual VAT-inclusive remittance.
+    # When absent, estimate from the percentage of TOTAL flat interest.
+    manual_commission = commission_gross_amount is not None
+    commission_gross = (
+        money(commission_gross_amount) if manual_commission
+        else total_interest * cr / 100
+    )
+    commission_gross = baht(commission_gross)
+    if manual_commission and total_interest > 0:
+        cr = commission_gross * 100 / total_interest
+    commission_base = baht(commission_gross / (ONE + VAT))
     commission_vat = commission_gross - commission_base
+    commission_withholding = baht(commission_base * WHT_RATE)
+    commission_net = commission_gross - commission_withholding
     return {
         "price": baht(price), "down_percent": dp, "years": yr,
+        "sale_type": sale_type, "bank": bank,
         "down_input_mode": "amount" if manual else "percent",
         "months": months, "down": baht(down),
         "loan_insurance_premium": baht(insurance),
@@ -82,9 +100,13 @@ def finance_quote(price, down_percent, years, interest_percent,
         "monthly_interest": baht(monthly_interest),
         "monthly_payment": baht(monthly_payment),
         "total_installments": baht(financed + total_interest),
-        "commission_percent": cr, "commission_gross": baht(commission_gross),
-        "commission_base": baht(commission_base),
-        "commission_vat": baht(commission_gross) - baht(commission_base),
+        "commission_percent": cr, "commission_gross": commission_gross,
+        "commission_input_mode": "amount" if manual_commission else "percent",
+        "commission_base": commission_base,
+        "commission_vat": commission_vat,
+        "commission_withholding": commission_withholding,
+        "commission_net": commission_net,
+        "bank_payout_total": baht(financed) + commission_net,
     }
 
 
@@ -104,6 +126,7 @@ def quote_text(result, model="", accessories=""):
     return ("คำนวณเงินดาวน์ / ไฟแนนซ์รถยนต์ · 首付款及汽车分期付款计算\n"
             f"รุ่นรถ / 车型: {model.strip() or '-'}\n"
             f"พร้อมอุปกรณ์ / 随车配件: {accessories.strip() or '-'}\n"
+            f"ประเภทราคา / 销售类型: {r['sale_type']}\n"
             f"ราคาเต็มรถ / 整车原价: {n('price')} บาท（泰铢）\n"
             + down_line +
             f"เงินดาวน์ไม่รวมประกันสินเชื่อ / 不含贷款保障保险费的首付款: {n('down')} บาท（泰铢）\n"
@@ -119,12 +142,15 @@ def quote_text(result, model="", accessories=""):
             f"ค่างวดต่อเดือนสุทธิ / 每月应还款额: {n('monthly_payment')} บาท（泰铢）\n"
             f"ค่างวดปัดเป็นบาท / 每月还款额取整: {r['monthly_payment'].quantize(ONE, rounding=ROUND_HALF_UP):,.0f} บาท（泰铢）\n"
             f"ยอดรวมค่างวด / 分期付款总额: {n('total_installments')} บาท（泰铢）\n"
-            f"ค่าคอมมิชชั่น / 佣金比例: {r['commission_percent']}%\n"
+            f"ธนาคาร / 银行: {r['bank']}\n"
+            f"ค่าคอมมิชชั่นจากดอกเบี้ยรวม / 总利息佣金比例: {r['commission_percent']:.2f}%\n"
+            f"ประเภทค่าคอม / 佣金输入方式: {'ยอดจริง (บาท) / 实际金额' if r['commission_input_mode'] == 'amount' else 'เปอร์เซ็นต์ / 百分比'}\n"
             f"ค่าคอมมิชชั่นรวม VAT 7% / 含7%增值税佣金: {n('commission_gross')} บาท（泰铢）\n"
             f"ค่าคอมมิชชั่นก่อน VAT / 未税佣金: {n('commission_base')} บาท（泰铢）\n"
             f"VAT 7% ของค่าคอมมิชชั่น / 佣金增值税（7%）: {n('commission_vat')} บาท（泰铢）\n"
-            "\nหมายเหตุ / 备注: ค่างวดประมาณการแบบ Flat Rate / 月供按平息计算，"
-            "ไม่รวมค่าธรรมเนียม/ประกัน/ส่วนลดที่ไม่ได้ระบุ / 不含未列明的手续费、保险及优惠").replace(": ", ":   ")
+            f"หัก ณ ที่จ่าย 3% ของค่าคอมก่อน VAT / 未税佣金预扣3%: -{n('commission_withholding')} บาท（泰铢）\n"
+            f"ค่าคอมมิชชั่นสุทธิหลังหัก 3% / 扣税后净佣金: {n('commission_net')} บาท（泰铢）\n"
+            f"ยอดรวมที่ธนาคารจ่าย / 银行支付总额: {n('bank_payout_total')} บาท（泰铢）").replace(": ", ":   ")
 
 
 

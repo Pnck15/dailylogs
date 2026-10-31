@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from dailylog_finance import WithholdingCalculator
 from workers import run_async
 
-VAT_CALCULATOR_VERSION = "1.1.0"
+VAT_CALCULATOR_VERSION = "1.2.0"
 VAT_DISPLAY_TITLE = "VAT Calculator 增值税计算器"
 VAT_CREDIT = "by 王纯真"
 RUN_KEY = "DailyLogVATCalculator"

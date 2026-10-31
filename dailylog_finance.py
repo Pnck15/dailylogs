@@ -4,7 +4,7 @@ from html import escape
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QCheckBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTextEdit, QVBoxLayout, QWidget, QTabWidget,
 )
 
@@ -168,8 +168,8 @@ class WithholdingCalculator(QDialog):
         self.setWindowFlag(Qt.WindowType.Window, True)
         self.setModal(False)
         self.setWindowTitle("VAT Calculator 增值税计算器")
-        self.resize(605, 465)
-        self.setMinimumWidth(535)
+        self.resize(760, 510)
+        self.setMinimumWidth(660)
         self.setStyleSheet(
             "QDialog { background: #111827; color: white; } "
             "QWidget#calculatorTab { background: #111827; } "
@@ -190,6 +190,10 @@ class WithholdingCalculator(QDialog):
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 9, 10, 9)
         root.setSpacing(7)
+        # Small in-memory ledgers for the checked amounts on tabs 1 and 2.
+        self._saved_amounts = {}
+        self._memory_controls = {}
+        self._memory_tab_totals = {}
         self.tabs = QTabWidget(self)
         self.tabs.setObjectName("withholdingModeTabs")
         root.addWidget(self.tabs)
@@ -212,8 +216,13 @@ class WithholdingCalculator(QDialog):
         self.gross_input.setPlaceholderText("เช่น 5,000.00 / 例如 5,000.00")
         self.paid_input = QLineEdit()
         self.paid_input.setPlaceholderText("ลูกค้าจ่ายแล้ว / 已付款（留空为0）")
-        existing_form.addRow("รวม VAT 7% / 含7%增值税:", self.gross_input)
-        existing_form.addRow("ชำระแล้ว / 已付款:", self.paid_input)
+        existing_form.addRow("รวม VAT 7% / 含7%增值税:",
+                             self._memory_row("gross", self.gross_input))
+        existing_form.addRow("ชำระแล้ว / 已付款:",
+                             self._memory_row("paid", self.paid_input))
+        self.saved_tab1_total = self._memory_total_field("savedTab1Total")
+        self._memory_tab_totals[1] = self.saved_tab1_total
+        existing_form.addRow("รวมรายการที่ติ๊ก / 勾选金额累计:", self.saved_tab1_total)
         existing_layout.addLayout(existing_form)
         self.answer = self._make_result_area("invoiceSummary")
         existing_layout.addWidget(self.answer, 1)
@@ -249,8 +258,13 @@ class WithholdingCalculator(QDialog):
         self.base_input.setPlaceholderText("เช่น 5,000.00 / 例如：未含增值税")
         self.forward_paid_input = QLineEdit()
         self.forward_paid_input.setPlaceholderText("ลูกค้าจ่ายแล้ว / 已付款（留空为0）")
-        forward_form.addRow("ฐานก่อน VAT 7% / 未税金额（不含7%增值税）:", self.base_input)
-        forward_form.addRow("ชำระแล้ว / 已付款:", self.forward_paid_input)
+        forward_form.addRow("ฐานก่อน VAT 7% / 未税金额（不含7%增值税）:",
+                            self._memory_row("base", self.base_input))
+        forward_form.addRow("ชำระแล้ว / 已付款:",
+                            self._memory_row("forward_paid", self.forward_paid_input))
+        self.saved_tab2_total = self._memory_total_field("savedTab2Total")
+        self._memory_tab_totals[2] = self.saved_tab2_total
+        forward_form.addRow("รวมรายการที่ติ๊ก / 勾选金额累计:", self.saved_tab2_total)
         forward_layout.addLayout(forward_form)
         self.forward_answer = self._make_result_area("forwardVatSummary")
         forward_layout.addWidget(self.forward_answer, 1)
@@ -317,6 +331,97 @@ class WithholdingCalculator(QDialog):
         self.recalculate()
         self.recalculate_forward()
         self.recalculate_adjust()
+
+    @staticmethod
+    def _memory_total_field(name):
+        field = QLineEdit("0.00")
+        field.setObjectName(name)
+        field.setReadOnly(True)
+        field.setToolTip("ยอดสะสมเฉพาะรายการที่ติ๊กไว้ / 已勾选金额累计")
+        return field
+
+    def _memory_row(self, key, field):
+        """Keep a checked value in a separate running total, without changing VAT maths."""
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        layout.addWidget(field, 3)
+        check = QCheckBox("✓ เก็บ")
+        check.setObjectName(f"remember_{key}")
+        check.setToolTip("ติ๊กเพื่อเพิ่มยอดในช่องสะสม; เอาติ๊กออกเพื่อลบรายการล่าสุด")
+        layout.addWidget(check)
+        saved = self._memory_total_field(f"remembered_{key}")
+        saved.setFixedWidth(115)
+        layout.addWidget(saved)
+        self._saved_amounts[key] = []
+        self._memory_controls[key] = (field, check, saved)
+        check.toggled.connect(
+            lambda checked, k=key: self._toggle_remembered_amount(k, checked)
+        )
+        field.textChanged.connect(
+            lambda _text, k=key: self._memory_input_edited(k)
+        )
+        return row
+
+    def _memory_input_edited(self, key):
+        # Changing the number prepares the checkbox for saving another entry,
+        # while leaving the previously saved entries in the ledger.
+        check = self._memory_controls[key][1]
+        if check.isChecked():
+            check.blockSignals(True)
+            check.setChecked(False)
+            check.blockSignals(False)
+
+    def _toggle_remembered_amount(self, key, checked):
+        field, check, _saved = self._memory_controls[key]
+        if checked:
+            if not field.text().strip():
+                check.blockSignals(True)
+                check.setChecked(False)
+                check.blockSignals(False)
+                return
+            try:
+                value = amount(field.text())
+            except ValueError as error:
+                check.blockSignals(True)
+                check.setChecked(False)
+                check.blockSignals(False)
+                QMessageBox.warning(self, "บันทึกยอด / 保存金额", str(error))
+                return
+            self._saved_amounts[key].append(value)
+        elif self._saved_amounts[key]:
+            self._saved_amounts[key].pop()
+        self._refresh_remembered_amounts()
+
+    def _refresh_remembered_amounts(self):
+        for key, entries in self._saved_amounts.items():
+            saved = self._memory_controls[key][2]
+            saved.setText(f"{sum(entries, Decimal('0.00')):,.2f}")
+            saved.setToolTip(
+                "บันทึกแล้ว / 已保存: " +
+                (" + ".join(f"{v:,.2f}" for v in entries) if entries else "ไม่มี / 无")
+            )
+        for tab_index, keys in (
+            (1, ("gross", "paid")),
+            (2, ("base", "forward_paid")),
+        ):
+            total_field = self._memory_tab_totals.get(tab_index)
+            if total_field is not None:
+                total = sum(
+                    (value for key in keys for value in self._saved_amounts.get(key, ())),
+                    Decimal("0.00"),
+                )
+                total_field.setText(f"{total:,.2f}")
+
+    def _clear_memory(self, *keys):
+        for key in keys:
+            self._saved_amounts[key].clear()
+            check = self._memory_controls[key][1]
+            check.blockSignals(True)
+            check.setChecked(False)
+            check.blockSignals(False)
+        self._refresh_remembered_amounts()
 
     @staticmethod
     def _make_result_area(name):
@@ -491,9 +596,11 @@ class WithholdingCalculator(QDialog):
     def clear(self):
         self.gross_input.clear()
         self.paid_input.clear()
+        self._clear_memory("gross", "paid")
         self.gross_input.setFocus()
 
     def clear_forward(self):
         self.base_input.clear()
         self.forward_paid_input.clear()
+        self._clear_memory("base", "forward_paid")
         self.base_input.setFocus()

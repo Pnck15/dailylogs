@@ -107,19 +107,23 @@ def test_finance(app):
     assert finance_calc.tabs.count() == 2
     assert finance_calc.tabs.tabText(1) == "2. ใบเสร็จรับเงินค่ารถ / 购车款收据"
     assert finance_calc.down_combo.count() == 11
-    assert finance_calc.down_combo.itemData(10) == "manual"
-    assert not finance_calc.manual_down_panel.isVisible()
-    assert finance_calc.down_combo.itemData(7) == 40
-    assert finance_calc.down_combo.currentData() == 20
+    assert finance_calc.down_combo.itemData(0) == "manual"
+    assert finance_calc.down_combo.currentData() == "manual"
+    assert not finance_calc.manual_down_panel.isHidden()
+    assert finance_calc.down_combo.itemData(8) == 40
+    assert finance_calc.sale_type_combo.count() == 2
+    assert finance_calc.bank_combo.count() == 7
+    assert finance_calc.bank_combo.findText("Kbank") >= 0
+    finance_calc.down_combo.setCurrentIndex(finance_calc.down_combo.findData(20))
     finance_calc.price_input.setText("315000")
     finance_calc.years_input.setValue(4)
     finance_calc.interest_input.setValue(1.68)
     finance_calc.calculate()
     assert "5,602.80" in finance_calc.result_text.toPlainText()
     assert "ยอดจัดไฟแนนซ์ / 贷款金额:" in finance_calc.result_text.toPlainText()
-    assert "หมายเหตุ / 备注:" in finance_calc.result_text.toPlainText()
+    assert "หมายเหตุ / 备注:" not in finance_calc.result_text.toPlainText()
     assert "ค่างวดต่อเดือนสุทธิ" in finance_calc.result_text.toPlainText()
-    finance_calc.down_combo.setCurrentIndex(10)
+    finance_calc.down_combo.setCurrentIndex(0)
     assert finance_calc.selected_down is None
     assert not finance_calc.manual_down_panel.isHidden()
     finance_calc.manual_down_input.setText("60000")
@@ -144,7 +148,29 @@ def test_finance(app):
     assert "13,528.52" in without_insurance
     assert "533,048.00" in without_insurance
     assert "550,000.00" not in without_insurance
+    # Kbank 8% of total interest, with actual commission 3,666 entered.
+    finance_calc.price_input.setText("771550")
+    finance_calc.manual_down_input.setText("0")
+    finance_calc.loan_insurance_input.clear()
+    finance_calc.years_input.setValue(3)
+    finance_calc.interest_input.setValue(1.98)
+    finance_calc.sale_type_combo.setCurrentText("Trade in")
+    finance_calc.bank_combo.setCurrentText("Kbank")
+    assert finance_calc.commission_input.value() == 8.0
+    finance_calc.actual_commission_input.setText("3666")
+    finance_calc.calculate()
+    bank_report = finance_calc.result_text.toPlainText()
+    for expected in ("771,550.00", "22,705.00", "3,666.00",
+                     "3,563.21", "775,113.21", "Trade in", "Kbank"):
+        assert expected in bank_report, expected
+    assert "หมายเหตุ / 备注:" not in bank_report
+    finance_calc.clear_inputs()
+    assert finance_calc.down_combo.currentData() == "manual"
+    assert finance_calc.sale_type_combo.currentText() == "Normal"
+    assert finance_calc.bank_combo.currentText() == "อื่นๆ"
+    assert not finance_calc.actual_commission_input.text()
     finance_calc.price_input.setText("315000")
+    finance_calc.years_input.setValue(4)
     finance_calc.interest_input.setValue(1.68)
     finance_calc.down_combo.setCurrentIndex(finance_calc.down_combo.findData(20))
     assert finance_calc.selected_down == 20
@@ -228,7 +254,7 @@ def test_finance(app):
     assert calc.windowTitle() == "VAT Calculator 增值税计算器"
     assert "#B91C1C" in calc.styleSheet()
     assert "#DC2626" in calc.styleSheet()
-    assert calc.width() <= 650
+    assert calc.width() <= 800
     assert calc.tabs.count() == 3
     assert "含税账单" in calc.tabs.tabText(0)
     assert "加税扣税" in calc.tabs.tabText(1)
@@ -250,6 +276,22 @@ def test_finance(app):
     assert "#ff5252" in calc.answer.toHtml().lower()
     calc.copy_result()
     assert "140.19 บาท（泰铢）" in app.clipboard().text()
+    # Checking a numeric field remembers its value in a running sum.
+    calc.gross_input.setText("100")
+    calc._memory_controls["gross"][1].setChecked(True)
+    assert calc._memory_controls["gross"][2].text() == "100.00"
+    calc.gross_input.setText("200")  # editing prepares a new check without losing 100
+    assert not calc._memory_controls["gross"][1].isChecked()
+    calc._memory_controls["gross"][1].setChecked(True)
+    assert calc._memory_controls["gross"][2].text() == "300.00"
+    calc.paid_input.setText("50")
+    calc._memory_controls["paid"][1].setChecked(True)
+    assert calc.saved_tab1_total.text() == "350.00"
+    calc._memory_controls["gross"][1].setChecked(False)  # undo last check
+    assert calc.saved_tab1_total.text() == "150.00"
+    calc.clear()
+    assert calc.saved_tab1_total.text() == "0.00"
+    assert not calc._saved_amounts["gross"]
 
     # Partition 2 must be independently editable/copyable from Partition 1.
     calc.tabs.setCurrentIndex(1)
@@ -261,7 +303,13 @@ def test_finance(app):
     calc.forward_paid_input.setText("5,500")
     assert "-300.00" in calc.forward_answer.toPlainText()
     assert "#ff5252" in calc.forward_answer.toHtml().lower()
+    calc._memory_controls["base"][1].setChecked(True)
+    calc._memory_controls["forward_paid"][1].setChecked(True)
+    assert calc._memory_controls["base"][2].text() == "5,000.00"
+    assert calc.saved_tab2_total.text() == "10,500.00"
+    assert calc.saved_tab1_total.text() == "0.00"  # independent tabs
     calc.clear_forward()
+    assert calc.saved_tab2_total.text() == "0.00"
     assert not calc.forward_copy_button.isEnabled()
 
     # Partition 3 must be copyable, editable, and independent from tabs 1/2.

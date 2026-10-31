@@ -80,6 +80,40 @@ class FinanceTests(unittest.TestCase):
                 finance_quote("1137000", 20, 4, "1.88",
                               loan_insurance_premium=invalid)
 
+    def test_kbank_gross_commission_override_and_net_payout(self):
+        # Bank-provided actual gross 3,666 is slightly below 8% estimated
+        # from the flat interest (3,666.41). 3% is withheld on pre-VAT base.
+        q = finance_quote("771550", None, 3, "1.98", 8,
+                          down_amount="0", bank="Kbank",
+                          sale_type="Trade in",
+                          commission_gross_amount="3666")
+        self.assertEqual(q["financed"], Decimal("771550.00"))
+        self.assertEqual(q["monthly_payment"], Decimal("22705.00"))
+        self.assertEqual(q["total_interest"], Decimal("45830.07"))
+        self.assertEqual(q["commission_gross"], Decimal("3666.00"))
+        self.assertEqual(q["commission_base"], Decimal("3426.17"))
+        self.assertEqual(q["commission_withholding"], Decimal("102.79"))
+        self.assertEqual(q["commission_net"], Decimal("3563.21"))
+        self.assertEqual(q["bank_payout_total"], Decimal("775113.21"))
+        self.assertEqual(q["commission_input_mode"], "amount")
+        self.assertAlmostEqual(float(q["commission_percent"]), 8.0, places=2)
+        report = quote_text(q, "Nissan")
+        self.assertIn("775,113.21", report)
+        self.assertIn("3,563.21", report)
+        self.assertIn("Trade in", report)
+        self.assertIn("Kbank", report)
+        self.assertNotIn("หมายเหตุ / 备注", report)
+        estimated = finance_quote("771550", None, 3, "1.98", 8,
+                                  down_amount="0", bank="Kbank")
+        self.assertEqual(estimated["commission_gross"], Decimal("3666.41"))
+        self.assertEqual(estimated["monthly_payment"], q["monthly_payment"])
+        self.assertEqual(estimated["commission_input_mode"], "percent")
+        for kwargs in ({"bank": "Unknown"}, {"sale_type": "Unknown"},
+                       {"commission_gross_amount": "-10"},
+                       {"commission_gross_amount": "NaN"}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                finance_quote(315000, 20, 4, 1.88, **kwargs)
+
     def test_manual_down_amount_validation(self):
         for amount in ("", "-1", "NaN", "Infinity", "315000.01", "xyz"):
             with self.subTest(amount=amount), self.assertRaises(ValueError):
